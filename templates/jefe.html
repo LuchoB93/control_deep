@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Jefe - Estado General de Flota</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="jefe">
+    <div class="jefe-container">
+        <header class="jefe-header">
+            <div>
+                <h1>🚐 Estado General de Flota</h1>
+                <p>Fecha: {{ fecha_actual }}</p>
+            </div>
+            <div class="jefe-user">
+                <span>👤 {{ session.nombre }}</span>
+                <a href="{{ url_for('logout') }}" class="jefe-btn-volver">Cerrar Sesión</a>
+            </div>
+        </header>
+
+        <div class="jefe-grid">
+            {% for patente, info in resumen_flota.items() %}
+                <div class="jefe-card 
+                    {% if info.estado_general == 'FALLA' %}jefe-card-falla
+                    {% elif info.estado_general == 'ALERTA' %}jefe-card-alerta
+                    {% else %}jefe-card-ok{% endif %}">
+                    
+                    <h2 class="jefe-patente" onclick="abrirHistorial('{{ patente }}')">{{ patente }}</h2>
+                    
+                    {% if info.estado_general == 'FALLA' %}
+                        <span class="jefe-estado-badge">🔴 CON FALLAS</span>
+                    {% elif info.estado_general == 'ALERTA' %}
+                        <span class="jefe-estado-badge">🟡 CON FALTANTES</span>
+                    {% else %}
+                        <span class="jefe-estado-badge">🟢 EN CONDICIÓN</span>
+                    {% endif %}
+
+                    <div class="jefe-sin-registros">
+                        Último control: {{ info.ultimo_registro }}
+                    </div>
+                    
+                    <button class="jefe-btn-historial" onclick="abrirHistorial('{{ patente }}')">📜 Ver Historial</button>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Ventana Modal para el Historial -->
+    <div id="modal-historial" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-titulo">Historial</h2>
+                <button class="modal-close" onclick="cerrarHistorial()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <script>
+        // Datos de las camionetas (pasados desde Flask)
+        const datosCamionetas = {{ resumen_flota | tojson }};
+
+                // Función para abrir el historial
+        function abrirHistorial(patente) {
+            const info = datosCamionetas[patente];
+            if (!info) return;
+            
+            let html = '<table><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Fecha de Resolución</th></tr></thead><tbody>';
+            
+            if (info.historial.length === 0) {
+                html += '<tr><td colspan="6">✅ Sin registros para esta camioneta.</td></tr>';
+            } else {
+                info.historial.forEach(item => {
+                    let badge = '';
+                    if (item.estado === 'FALLA') badge = '<span class="estado-falla">FALLA</span>';
+                    else if (item.estado === 'FALTANTE') badge = '<span class="estado-faltante">FALTANTE</span>';
+                    else if (item.estado === 'OBSERVACION') badge = '<span class="estado-observacion">OBSERVACION</span>';
+                    else if (item.estado === 'RESUELTO') badge = '<span class="estado-resuelto">RESUELTO</span>';
+                    else badge = '<span class="estado-ok">OK</span>';
+                    
+                    let fechaResolucion = item.fecha_resolucion || '-';
+                    
+                    html += `<tr>
+                        <td style="white-space: nowrap;">${item.fecha}</td>
+                        <td>${item.elemento}</td>
+                        <td>${badge}</td>
+                        <td>${item.descripcion || '-'}</td>
+                        <td>${item.tecnico}</td>
+                        <td style="white-space: nowrap;">${fechaResolucion}</td>
+                    </tr>`;
+                });
+            }
+            
+            html += '</tbody></table>';
+            
+            document.getElementById('modal-titulo').textContent = 'Historial de ' + patente;
+            document.getElementById('modal-body').innerHTML = html;
+            document.getElementById('modal-historial').style.display = 'flex';
+        }
+
+        // Función para cerrar el historial
+        function cerrarHistorial() {
+            document.getElementById('modal-historial').style.display = 'none';
+        }
+
+        // Cerrar modal al hacer clic fuera del contenido
+        document.getElementById('modal-historial').addEventListener('click', function(e) {
+            if (e.target === this) {
+                cerrarHistorial();
+            }
+        });
+    </script>
+</body>
+</html>

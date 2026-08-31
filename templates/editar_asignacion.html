@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editar Asignación - Control de Camionetas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>✏️ Editar Asignación</h1>
+            <div class="user-info">
+                <span>Bienvenido, {{ session.nombre }}</span>
+                <a href="{{ url_for('logout') }}" class="btn btn-danger">Cerrar Sesión</a>
+            </div>
+        </header>
+
+        <nav>
+            <a href="{{ url_for('admin') }}" class="btn btn-secondary">← Volver al Panel</a>
+        </nav>
+
+        {% if asignacion %}
+            <!-- Mostrar la asignación actual -->
+            <div class="card">
+                <h3>📋 Asignación Actual</h3>
+                <p><strong>👤 Técnico:</strong> {{ asignacion.tecnico_nombre }}</p>
+                <p><strong>🚗 Camioneta actual:</strong> {{ asignacion.camioneta_patente }}</p>
+                <p><strong>📅 Fecha:</strong> {{ asignacion.fecha }}</p>
+                <p><strong>🕐 Jornada:</strong> {{ asignacion.jornada }}</p>
+                <p><strong>📊 Estado:</strong> <span class="badge badge-success">{{ asignacion.estado }}</span></p>
+            </div>
+
+            <!-- Formulario para cambiar la camioneta -->
+            <form method="POST" action="{{ url_for('editar_asignacion', asignacion_id=asignacion.id) }}">
+                <div class="form-group">
+                    <label for="camioneta_id">🔄 Seleccionar nueva camioneta:</label>
+                    <select id="camioneta_id" name="camioneta_id" required>
+                        <option value="">-- Seleccionar camioneta --</option>
+                        {% for camioneta in camionetas %}
+                            <option value="{{ camioneta.id }}" 
+                                {% if camioneta.id == asignacion.camioneta_id %}selected{% endif %}>
+                                {{ camioneta.patente }}
+                                {% if camioneta.id == asignacion.camioneta_id %} (actual){% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+                    <a href="{{ url_for('admin') }}" class="btn btn-secondary">❌ Cancelar</a>
+                </div>
+            </form>
+        {% else %}
+            <!-- Si no se encuentra la asignación -->
+            <div class="alert alert-danger">
+                ⚠️ No se encontró la asignación solicitada.
+            </div>
+            <a href="{{ url_for('admin') }}" class="btn btn-secondary">Volver al Panel</a>
+        {% endif %}
+    </div>
+</body>
+</html>

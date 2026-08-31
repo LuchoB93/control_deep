@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Técnico - Control de Camionetas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Panel del Técnico</h1>
+            <div class="user-info">
+                <span>Bienvenido, {{ nombre }}</span>
+                <a href="{{ url_for('logout') }}" class="btn btn-danger">Cerrar Sesión</a>
+            </div>
+        </header>
+
+        <div class="tecnico-info">
+            <h2>Estado actual</h2>
+            <p><strong>Fecha:</strong> {{ fecha_actual }}</p>
+            
+            {% if asignacion %}
+                <div class="card">
+                    <h3>Camioneta Asignada</h3>
+                    <p><strong>Patente:</strong> {{ asignacion.camioneta_patente }}</p>
+                    <p><strong>Jornada:</strong> {{ asignacion.jornada }}</p>
+                    <p><strong>Estado:</strong> <span class="badge badge-success">{{ asignacion.estado }}</span></p>
+                    
+                    <div class="acciones">
+                        <a href="{{ url_for('iniciar_retiro') }}" class="btn btn-primary">Iniciar Retiro</a>
+                        <a href="#" class="btn btn-secondary">Iniciar Devolución</a>
+                    </div>
+                </div>
+            {% else %}
+                <div class="alert alert-info">
+                    No tienes ninguna camioneta asignada para hoy.
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="instrucciones">
+            <h3>Instrucciones</h3>
+            <ul>
+                <li>Al iniciar el retiro, deberás completar el formulario de control.</li>
+                <li>Tomá fotografías de la camioneta en ese momento.</li>
+                <li>Al finalizar tu jornada, realizá la devolución.</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

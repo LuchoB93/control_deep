@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asignación de Jornada - Control de Camionetas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .form-group { margin-bottom: 15px; }
+        .table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .table th, .table td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        .table th { background: #f2f2f2; }
+        .camioneta-select { width: 100%; max-width: 300px; padding: 8px; border-radius: 5px; border: 1px solid #ccc; }
+        .form-actions { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Asignación de Jornada</h1>
+            <nav>
+                <a href="{{ url_for('admin') }}" class="btn btn-secondary">Volver al Panel</a>
+                <a href="{{ url_for('logout') }}" class="btn btn-danger">Cerrar Sesión</a>
+            </nav>
+        </header>
+
+        {% if mensaje %}
+            <div class="alert alert-success">{{ mensaje }}</div>
+        {% endif %}
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('asignacion_jornada') }}" id="form-asignacion">
+            <div class="form-group">
+                <label for="fecha">Fecha:</label>
+                <input type="date" id="fecha" name="fecha" value="{{ fecha_actual }}" required>
+            </div>
+
+            <div class="form-group">
+                <label for="jornada">Jornada:</label>
+                <select id="jornada" name="jornada" required>
+                    <option value="mañana" {% if jornada_actual == 'mañana' %}selected{% endif %}>Mañana</option>
+                    <option value="tarde" {% if jornada_actual == 'tarde' %}selected{% endif %}>Tarde</option>
+                </select>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Técnico</th>
+                            <th>Camioneta</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for tecnico in tecnicos %}
+                        <tr>
+                            <td>{{ tecnico.nombre }}</td>
+                            <td>
+                                <select name="tecnico_{{ tecnico.id }}" class="camioneta-select">
+                                    <option value="">Sin asignar</option>
+                                    {% for camioneta in camionetas %}
+                                        {% if camioneta.id == asignaciones_por_tecnico.get(tecnico.id) %}
+                                            <option value="{{ camioneta.id }}" selected>{{ camioneta.patente }}</option>
+                                        {% elif camioneta.id in camionetas_ocupadas %}
+                                            <option value="{{ camioneta.id }}" disabled style="color: #999;">{{ camioneta.patente }} (ocupada)</option>
+                                        {% else %}
+                                            <option value="{{ camioneta.id }}">{{ camioneta.patente }}</option>
+                                        {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Guardar asignaciones</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // Validación básica en el frontend para evitar conflictos
+        document.getElementById('form-asignacion').addEventListener('submit', function(e) {
+            const selects = document.querySelectorAll('.camioneta-select');
+            const camionetasSeleccionadas = new Set();
+            let conflicto = false;
+
+            selects.forEach(select => {
+                if (select.value) {
+                    if (camionetasSeleccionadas.has(select.value)) {
+                        conflicto = true;
+                        select.style.borderColor = 'red';
+                    } else {
+                        camionetasSeleccionadas.add(select.value);
+                        select.style.borderColor = '';
+                    }
+                }
+            });
+
+            if (conflicto) {
+                e.preventDefault();
+                alert('Error: Hay camionetas seleccionadas por más de un técnico. Por favor corregí antes de guardar.');
+            }
+        });
+    </script>
+</body>
+</html>

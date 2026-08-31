@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Administrador - Control de Camionetas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+    <div class="container">
+        <!-- HEADER -->
+        <header>
+            <div class="header-left">
+                <h1>🚐 Control de Camionetas</h1>
+                <span class="fecha-actual">{{ fecha_actual }}</span>
+            </div>
+            <div class="user-info">
+                <span>👤 {{ session.nombre }}</span>
+                <a href="{{ url_for('logout') }}" class="btn btn-danger">Cerrar Sesión</a>
+            </div>
+        </header>
+
+        {% if mensaje %}
+            <div class="alert alert-success">{{ mensaje }}</div>
+        {% endif %}
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <!-- SELECCION DE JORNADA -->
+        <div class="jornada-selector">
+            <form method="GET" action="{{ url_for('admin') }}">
+                <div class="form-group">
+                    <label for="fecha">📅 Fecha:</label>
+                    <input type="date" id="fecha" name="fecha" value="{{ fecha_seleccionada }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="jornada">🕐 Jornada:</label>
+                    <select id="jornada" name="jornada">
+                        <option value="mañana" {% if jornada_seleccionada == 'mañana' %}selected{% endif %}>Mañana</option>
+                        <option value="tarde" {% if jornada_seleccionada == 'tarde' %}selected{% endif %}>Tarde</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">📋 Ver Planilla</button>
+            </form>
+        </div>
+
+        <!-- PLANILLA DE ASIGNACIONES (EDITABLE) -->
+        <div class="planilla-container">
+            <div class="planilla-header">
+                <h2>📋 ASIGNACIONES DEL TURNO {{ jornada_seleccionada|upper }} - {{ fecha_seleccionada }}</h2>
+                <p>💡 Cambiá la camioneta o el compañero. El técnico principal siempre es el responsable del control.</p>
+            </div>
+
+            <form method="POST" action="{{ url_for('guardar_planilla') }}" id="form-planilla">
+                <input type="hidden" name="fecha" value="{{ fecha_seleccionada }}">
+                <input type="hidden" name="jornada" value="{{ jornada_seleccionada }}">
+                
+                {% for fila in planilla %}
+                    <input type="hidden" name="tecnico_ids" value="{{ fila.tecnico_id }}">
+                {% endfor %}
+
+                <div class="table-responsive">
+                    <table class="table-planilla">
+                        <thead>
+                            <tr>
+                                <th>LOCALIDAD / ZONA</th>
+                                <th>TÉCNICOS</th>
+                                <th>TÉCNICO 2</th>
+                                <th>CAMIONETA</th>
+                                <th>ESTADO</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for fila in planilla %}
+                            <tr class="fila-asignacion">
+                                <td>
+                                    <input type="text" name="zona_{{ fila.tecnico_id }}" value="{{ fila.zona or '' }}" placeholder="Ej: C13">
+                                </td>
+                                <td>
+                                    <strong>{{ fila.tecnico_nombre }}</strong>
+                                </td>
+                                <td>
+                                    <select name="tecnico2_{{ fila.tecnico_id }}" class="tecnico2-select">
+                                        <option value="">Sin compañero</option>
+                                        {% for tecnico in tecnicos %}
+                                            {% if tecnico.id != fila.tecnico_id %}
+                                                <option value="{{ tecnico.id }}" 
+                                                    {% if tecnico.id == fila.tecnico2_id %}selected{% endif %}>
+                                                    {{ tecnico.nombre }}
+                                                </option>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </select>
+                                </td>
+                                <td>
+                                    <select name="camioneta_{{ fila.tecnico_id }}" class="camioneta-select-planilla">
+                                        <option value="">Sin asignar</option>
+                                        {% for camioneta in camionetas %}
+                                            <option value="{{ camioneta.id }}" 
+                                                {% if camioneta.id == fila.camioneta_id %}selected{% endif %}
+                                                {% if camioneta.id in camionetas_ocupadas and camioneta.id != fila.camioneta_id %}disabled{% endif %}>
+                                                {{ camioneta.patente }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </td>
+                                <td>
+                                    {% if fila.camioneta_id %}
+                                        <span class="badge badge-success">✅ ASIGNADO</span>
+                                    {% else %}
+                                        <span class="badge badge-danger">❌ SIN ASIGNAR</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="planilla-actions">
+                    <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- SECCION DE REPORTES -->
+        <div class="reportes-section">
+            <h2>📊 Reportes de Camionetas</h2>
+            
+            <label for="selector-patente">🚚 Seleccionar Camioneta (Patente):</label>
+            <br>
+            <select id="selector-patente" class="patente-selector" onchange="mostrarDetallesPatente()">
+                <option value="">-- Seleccione una patente --</option>
+                {% for patente in patentes_con_reportes %}
+                    <option value="{{ patente }}">{{ patente }}</option>
+                {% endfor %}
+            </select>
+
+            <!-- Contenedor de Faltantes Actuales -->
+            <div id="contenedor-faltantes" class="alerta-ok">
+                👈 Seleccione una patente para ver sus faltantes actuales.
+            </div>
+
+            <!-- Botón y Contenedor de Historial -->
+            <div id="contenedor-historial" class="oculto">
+                <button type="button" class="btn-toggle-historial" onclick="toggleHistorial()">📜 Ver Historial Completo</button>
+                <div id="historial-completo" class="oculto"></div>
+            </div>
+        </div>
+
+        <!-- HISTORIAL POR CAMIONETA -->
+        <section class="panel">
+            <h2>Historial por camioneta</h2>
+            <div class="form-group">
+                <label>Seleccioná una camioneta</label>
+                <select onchange="if(this.value) window.location='/historial-camioneta/'+this.value">
+                    <option value="">Ver historial...</option>
+                    {% for camioneta in camionetas %}
+                    <option value="{{ camioneta.id }}">{{ camioneta.patente }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- Elemento oculto que contiene los datos en formato JSON -->
+    <div id="datos-reportes" style="display: none;"
+         data-faltantes='{{ faltantes_por_patente | tojson }}'
+         data-historial='{{ reportes_por_patente | tojson }}'>
+    </div>
+
+    <script>
+        // Efecto visual al cambiar camioneta en la planilla
+        document.querySelectorAll('.camioneta-select-planilla').forEach(select => {
+            select.addEventListener('change', function() {
+                const fila = this.closest('tr');
+                const badge = fila.querySelector('.badge');
+                
+                if (this.value) {
+                    badge.className = 'badge badge-success';
+                    badge.textContent = '✅ ASIGNADO';
+                } else {
+                    badge.className = 'badge badge-danger';
+                    badge.textContent = '❌ SIN ASIGNAR';
+                }
+            });
+        });
+
+        // Validar antes de guardar (evitar conflictos)
+        document.getElementById('form-planilla').addEventListener('submit', function(e) {
+            const selects = document.querySelectorAll('.camioneta-select-planilla');
+            const camionetasSeleccionadas = new Set();
+            let conflicto = false;
+            let mensajeError = '';
+
+            selects.forEach(select => {
+                const valor = select.value;
+                if (valor) {
+                    if (camionetasSeleccionadas.has(valor)) {
+                        conflicto = true;
+                        select.style.borderColor = 'red';
+                        const patente = select.options[select.selectedIndex].text;
+                        mensajeError = `⚠️ La camioneta ${patente} está seleccionada por más de un técnico.`;
+                    } else {
+                        camionetasSeleccionadas.add(valor);
+                        select.style.borderColor = '';
+                    }
+                }
+            });
+
+            if (conflicto) {
+                e.preventDefault();
+                alert(mensajeError);
+            }
+        });
+
+        // Datos para reportes
+        const contenedorDatos = document.getElementById('datos-reportes');
+        const faltantesData = JSON.parse(contenedorDatos.getAttribute('data-faltantes') || '{}');
+        const historialData = JSON.parse(contenedorDatos.getAttribute('data-historial') || '{}');
+
+        function mostrarDetallesPatente() {
+            const patente = document.getElementById('selector-patente').value;
+            const contFaltantes = document.getElementById('contenedor-faltantes');
+            const contHistorial = document.getElementById('contenedor-historial');
+            const histCompleto = document.getElementById('historial-completo');
+
+            if (!patente) {
+                contFaltantes.className = 'alerta-ok';
+                contFaltantes.innerHTML = '👈 Seleccione una patente para ver sus faltantes actuales.';
+                contHistorial.classList.add('oculto');
+                return;
+            }
+
+            const faltantes = faltantesData[patente] || [];
+            let htmlFaltantes = '<h4 style="margin-top:0;">⚠️ Faltantes Actuales (No OK)</h4>';
+            
+            if (faltantes.length === 0) {
+                htmlFaltantes += '<p style="margin:0;">✅ No hay fallas ni faltantes registrados actualmente.</p>';
+                contFaltantes.className = 'alerta-ok';
+            } else {
+                contFaltantes.className = 'alerta-fallas';
+                htmlFaltantes += '<ul style="list-style: none; padding: 0; margin: 0;">';
+                faltantes.forEach(item => {
+                    let icono = item.estado === 'FALLA' ? '⚠️' : (item.estado === 'FALTANTE' ? '❌' : '📝');
+                    htmlFaltantes += `<li class="item-reporte" id="reporte-item-${item.id}">
+                        <strong>${icono} ${item.elemento}:</strong> ${item.estado} - ${item.descripcion || ''}
+                        <button class="btn-resolver" onclick="resolverReporte(${item.id})">✔ Resolver</button>
+                    </li>`;
+                });
+                htmlFaltantes += '</ul>';
+            }
+            contFaltantes.innerHTML = htmlFaltantes;
+
+            contHistorial.classList.remove('oculto');
+            histCompleto.classList.add('oculto');
+            contHistorial.setAttribute('data-patente-actual', patente);
+        }
+
+                function toggleHistorial() {
+            const patente = document.getElementById('contenedor-historial').getAttribute('data-patente-actual');
+            const histCompleto = document.getElementById('historial-completo');
+            
+            if (histCompleto.classList.contains('oculto')) {
+                const registros = historialData[patente] || [];
+                let htmlHist = `<h4 style="margin-top:0;">Historial Completo de ${patente}</h4>`;
+                htmlHist += '<table class="tabla-historial"><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Fecha de Resolución</th></tr></thead><tbody>';
+                
+                registros.forEach(r => {
+                    let fechaFormateada = r.fecha_hora ? r.fecha_hora.slice(0, 16).replace('T', ' ') : '-';
+                    let fechaResolucion = r.fecha_resolucion || '-';
+                    let badge = '';
+                    if (r.estado === 'FALLA') badge = '<span class="estado-falla">FALLA</span>';
+                    else if (r.estado === 'FALTANTE') badge = '<span class="estado-faltante">FALTANTE</span>';
+                    else if (r.estado === 'OK') badge = '<span class="estado-ok">OK</span>';
+                    else badge = '<span class="estado-resuelto">RESUELTO</span>';
+                    
+                    htmlHist += `<tr>
+                        <td style="white-space: nowrap;">${fechaFormateada}</td>
+                        <td>${r.elemento}</td>
+                        <td>${badge}</td>
+                        <td>${r.descripcion || '-'}</td>
+                        <td>${r.tecnico_nombre}</td>
+                        <td style="white-space: nowrap;">${fechaResolucion}</td>
+                    </tr>`;
+                });
+                
+                htmlHist += '</tbody></table>';
+                histCompleto.innerHTML = htmlHist;
+                histCompleto.classList.remove('oculto');
+            } else {
+                histCompleto.classList.add('oculto');
+            }
+        }
+
+        // Nueva función para resolver el reporte
+        function resolverReporte(id) {
+            if (!confirm('¿Confirmás que este problema fue resuelto?')) return;
+            
+            fetch(`/resolver-reporte/${id}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const elemento = document.getElementById(`reporte-item-${id}`);
+                    if (elemento) {
+                        elemento.style.opacity = '0.5';
+                        elemento.style.textDecoration = 'line-through';
+                        elemento.querySelector('.btn-resolver').disabled = true;
+                        elemento.querySelector('.btn-resolver').textContent = '✔ Resuelto';
+                    }
+                    
+                    alert('✅ Reporte resuelto exitosamente!');
+                    window.location.reload();
+                } else {
+                    alert('❌ Error al resolver el reporte: ' + (data.error || 'Desconocido'));
+                }
+            })
+            .catch(error => {
+                alert('❌ Error de conexión: ' + error);
+            });
+        }
+    </script>
+</body>
+</html>
