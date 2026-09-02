@@ -63,12 +63,12 @@
 
                 <div class="table-responsive">
                     <table class="table-planilla">
-                        <thead>
+                                                <thead>
                             <tr>
+                                <th>PATENTE</th>
                                 <th>LOCALIDAD / ZONA</th>
-                                <th>TÉCNICOS</th>
+                                <th>TÉCNICO 1 (Responsable)</th>
                                 <th>TÉCNICO 2</th>
-                                <th>CAMIONETA</th>
                                 <th>ESTADO</th>
                             </tr>
                         </thead>
@@ -76,38 +76,36 @@
                             {% for fila in planilla %}
                             <tr class="fila-asignacion">
                                 <td>
-                                    <input type="text" name="zona_{{ fila.tecnico_id }}" value="{{ fila.zona or '' }}" placeholder="Ej: C13">
+                                    <input type="hidden" name="camioneta_ids" value="{{ fila.camioneta_id }}">
+                                    <strong>{{ fila.camioneta_patente }}</strong>
                                 </td>
                                 <td>
-                                    <strong>{{ fila.tecnico_nombre }}</strong>
+                                    <input type="text" name="zona_{{ fila.camioneta_id }}" value="{{ fila.zona or '' }}" placeholder="Ej: C13">
                                 </td>
                                 <td>
-                                    <select name="tecnico2_{{ fila.tecnico_id }}" class="tecnico2-select">
-                                        <option value="">Sin compañero</option>
-                                        {% for tecnico in tecnicos %}
-                                            {% if tecnico.id != fila.tecnico_id %}
-                                                <option value="{{ tecnico.id }}" 
-                                                    {% if tecnico.id == fila.tecnico2_id %}selected{% endif %}>
-                                                    {{ tecnico.nombre }}
-                                                </option>
-                                            {% endif %}
-                                        {% endfor %}
-                                    </select>
-                                </td>
-                                <td>
-                                    <select name="camioneta_{{ fila.tecnico_id }}" class="camioneta-select-planilla">
+                                    <select name="tecnico_{{ fila.camioneta_id }}" class="tecnico-select">
                                         <option value="">Sin asignar</option>
-                                        {% for camioneta in camionetas %}
-                                            <option value="{{ camioneta.id }}" 
-                                                {% if camioneta.id == fila.camioneta_id %}selected{% endif %}
-                                                {% if camioneta.id in camionetas_ocupadas and camioneta.id != fila.camioneta_id %}disabled{% endif %}>
-                                                {{ camioneta.patente }}
+                                        {% for tecnico in tecnicos %}
+                                            <option value="{{ tecnico.id }}" 
+                                                {% if tecnico.id == fila.tecnico_id %}selected{% endif %}>
+                                                {{ tecnico.nombre }}
                                             </option>
                                         {% endfor %}
                                     </select>
                                 </td>
                                 <td>
-                                    {% if fila.camioneta_id %}
+                                    <select name="tecnico2_{{ fila.camioneta_id }}" class="tecnico2-select">
+                                        <option value="">Sin compañero</option>
+                                        {% for tecnico in tecnicos %}
+                                            <option value="{{ tecnico.id }}" 
+                                                {% if tecnico.id == fila.tecnico2_id %}selected{% endif %}>
+                                                {{ tecnico.nombre }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </td>
+                                <td>
+                                    {% if fila.tecnico_id %}
                                         <span class="badge badge-success">✅ ASIGNADO</span>
                                     {% else %}
                                         <span class="badge badge-danger">❌ SIN ASIGNAR</span>
@@ -172,8 +170,8 @@
     </div>
 
     <script>
-        // Efecto visual al cambiar camioneta en la planilla
-        document.querySelectorAll('.camioneta-select-planilla').forEach(select => {
+               // Efecto visual al cambiar técnico principal (responsable)
+        document.querySelectorAll('.tecnico-select').forEach(select => {
             select.addEventListener('change', function() {
                 const fila = this.closest('tr');
                 const badge = fila.querySelector('.badge');

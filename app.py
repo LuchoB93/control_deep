@@ -231,10 +231,14 @@ def admin():
     conexion = get_db()
     
     try:
+        # Obtener técnicos para los menús desplegables
         tecnicos = obtener_tecnicos()
+        
+        # Obtener TODAS las camionetas activas (son las filas fijas)
         camionetas = obtener_camionetas()
         
-        # Obtener asignaciones actuales
+        # Obtener asignaciones para la fecha/jornada seleccionada
+        # IMPORTANTE: Ahora buscamos TODAS las asignaciones, sin filtrar por técnico
         asignaciones_actuales = conexion.execute('''
             SELECT a.id as asignacion_id, a.camioneta_id, a.tecnico_id, a.tecnico2_id, a.zona,
                    c.patente as camioneta_patente
@@ -243,17 +247,17 @@ def admin():
             WHERE a.fecha = ? AND a.jornada = ?
         ''', (fecha_seleccionada, jornada_seleccionada)).fetchall()
         
-        # Diccionario para fácil acceso
-        asignaciones_por_tecnico = {}
+        # Diccionario para fácil acceso: {camioneta_id: datos}
+        asignaciones_por_camioneta = {}
         for a in asignaciones_actuales:
-            asignaciones_por_tecnico[a['tecnico_id']] = {
+            asignaciones_por_camioneta[a['camioneta_id']] = {
                 'asignacion_id': a['asignacion_id'],
-                'camioneta_id': a['camioneta_id'],
-                'zona': a['zona'] or '',
-                'tecnico2_id': a['tecnico2_id']
+                'tecnico_id': a['tecnico_id'],
+                'tecnico2_id': a['tecnico2_id'],
+                'zona': a['zona'] or ''
             }
         
-        # Camionetas ocupadas para ese día/jornada (para no duplicar)
+        # Camionetas ocupadas (para deshabilitar opciones duplicadas) - Ya no lo necesitamos así, pero lo dejamos por compatibilidad
         camionetas_ocupadas = conexion.execute('''
             SELECT DISTINCT camioneta_id 
             FROM asignaciones 
@@ -262,11 +266,11 @@ def admin():
         
         camionetas_ocupadas_ids = [row['camioneta_id'] for row in camionetas_ocupadas]
         
-        # Reportes
+        # Reportes (Se mantiene igual)
         try:
             reportes = conexion.execute('''
                 SELECT 
-                    r.id, r.tipo, r.elemento, r.estado, r.descripcion, r.fecha_hora, r.fecha_resolucion,
+                    r.id, r.tipo, r.elemento, r.estado, r.descripcion, r.fecha_hora,
                     COALESCE(cam.patente, 'SIN ASIGNAR') as patente,
                     COALESCE(u.nombre, 'TÉCNICO DESCONOCIDO') as tecnico_nombre
                 FROM reportes r
@@ -306,22 +310,22 @@ def admin():
     mensaje = request.args.get('mensaje', '')
     error = request.args.get('error', '')
     
-    # Generar la lista de filas de la planilla (una por técnico)
+    # Generar la lista de filas: ahora es POR CAMIONETA
     planilla = []
-    for tecnico in tecnicos:
-        info = asignaciones_por_tecnico.get(tecnico['id'], {
+    for camioneta in camionetas:
+        info = asignaciones_por_camioneta.get(camioneta['id'], {
             'asignacion_id': None,
-            'camioneta_id': None,
-            'zona': '',
-            'tecnico2_id': None
+            'tecnico_id': None,
+            'tecnico2_id': None,
+            'zona': ''
         })
         planilla.append({
-            'tecnico_id': tecnico['id'],
-            'tecnico_nombre': tecnico['nombre'],
+            'camioneta_id': camioneta['id'],
+            'camioneta_patente': camioneta['patente'],
             'asignacion_id': info['asignacion_id'],
-            'camioneta_id': info['camioneta_id'],
-            'zona': info['zona'],
-            'tecnico2_id': info['tecnico2_id']
+            'tecnico_id': info['tecnico_id'],
+            'tecnico2_id': info['tecnico2_id'],
+            'zona': info['zona']
         })
     
     return render_template('admin.html', 
@@ -354,39 +358,32 @@ def guardar_planilla():
     conexion = get_db()
     
     try:
-        # Procesar cada técnico
-        for tecnico_id in request.form.getlist('tecnico_ids'):
-            tecnico_id = int(tecnico_id)
-            camioneta_id = request.form.get(f'camioneta_{tecnico_id}') or None
-            zona = request.form.get(f'zona_{tecnico_id}') or ''
-            tecnico2_id = request.form.get(f'tecnico2_{tecnico_id}') or None
+        # Procesar cada CAMIONETA (ahora son las filas fijas)
+        for camioneta_id in request.form.getlist('camioneta_ids'):
+            camioneta_id = int(camioneta_id)
+            tecnico_id = request.form.get(f'tecnico_{camioneta_id}') or None
+            tecnico2_id = request.form.get(f'tecnico2_{camioneta_id}') or None
+            zona = request.form.get(f'zona_{camioneta_id}') or ''
             
-            # Verificar si ya existe una asignación para ese técnico en esa fecha/jornada
+            # Verificar si ya existe una asignación para esa camioneta en esa fecha/jornada
             existe_asignacion = conexion.execute('''
                 SELECT id FROM asignaciones 
-                WHERE tecnico_id = ? AND fecha = ? AND jornada = ?
-            ''', (tecnico_id, fecha, jornada)).fetchone()
+                WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
+            ''', (camioneta_id, fecha, jornada)).fetchone()
             
             if existe_asignacion:
                 # Actualizar la existente
                 conexion.execute('''
                     UPDATE asignaciones 
-                    SET camioneta_id = ?, zona = ?, tecnico2_id = ?, estado = 'PENDIENTE'
-                    WHERE tecnico_id = ? AND fecha = ? AND jornada = ?
-                ''', (camioneta_id, zona, tecnico2_id, tecnico_id, fecha, jornada))
+                    SET tecnico_id = ?, tecnico2_id = ?, zona = ?, estado = 'ASIGNADA'
+                    WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
+                ''', (tecnico_id, tecnico2_id, zona, camioneta_id, fecha, jornada))
             else:
                 # Crear nueva
                 conexion.execute('''
                     INSERT INTO asignaciones (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, estado, zona)
-                    VALUES (?, ?, ?, ?, ?, 'PENDIENTE', ?)
+                    VALUES (?, ?, ?, ?, ?, 'ASIGNADA', ?)
                 ''', (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, zona))
-        
-        # Actualizar estado a 'ASIGNADA' solo para los que tienen camioneta
-        conexion.execute('''
-            UPDATE asignaciones 
-            SET estado = 'ASIGNADA' 
-            WHERE fecha = ? AND jornada = ? AND camioneta_id IS NOT NULL
-        ''', (fecha, jornada))
         
         conexion.commit()
         mensaje = f'✅ Asignaciones guardadas correctamente para {fecha} ({jornada})'
