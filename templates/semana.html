@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asignación Semanal - Control de Camionetas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <div class="header-left">
+                <h1>📅 Asignación Semanal</h1>
+                <span>Jornada: {{ jornada|capitalize }}</span>
+            </div>
+            <div class="user-info">
+                <span>👤 {{ session.nombre }}</span>
+                <a href="{{ url_for('admin') }}" class="btn btn-secondary">Volver al Panel</a>
+                <a href="{{ url_for('logout') }}" class="btn btn-danger">Cerrar Sesión</a>
+            </div>
+        </header>
+
+        {% if mensaje %}
+            <div class="alert alert-success">{{ mensaje }}</div>
+        {% endif %}
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <div class="jornada-selector">
+            <form method="GET" action="{{ url_for('asignacion_semanal') }}">
+                <div class="form-group">
+                    <label for="fecha_inicio">📅 Inicio de Semana:</label>
+                    <input type="date" id="fecha_inicio" name="fecha_inicio" value="{{ fecha_inicio }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="jornada">🕐 Jornada:</label>
+                    <select id="jornada" name="jornada" onchange="this.form.submit()">
+                        <option value="mañana" {% if jornada == 'mañana' %}selected{% endif %}>Mañana</option>
+                        <option value="tarde" {% if jornada == 'tarde' %}selected{% endif %}>Tarde</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">📋 Generar Semana</button>
+            </form>
+        </div>
+
+        <div class="planilla-container">
+            <div class="planilla-header">
+                <h2>📋 PLANILLA BASE ({{ jornada|upper }})</h2>
+                <p>💡 Completá los datos. Luego usá el botón <strong>"Replicar a toda la semana"</strong> para copiar esta configuración a los 7 días.</p>
+            </div>
+
+            <!-- ⚠️ ESTE ES EL FORMULARIO ÚNICO. TODO DEBE ESTAR DENTRO -->
+            <form method="POST" action="{{ url_for('guardar_semana') }}" id="form-semana">
+                <input type="hidden" name="jornada" value="{{ jornada }}">
+                
+                {% for fecha in fechas_semana %}
+                    <input type="hidden" name="fechas[]" value="{{ fecha.strftime('%Y-%m-%d') }}">
+                {% endfor %}
+                
+                {% for camioneta in camionetas %}
+                    <input type="hidden" name="camioneta_ids" value="{{ camioneta.id }}">
+                {% endfor %}
+
+                <!-- ============ VISTA BASE (Solo Lunes) ============ -->
+                {% set fecha_vista = fechas_semana[0] %}
+                {% set fecha_vista_str = fecha_vista.strftime('%Y-%m-%d') %}
+
+                <div class="table-responsive">
+                    <table class="table-planilla">
+                        <thead>
+                            <tr>
+                                <th>PATENTE</th>
+                                <th>TÉCNICO 1 (Responsable)</th>
+                                <th>TÉCNICO 2</th>
+                                <th>ZONA</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for camioneta in camionetas %}
+                            {% set asignacion = asignaciones_por_dia.get(camioneta.id, {}).get(fecha_vista_str, {}) %}
+                            <tr>
+                                <td><strong>{{ camioneta.patente }}</strong></td>
+                                <td>
+                                    <select name="tecnico_{{ camioneta.id }}_{{ fecha_vista_str }}" class="tecnico-select" data-camioneta="{{ camioneta.id }}">
+                                        <option value="">Sin asignar</option>
+                                        {% for tecnico in tecnicos %}
+                                            <option value="{{ tecnico.id }}" {% if tecnico.id == asignacion.get('tecnico_id') %}selected{% endif %}>
+                                                {{ tecnico.nombre }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </td>
+                                <td>
+                                    <select name="tecnico2_{{ camioneta.id }}_{{ fecha_vista_str }}" class="tecnico2-select" data-camioneta="{{ camioneta.id }}">
+                                        <option value="">Sin compañero</option>
+                                        {% for tecnico in tecnicos %}
+                                            <option value="{{ tecnico.id }}" {% if tecnico.id == asignacion.get('tecnico2_id') %}selected{% endif %}>
+                                                {{ tecnico.nombre }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </td>
+                                <td>
+                                    <input type="text" name="zona_{{ camioneta.id }}_{{ fecha_vista_str }}" value="{{ asignacion.get('zona', '') }}" placeholder="Ej: C13" class="zona-input" data-camioneta="{{ camioneta.id }}">
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- ============ VISTA COMPLETA (7 DÍAS, DENTRO DEL MISMO FORM) ============ -->
+                <!-- Esta tabla se oculta/muestra con la clase 'oculto' -->
+                <div id="vista-todos-dias" class="oculto" style="margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px;">
+                    <h3>📅 Ajustar Días Específicos</h3>
+                    <div class="table-responsive">
+                        <table class="table-planilla">
+                            <thead>
+                                <tr>
+                                    <th>PATENTE</th>
+                                    {% for dia in dias_semana %}
+                                        <th>{{ dia }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for camioneta in camionetas %}
+                                <tr>
+                                    <td><strong>{{ camioneta.patente }}</strong></td>
+                                    {% for fecha in fechas_semana %}
+                                        {% set fecha_str = fecha.strftime('%Y-%m-%d') %}
+                                        {% set asignacion = asignaciones_por_dia.get(camioneta.id, {}).get(fecha_str, {}) %}
+                                        <td>
+                                            <select name="tecnico_{{ camioneta.id }}_{{ fecha_str }}" class="tecnico-dia-select">
+                                                <option value="">Sin asignar</option>
+                                                {% for tecnico in tecnicos %}
+                                                    <option value="{{ tecnico.id }}" {% if tecnico.id == asignacion.get('tecnico_id') %}selected{% endif %}>
+                                                        {{ tecnico.nombre }}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                            <select name="tecnico2_{{ camioneta.id }}_{{ fecha_str }}" class="tecnico2-dia-select">
+                                                <option value="">Sin compañero</option>
+                                                {% for tecnico in tecnicos %}
+                                                    <option value="{{ tecnico.id }}" {% if tecnico.id == asignacion.get('tecnico2_id') %}selected{% endif %}>
+                                                        {{ tecnico.nombre }}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                            <input type="text" name="zona_{{ camioneta.id }}_{{ fecha_str }}" value="{{ asignacion.get('zona', '') }}" placeholder="Zona" class="zona-dia-input">
+                                        </td>
+                                    {% endfor %}
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="planilla-actions">
+                    <button type="button" class="btn btn-success" onclick="replicarSemana()">📅 Replicar a Toda la Semana</button>
+                    <button type="submit" class="btn btn-primary">💾 Guardar Todo</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="planilla-actions" style="margin-top: 20px;">
+            <button type="button" class="btn btn-info" onclick="toggleVistaDias()">👁️ Ver / Ajustar Todos los Días</button>
+        </div>
+    </div>
+
+    <script>
+        // Función para replicar la configuración a toda la semana
+        function replicarSemana() {
+            if (!confirm('¿Estás seguro de replicar esta configuración a TODA la semana?')) return;
+            
+            // Obtener todas las camionetas que tienen un select visible (Día Base)
+            const camionetas = document.querySelectorAll('.tecnico-select');
+            
+            camionetas.forEach(tecnicoSelect => {
+                const camionetaId = tecnicoSelect.getAttribute('data-camioneta');
+                
+                // Obtener los valores del día base (Lunes)
+                const tecnicoValor = tecnicoSelect.value;
+                const tecnico2Select = document.querySelector(`.tecnico2-select[data-camioneta="${camionetaId}"]`);
+                const zonaInput = document.querySelector(`.zona-input[data-camioneta="${camionetaId}"]`);
+                
+                const tecnico2Valor = tecnico2Select ? tecnico2Select.value : '';
+                const zonaValor = zonaInput ? zonaInput.value : '';
+                
+                // Copiar a los 7 días (buscando en TODA la página, ya que todo está en el mismo form)
+                const formulario = document.getElementById('form-semana');
+                const fechasInputs = formulario.querySelectorAll('input[name="fechas[]"]');
+                
+                fechasInputs.forEach(inputFecha => {
+                    const fecha = inputFecha.value;
+                    
+                    // Buscar los campos de ese día para esa camioneta
+                    const campoTecnico = formulario.querySelector(`select[name="tecnico_${camionetaId}_${fecha}"]`);
+                    const campoTecnico2 = formulario.querySelector(`select[name="tecnico2_${camionetaId}_${fecha}"]`);
+                    const campoZona = formulario.querySelector(`input[name="zona_${camionetaId}_${fecha}"]`);
+                    
+                    if (campoTecnico) campoTecnico.value = tecnicoValor;
+                    if (campoTecnico2) campoTecnico2.value = tecnico2Valor;
+                    if (campoZona) campoZona.value = zonaValor;
+                });
+            });
+            
+            alert('✅ Configuración replicada a toda la semana. Podés ajustar días específicos en la sección de abajo.');
+        }
+
+        // Función para mostrar/ocultar la tabla con todos los días
+        function toggleVistaDias() {
+            const vista = document.getElementById('vista-todos-dias');
+            if (vista.classList.contains('oculto')) {
+                vista.classList.remove('oculto');
+            } else {
+                vista.classList.add('oculto');
+            }
+        }
+    </script>
+</body>
+</html>

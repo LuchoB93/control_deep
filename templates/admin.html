@@ -43,6 +43,7 @@
                     </select>
                 </div>
                 <button type="submit" class="btn btn-primary">📋 Ver Planilla</button>
+                <a href="{{ url_for('asignacion_semanal') }}" class="btn btn-success">📅 Asignación Semanal</a>
             </form>
         </div>
 
@@ -58,12 +59,12 @@
                 <input type="hidden" name="jornada" value="{{ jornada_seleccionada }}">
                 
                 {% for fila in planilla %}
-                    <input type="hidden" name="tecnico_ids" value="{{ fila.tecnico_id }}">
+                    <input type="hidden" name="camioneta_ids" value="{{ fila.camioneta_id }}">
                 {% endfor %}
 
                 <div class="table-responsive">
                     <table class="table-planilla">
-                                                <thead>
+                        <thead>
                             <tr>
                                 <th>PATENTE</th>
                                 <th>LOCALIDAD / ZONA</th>
@@ -76,7 +77,6 @@
                             {% for fila in planilla %}
                             <tr class="fila-asignacion">
                                 <td>
-                                    <input type="hidden" name="camioneta_ids" value="{{ fila.camioneta_id }}">
                                     <strong>{{ fila.camioneta_patente }}</strong>
                                 </td>
                                 <td>
@@ -116,9 +116,7 @@
                         </tbody>
                     </table>
                 </div>
-                <div class="planilla-actions">
-                    <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
-                </div>
+                <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
             </form>
         </div>
 
@@ -170,7 +168,7 @@
     </div>
 
     <script>
-               // Efecto visual al cambiar técnico principal (responsable)
+        // Efecto visual al cambiar técnico principal (responsable)
         document.querySelectorAll('.tecnico-select').forEach(select => {
             select.addEventListener('change', function() {
                 const fila = this.closest('tr');
@@ -188,21 +186,21 @@
 
         // Validar antes de guardar (evitar conflictos)
         document.getElementById('form-planilla').addEventListener('submit', function(e) {
-            const selects = document.querySelectorAll('.camioneta-select-planilla');
-            const camionetasSeleccionadas = new Set();
+            const selects = document.querySelectorAll('.tecnico-select');
+            const tecnicosSeleccionados = new Set();
             let conflicto = false;
             let mensajeError = '';
 
             selects.forEach(select => {
                 const valor = select.value;
                 if (valor) {
-                    if (camionetasSeleccionadas.has(valor)) {
+                    if (tecnicosSeleccionados.has(valor)) {
                         conflicto = true;
                         select.style.borderColor = 'red';
-                        const patente = select.options[select.selectedIndex].text;
-                        mensajeError = `⚠️ La camioneta ${patente} está seleccionada por más de un técnico.`;
+                        const nombre = select.options[select.selectedIndex].text;
+                        mensajeError = `⚠️ El técnico ${nombre} está seleccionado en más de una camioneta.`;
                     } else {
-                        camionetasSeleccionadas.add(valor);
+                        tecnicosSeleccionados.add(valor);
                         select.style.borderColor = '';
                     }
                 }
@@ -257,7 +255,7 @@
             contHistorial.setAttribute('data-patente-actual', patente);
         }
 
-                function toggleHistorial() {
+        function toggleHistorial() {
             const patente = document.getElementById('contenedor-historial').getAttribute('data-patente-actual');
             const histCompleto = document.getElementById('historial-completo');
             

@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 app.secret_key = 'clave_secreta_para_desarrollo'
@@ -60,7 +60,7 @@ def crear_base_de_datos():
         CREATE TABLE IF NOT EXISTS asignaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             camioneta_id INTEGER,
-            tecnico_id INTEGER NOT NULL,
+            tecnico_id INTEGER,
             tecnico2_id INTEGER,
             fecha TEXT NOT NULL,
             jornada TEXT NOT NULL,
@@ -95,7 +95,6 @@ def crear_base_de_datos():
         )
     ''')
 
-    # ⚠️ CORREGIDO: Tabla reportes creada SOLO UNA VEZ (con fecha_resolucion)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS reportes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,7 +157,7 @@ def insertar_datos_prueba(conexion):
     count = cursor.fetchone()[0]
     
     if count == 0:
-        patentes = ['AA123BB', 'AB456CD', 'AC789EF', 'AD012GH', 'AE345IJ', 'AF678KL', 'AG901MN', 'AH234OP', 'AI567QR']
+        patentes = ['AA123BB', 'AB456CD', 'AC789EF', 'AD012GH']
         for patente in patentes:
             cursor.execute('''
                 INSERT INTO camionetas (patente, activa)
@@ -231,14 +230,10 @@ def admin():
     conexion = get_db()
     
     try:
-        # Obtener técnicos para los menús desplegables
         tecnicos = obtener_tecnicos()
-        
-        # Obtener TODAS las camionetas activas (son las filas fijas)
         camionetas = obtener_camionetas()
         
-        # Obtener asignaciones para la fecha/jornada seleccionada
-        # IMPORTANTE: Ahora buscamos TODAS las asignaciones, sin filtrar por técnico
+        # Obtener asignaciones por CAMIONETA
         asignaciones_actuales = conexion.execute('''
             SELECT a.id as asignacion_id, a.camioneta_id, a.tecnico_id, a.tecnico2_id, a.zona,
                    c.patente as camioneta_patente
@@ -247,7 +242,6 @@ def admin():
             WHERE a.fecha = ? AND a.jornada = ?
         ''', (fecha_seleccionada, jornada_seleccionada)).fetchall()
         
-        # Diccionario para fácil acceso: {camioneta_id: datos}
         asignaciones_por_camioneta = {}
         for a in asignaciones_actuales:
             asignaciones_por_camioneta[a['camioneta_id']] = {
@@ -257,16 +251,7 @@ def admin():
                 'zona': a['zona'] or ''
             }
         
-        # Camionetas ocupadas (para deshabilitar opciones duplicadas) - Ya no lo necesitamos así, pero lo dejamos por compatibilidad
-        camionetas_ocupadas = conexion.execute('''
-            SELECT DISTINCT camioneta_id 
-            FROM asignaciones 
-            WHERE fecha = ? AND jornada = ? AND camioneta_id IS NOT NULL
-        ''', (fecha_seleccionada, jornada_seleccionada)).fetchall()
-        
-        camionetas_ocupadas_ids = [row['camioneta_id'] for row in camionetas_ocupadas]
-        
-        # Reportes (Se mantiene igual)
+        # Reportes (se mantiene)
         try:
             reportes = conexion.execute('''
                 SELECT 
@@ -289,7 +274,6 @@ def admin():
                 reportes_por_patente[patente].append(dict(reporte))
                 
             patentes_con_reportes = sorted(reportes_por_patente.keys())
-            
             faltantes_por_patente = {}
             for patente, registros in reportes_por_patente.items():
                 dedupe = {}
@@ -310,7 +294,6 @@ def admin():
     mensaje = request.args.get('mensaje', '')
     error = request.args.get('error', '')
     
-    # Generar la lista de filas: ahora es POR CAMIONETA
     planilla = []
     for camioneta in camionetas:
         info = asignaciones_por_camioneta.get(camioneta['id'], {
@@ -332,7 +315,6 @@ def admin():
                          camionetas=camionetas,
                          tecnicos=tecnicos,
                          planilla=planilla,
-                         camionetas_ocupadas=camionetas_ocupadas_ids,
                          reportes=reportes, 
                          reportes_por_patente=reportes_por_patente,
                          faltantes_por_patente=faltantes_por_patente,
@@ -358,7 +340,7 @@ def guardar_planilla():
     conexion = get_db()
     
     try:
-        # Procesar cada CAMIONETA (ahora son las filas fijas)
+        # Procesar cada camioneta
         for camioneta_id in request.form.getlist('camioneta_ids'):
             camioneta_id = int(camioneta_id)
             tecnico_id = request.form.get(f'tecnico_{camioneta_id}') or None
@@ -372,7 +354,7 @@ def guardar_planilla():
             ''', (camioneta_id, fecha, jornada)).fetchone()
             
             if existe_asignacion:
-                # Actualizar la existente
+                # Actualizar
                 conexion.execute('''
                     UPDATE asignaciones 
                     SET tecnico_id = ?, tecnico2_id = ?, zona = ?, estado = 'ASIGNADA'
@@ -386,7 +368,7 @@ def guardar_planilla():
                 ''', (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, zona))
         
         conexion.commit()
-        mensaje = f'✅ Asignaciones guardadas correctamente para {fecha} ({jornada})'
+        mensaje = f'✅ Planilla guardada correctamente para {fecha} ({jornada})'
         
     except Exception as e:
         conexion.rollback()
@@ -395,6 +377,119 @@ def guardar_planilla():
         conexion.close()
     
     return redirect(url_for('admin', fecha=fecha, jornada=jornada, mensaje=mensaje))
+
+@app.route('/admin/semana', methods=['GET', 'POST'])
+def asignacion_semanal():
+    """Asignación rápida para toda la semana"""
+    if 'usuario_id' not in session or session.get('rol') != 'admin':
+        return redirect(url_for('login'))
+    
+    # Obtener la jornada y la fecha de inicio de la semana
+    jornada = request.args.get('jornada', 'mañana')
+    fecha_inicio = request.args.get('fecha_inicio', datetime.now().strftime('%Y-%m-%d'))
+    
+    # ⚠️ DEFINIR LOS DÍAS DE LA SEMANA
+    dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+    
+    # Calcular el lunes de la semana seleccionada
+    fecha_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
+    inicio_semana = fecha_dt - timedelta(days=fecha_dt.weekday())
+    fechas_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
+    
+    conexion = get_db()
+    
+    try:
+        tecnicos = obtener_tecnicos()
+        camionetas = obtener_camionetas()
+        
+        # Obtener todas las asignaciones de la semana para la jornada
+        fechas_str = [fecha.strftime('%Y-%m-%d') for fecha in fechas_semana]
+        placeholders = ','.join('?' for _ in fechas_str)
+        
+        asignaciones_semana = conexion.execute(f'''
+            SELECT a.camioneta_id, a.tecnico_id, a.tecnico2_id, a.zona, a.fecha
+            FROM asignaciones a
+            WHERE a.fecha IN ({placeholders}) AND a.jornada = ?
+        ''', fechas_str + [jornada]).fetchall()
+        
+        asignaciones_por_dia = {}
+        for asignacion in asignaciones_semana:
+            camioneta_id = asignacion['camioneta_id']
+            fecha = asignacion['fecha']
+            if camioneta_id not in asignaciones_por_dia:
+                asignaciones_por_dia[camioneta_id] = {}
+            if fecha not in asignaciones_por_dia[camioneta_id]:
+                asignaciones_por_dia[camioneta_id][fecha] = {
+                    'tecnico_id': asignacion['tecnico_id'],
+                    'tecnico2_id': asignacion['tecnico2_id'],
+                    'zona': asignacion['zona'] or ''
+                }
+        
+    finally:
+        conexion.close()
+    
+    return render_template('semana.html', 
+                         tecnicos=tecnicos,
+                         camionetas=camionetas,
+                         dias_semana=dias_semana,
+                         fechas_semana=fechas_semana,
+                         asignaciones_por_dia=asignaciones_por_dia,
+                         jornada=jornada,
+                         fecha_inicio=fecha_inicio)
+
+@app.route('/guardar-semana', methods=['POST'])
+def guardar_semana():
+    """Guarda todas las asignaciones de la semana"""
+    if 'usuario_id' not in session or session.get('rol') != 'admin':
+        return redirect(url_for('login'))
+    
+    # Obtener los datos del formulario
+    fechas = request.form.getlist('fechas[]')
+    jornada = request.form.get('jornada', 'mañana')
+    
+    conexion = get_db()
+    
+    try:
+        # Procesar cada camioneta
+        for camioneta_id in request.form.getlist('camioneta_ids'):
+            camioneta_id = int(camioneta_id)
+            
+            # Procesar cada día de la semana
+            for fecha in fechas:
+                tecnico_id = request.form.get(f'tecnico_{camioneta_id}_{fecha}') or None
+                tecnico2_id = request.form.get(f'tecnico2_{camioneta_id}_{fecha}') or None
+                zona = request.form.get(f'zona_{camioneta_id}_{fecha}') or ''
+                
+                # Verificar si ya existe una asignación para esa camioneta en esa fecha/jornada
+                existe_asignacion = conexion.execute('''
+                    SELECT id FROM asignaciones 
+                    WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
+                ''', (camioneta_id, fecha, jornada)).fetchone()
+                
+                if existe_asignacion:
+                    # Actualizar
+                    conexion.execute('''
+                        UPDATE asignaciones 
+                        SET tecnico_id = ?, tecnico2_id = ?, zona = ?, estado = 'ASIGNADA'
+                        WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
+                    ''', (tecnico_id, tecnico2_id, zona, camioneta_id, fecha, jornada))
+                else:
+                    # Crear nueva
+                    conexion.execute('''
+                        INSERT INTO asignaciones (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, estado, zona)
+                        VALUES (?, ?, ?, ?, ?, 'ASIGNADA', ?)
+                    ''', (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, zona))
+        
+        conexion.commit()
+        mensaje = f'✅ Asignaciones de la semana guardadas correctamente'
+        
+    except Exception as e:
+        conexion.rollback()
+        return redirect(url_for('asignacion_semanal', error=f'Error al guardar: {str(e)}'))
+    finally:
+        conexion.close()
+    
+    return redirect(url_for('asignacion_semanal', mensaje=mensaje))
 
 @app.route('/tecnico')
 def tecnico():
@@ -439,7 +534,6 @@ def jefe():
             SELECT id, patente FROM camionetas WHERE activa = 1 ORDER BY patente
         ''').fetchall()
         
-        # Obtener TODOS los reportes (incluyendo los RESUELTOS)
         reportes = conexion.execute('''
             SELECT r.estado, r.elemento, r.descripcion, r.fecha_hora, r.fecha_resolucion,
                    COALESCE(cam.patente, 'SIN ASIGNAR') as patente,
@@ -452,24 +546,20 @@ def jefe():
             ORDER BY r.fecha_hora DESC
         ''').fetchall()
         
-        # Estructura de datos
         resumen_flota = {}
         for camioneta in camionetas:
             patente = camioneta['patente']
-            # Inicializar todas las camionetas como OK
             resumen_flota[patente] = {
                 'estado_general': 'OK', 
-                'historial': [],  # Solo historial para el clic
+                'historial': [],
                 'ultimo_registro': 'Sin registros'
             }
         
         for r in reportes:
             patente = r['patente']
             if patente in resumen_flota:
-                # Actualizar el último registro
                 resumen_flota[patente]['ultimo_registro'] = r['fecha_hora'][:16].replace('T', ' ')
                 
-                # Guardar TODO en el historial
                 resumen_flota[patente]['historial'].append({
                     'fecha': r['fecha_hora'][:16].replace('T', ' '),
                     'elemento': r['elemento'],
@@ -479,7 +569,6 @@ def jefe():
                     'fecha_resolucion': r['fecha_resolucion'] or '-'
                 })
                 
-                # Solo definir el estado general basado en las FALLAS y FALTANTES (NO resueltos)
                 if r['estado'] == 'FALLA':
                     resumen_flota[patente]['estado_general'] = 'FALLA'
                 elif r['estado'] == 'FALTANTE' and resumen_flota[patente]['estado_general'] != 'FALLA':
@@ -508,10 +597,7 @@ def resolver_reporte(reporte_id):
     
     conexion = get_db()
     try:
-        # Obtener la fecha y hora actuales
         ahora = datetime.now().strftime('%Y-%m-%d %H:%M')
-        
-        # Actualizar el estado del reporte y la fecha de resolución
         conexion.execute('''
             UPDATE reportes 
             SET estado = 'RESUELTO', fecha_resolucion = ?
@@ -524,7 +610,6 @@ def resolver_reporte(reporte_id):
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         conexion.close()
-
 
 @app.route('/logout')
 def logout():
