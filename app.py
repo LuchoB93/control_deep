@@ -36,7 +36,7 @@ def crear_base_de_datos():
     """Crea las tablas si no existen"""
     conexion = conectar_db()
     cursor = conexion.cursor()
-    
+    #Tabla Usuarios
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +47,7 @@ def crear_base_de_datos():
             activo INTEGER DEFAULT 1
         )
     ''')
-    
+    #Tabla camionetas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS camionetas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +55,7 @@ def crear_base_de_datos():
             activa INTEGER DEFAULT 1
         )
     ''')
-    
+    #Tabla asignaciones
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS asignaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +71,7 @@ def crear_base_de_datos():
             FOREIGN KEY (tecnico2_id) REFERENCES usuarios(id)
         )
     ''')
-    
+    #Tabla Controles
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS controles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +83,7 @@ def crear_base_de_datos():
             FOREIGN KEY (asignacion_id) REFERENCES asignaciones(id)
         )
     ''')
-    
+    #Tabla control detalles
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS control_detalles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +95,7 @@ def crear_base_de_datos():
         )
     ''')
 
+        # Tabla reportes
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS reportes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,10 +106,12 @@ def crear_base_de_datos():
             descripcion TEXT,
             fecha_hora TEXT NOT NULL,
             fecha_resolucion TEXT,
+            comentario_resolucion TEXT,
+            resuelto_por TEXT,
             FOREIGN KEY (control_id) REFERENCES controles(id)
         )
     ''')
-    
+    #Tabla Fotos. No implementado todavia 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fotos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,10 +135,17 @@ def insertar_datos_prueba(conexion):
     count = cursor.fetchone()[0]
     
     if count == 0:
-        cursor.execute('''
-            INSERT INTO usuarios (nombre, usuario, password, rol, activo)
-            VALUES (?, ?, ?, ?, ?)
-        ''', ('Administrador', 'admin', 'admin123', 'admin', 1))
+        # Crear múltiples administradores
+        admins = [
+            ('Luciano', 'luciano', 'lucho123'),
+            ('Juan', 'juan', 'juan123'),
+            ('Mateo', 'mateo', 'mateo123')
+        ]
+        for nombre, usuario, password in admins:
+            cursor.execute('''
+                INSERT INTO usuarios (nombre, usuario, password, rol, activo)
+                VALUES (?, ?, ?, 'admin', 1)
+            ''', (nombre, usuario, password))
         
         cursor.execute('''
             INSERT INTO usuarios (nombre, usuario, password, rol, activo)
@@ -255,7 +265,8 @@ def admin():
         try:
             reportes = conexion.execute('''
                 SELECT 
-                    r.id, r.tipo, r.elemento, r.estado, r.descripcion, r.fecha_hora,
+                    r.id, r.tipo, r.elemento, r.estado, r.descripcion, r.fecha_hora, 
+                    r.fecha_resolucion, r.comentario_resolucion, r.resuelto_por,
                     COALESCE(cam.patente, 'SIN ASIGNAR') as patente,
                     COALESCE(u.nombre, 'TÉCNICO DESCONOCIDO') as tecnico_nombre
                 FROM reportes r
@@ -530,12 +541,14 @@ def jefe():
     conexion = get_db()
     
     try:
+        #Consulta sql para camionetas
         camionetas = conexion.execute('''
             SELECT id, patente FROM camionetas WHERE activa = 1 ORDER BY patente
         ''').fetchall()
-        
+        #Consulta sql para reportes
         reportes = conexion.execute('''
-            SELECT r.estado, r.elemento, r.descripcion, r.fecha_hora, r.fecha_resolucion,
+            SELECT r.estado, r.elemento, r.descripcion, r.fecha_hora, r.fecha_resolucion, 
+                   r.comentario_resolucion, r.resuelto_por,
                    COALESCE(cam.patente, 'SIN ASIGNAR') as patente,
                    COALESCE(u.nombre, 'TÉCNICO DESCONOCIDO') as tecnico_nombre
             FROM reportes r
@@ -566,7 +579,9 @@ def jefe():
                     'estado': r['estado'],
                     'descripcion': r['descripcion'],
                     'tecnico': r['tecnico_nombre'],
-                    'fecha_resolucion': r['fecha_resolucion'] or '-'
+                    'fecha_resolucion': r['fecha_resolucion'] or '-',
+                    'resuelto_por': r['resuelto_por'] or '-',
+                    'comentario_resolucion': r['comentario_resolucion'] or '-'
                 })
                 
                 if r['estado'] == 'FALLA':
@@ -595,14 +610,20 @@ def resolver_reporte(reporte_id):
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     
+    # Obtener el nombre del administrador
+    nombre_admin = session.get('nombre', 'Administrador')
+    
     conexion = get_db()
     try:
+        # Obtener la fecha y hora actuales
         ahora = datetime.now().strftime('%Y-%m-%d %H:%M')
+        
+        # Actualizar el estado del reporte, la fecha y quién lo resolvió
         conexion.execute('''
             UPDATE reportes 
-            SET estado = 'RESUELTO', fecha_resolucion = ?
+            SET estado = 'RESUELTO', fecha_resolucion = ?, resuelto_por = ?
             WHERE id = ?
-        ''', (ahora, reporte_id))
+        ''', (ahora, nombre_admin, reporte_id))
         conexion.commit()
         return jsonify({'success': True, 'fecha_resolucion': ahora})
     except Exception as e:
@@ -610,6 +631,67 @@ def resolver_reporte(reporte_id):
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         conexion.close()
+
+@app.route('/comentar-reporte/<int:reporte_id>', methods=['POST'])
+def comentar_reporte(reporte_id):
+    """Agrega un comentario a un reporte ya resuelto"""
+    if 'usuario_id' not in session or session.get('rol') != 'admin':
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    
+    data = request.get_json()
+    comentario = data.get('comentario', '').strip()
+    
+    if not comentario:
+        return jsonify({'success': False, 'error': 'El comentario es requerido'}), 400
+    
+    conexion = get_db()
+    try:
+        # Actualizar el comentario del reporte
+        conexion.execute('''
+            UPDATE reportes 
+            SET comentario_resolucion = ?
+            WHERE id = ?
+        ''', (comentario, reporte_id))
+        conexion.commit()
+        return jsonify({'success': True, 'comentario': comentario})
+    except Exception as e:
+        conexion.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conexion.close()       
+
+@app.route('/remito/<int:reporte_id>')
+def generar_remito(reporte_id):
+    """Genera un remito específico para un reporte de tipo FALTANTE"""
+    if 'usuario_id' not in session or session.get('rol') not in ('admin', 'jefe'):
+        return redirect(url_for('login'))
+    
+    conexion = get_db()
+    try:
+        # Obtener el reporte y sus datos vinculados
+        reporte = conexion.execute('''
+            SELECT r.id, r.elemento, r.descripcion, r.estado, r.fecha_hora,
+                   c.patente, u.nombre as tecnico_nombre
+            FROM reportes r
+            LEFT JOIN controles co ON r.control_id = co.id
+            LEFT JOIN asignaciones a ON co.asignacion_id = a.id
+            LEFT JOIN camionetas c ON a.camioneta_id = c.id
+            LEFT JOIN usuarios u ON a.tecnico_id = u.id
+            WHERE r.id = ?
+        ''', (reporte_id,)).fetchone()
+        
+        if not reporte or reporte['estado'] != 'FALTANTE':
+            return redirect(url_for('admin', error='Remito no disponible para este reporte'))
+        
+        # Obtener el nombre del admin que generó el remito
+        admin_nombre = session.get('nombre', 'Administrador')
+        
+    finally:
+        conexion.close()
+    
+    return render_template('remito.html', 
+                         reporte=reporte,
+                         admin_nombre=admin_nombre)       
 
 @app.route('/logout')
 def logout():

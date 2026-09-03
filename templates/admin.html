@@ -167,6 +167,21 @@
          data-historial='{{ reportes_por_patente | tojson }}'>
     </div>
 
+    <!-- VENTANA MODAL PARA AÑADIR COMENTARIO -->
+    <div id="modal-comentario" class="modal-overlay">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 id="modal-comentario-titulo">Añadir Comentario</h3>
+                <button class="modal-close" onclick="cerrarModalComentario()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="modal-comentario-descripcion"></p>
+                <textarea id="input-comentario" class="form-control" rows="4" placeholder="Escribí cómo se resolvió este problema..."></textarea>
+                <button type="button" class="btn btn-primary" onclick="guardarComentario()" style="margin-top: 10px;">💾 Guardar Comentario</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Efecto visual al cambiar técnico principal (responsable)
         document.querySelectorAll('.tecnico-select').forEach(select => {
@@ -217,7 +232,7 @@
         const faltantesData = JSON.parse(contenedorDatos.getAttribute('data-faltantes') || '{}');
         const historialData = JSON.parse(contenedorDatos.getAttribute('data-historial') || '{}');
 
-        function mostrarDetallesPatente() {
+               function mostrarDetallesPatente() {
             const patente = document.getElementById('selector-patente').value;
             const contFaltantes = document.getElementById('contenedor-faltantes');
             const contHistorial = document.getElementById('contenedor-historial');
@@ -241,9 +256,18 @@
                 htmlFaltantes += '<ul style="list-style: none; padding: 0; margin: 0;">';
                 faltantes.forEach(item => {
                     let icono = item.estado === 'FALLA' ? '⚠️' : (item.estado === 'FALTANTE' ? '❌' : '📝');
+                    let botonRemito = '';
+                    
+                    // Solo mostrar el botón de remito si es FALTANTE
+                    if (item.estado === 'FALTANTE') {
+                        botonRemito = `<button class="btn-remito" onclick="window.open('/remito/${item.id}', '_blank')">🖨️ Imprimir Remito</button>`;
+                    }
+                    
                     htmlFaltantes += `<li class="item-reporte" id="reporte-item-${item.id}">
                         <strong>${icono} ${item.elemento}:</strong> ${item.estado} - ${item.descripcion || ''}
                         <button class="btn-resolver" onclick="resolverReporte(${item.id})">✔ Resolver</button>
+                        <button class="btn-comentar" onclick="abrirModalComentario(${item.id}, '${item.elemento}', '${item.descripcion || ''}')">💬 Comentar</button>
+                        ${botonRemito}
                     </li>`;
                 });
                 htmlFaltantes += '</ul>';
@@ -254,19 +278,21 @@
             histCompleto.classList.add('oculto');
             contHistorial.setAttribute('data-patente-actual', patente);
         }
-
-        function toggleHistorial() {
+            //Funcion para obtener el historial y resoluciones por rol
+                   function toggleHistorial() {
             const patente = document.getElementById('contenedor-historial').getAttribute('data-patente-actual');
             const histCompleto = document.getElementById('historial-completo');
             
             if (histCompleto.classList.contains('oculto')) {
                 const registros = historialData[patente] || [];
                 let htmlHist = `<h4 style="margin-top:0;">Historial Completo de ${patente}</h4>`;
-                htmlHist += '<table class="tabla-historial"><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Fecha de Resolución</th></tr></thead><tbody>';
+                htmlHist += '<table class="tabla-historial"><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Resuelto Por</th><th>Fecha de Resolución</th><th>Comentario</th></tr></thead><tbody>';
                 
                 registros.forEach(r => {
                     let fechaFormateada = r.fecha_hora ? r.fecha_hora.slice(0, 16).replace('T', ' ') : '-';
                     let fechaResolucion = r.fecha_resolucion || '-';
+                    let resueltoPor = r.resuelto_por || '-';
+                    let comentario = r.comentario_resolucion || '-';
                     let badge = '';
                     if (r.estado === 'FALLA') badge = '<span class="estado-falla">FALLA</span>';
                     else if (r.estado === 'FALTANTE') badge = '<span class="estado-faltante">FALTANTE</span>';
@@ -279,7 +305,9 @@
                         <td>${badge}</td>
                         <td>${r.descripcion || '-'}</td>
                         <td>${r.tecnico_nombre}</td>
+                        <td>${resueltoPor}</td>
                         <td style="white-space: nowrap;">${fechaResolucion}</td>
+                        <td>${comentario}</td>
                     </tr>`;
                 });
                 
@@ -310,6 +338,8 @@
                         elemento.style.textDecoration = 'line-through';
                         elemento.querySelector('.btn-resolver').disabled = true;
                         elemento.querySelector('.btn-resolver').textContent = '✔ Resuelto';
+                        elemento.querySelector('.btn-comentar').disabled = true;
+                        elemento.querySelector('.btn-comentar').textContent = '✔ Comentado';
                     }
                     
                     alert('✅ Reporte resuelto exitosamente!');
@@ -322,6 +352,61 @@
                 alert('❌ Error de conexión: ' + error);
             });
         }
+
+        // Función para abrir la modal de comentario
+        function abrirModalComentario(reporteId, elemento, descripcion) {
+            document.getElementById('modal-comentario-titulo').textContent = 'Comentar: ' + elemento;
+            document.getElementById('modal-comentario-descripcion').textContent = descripcion;
+            document.getElementById('input-comentario').value = '';
+            document.getElementById('modal-comentario').style.display = 'flex';
+            
+            // Guardar el ID en un atributo del modal
+            document.getElementById('modal-comentario').setAttribute('data-reporte-id', reporteId);
+        }
+
+        // Función para cerrar la modal
+        function cerrarModalComentario() {
+            document.getElementById('modal-comentario').style.display = 'none';
+        }
+
+        // Función para guardar el comentario
+        function guardarComentario() {
+            const reporteId = document.getElementById('modal-comentario').getAttribute('data-reporte-id');
+            const comentario = document.getElementById('input-comentario').value.trim();
+            
+            if (!comentario) {
+                alert('Por favor, escribí un comentario.');
+                return;
+            }
+            
+            fetch(`/comentar-reporte/${reporteId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ comentario: comentario })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ Comentario guardado exitosamente!');
+                    cerrarModalComentario();
+                    window.location.reload();
+                } else {
+                    alert('❌ Error al guardar el comentario: ' + (data.error || 'Desconocido'));
+                }
+            })
+            .catch(error => {
+                alert('❌ Error de conexión: ' + error);
+            });
+        }
+
+        // Cerrar modal al hacer clic fuera
+        document.getElementById('modal-comentario').addEventListener('click', function(e) {
+            if (e.target === this) {
+                cerrarModalComentario();
+            }
+        });
     </script>
 </body>
 </html>

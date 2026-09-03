@@ -59,17 +59,18 @@
 
     <script>
         // Datos de las camionetas (pasados desde Flask)
-        const datosCamionetas = {{ resumen_flota | tojson }};
+         const datosCamionetas = {{ resumen_flota | tojson }};
 
+                // Función para abrir el historial
                 // Función para abrir el historial
         function abrirHistorial(patente) {
             const info = datosCamionetas[patente];
             if (!info) return;
             
-            let html = '<table><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Fecha de Resolución</th></tr></thead><tbody>';
+            let html = '<table><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Resuelto Por</th><th>Fecha de Resolución</th><th>Comentario</th></tr></thead><tbody>';
             
             if (info.historial.length === 0) {
-                html += '<tr><td colspan="6">✅ Sin registros para esta camioneta.</td></tr>';
+                html += '<tr><td colspan="8">✅ Sin registros para esta camioneta.</td></tr>';
             } else {
                 info.historial.forEach(item => {
                     let badge = '';
@@ -80,6 +81,8 @@
                     else badge = '<span class="estado-ok">OK</span>';
                     
                     let fechaResolucion = item.fecha_resolucion || '-';
+                    let resueltoPor = item.resuelto_por || '-';
+                    let comentario = item.comentario_resolucion || '-';
                     
                     html += `<tr>
                         <td style="white-space: nowrap;">${item.fecha}</td>
@@ -87,7 +90,9 @@
                         <td>${badge}</td>
                         <td>${item.descripcion || '-'}</td>
                         <td>${item.tecnico}</td>
+                        <td>${resueltoPor}</td>
                         <td style="white-space: nowrap;">${fechaResolucion}</td>
+                        <td>${comentario}</td>
                     </tr>`;
                 });
             }
