@@ -1,7 +1,14 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_file
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
+import os
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 app = Flask(__name__)
 app.secret_key = 'clave_secreta_para_desarrollo'
@@ -9,6 +16,9 @@ app.secret_key = 'clave_secreta_para_desarrollo'
 # Configuración de la base de datos
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "database.db"
+
+# Configuración de la carpeta de remitos
+REMITOS_DIR = BASE_DIR / "remitos"
 
 # Constantes para los elementos de la camioneta
 EXPECTED_CAMIONETA = [
@@ -68,6 +78,181 @@ TODOS_ELEMENTOS = {
     'CAJA': EXPECTED_CAJA
 }
 
+# ============================================
+# FUNCIONES AUXILIARES PARA REMITOS
+# ============================================
+
+def crear_carpeta_remitos(patente, fecha):
+    """Crea la estructura de carpetas para remitos"""
+    if not REMITOS_DIR.exists():
+        REMITOS_DIR.mkdir()
+    
+    carpeta_patente = REMITOS_DIR / patente
+    if not carpeta_patente.exists():
+        carpeta_patente.mkdir()
+    
+    year_month = fecha[:7]
+    carpeta_fecha = carpeta_patente / year_month
+    if not carpeta_fecha.exists():
+        carpeta_fecha.mkdir()
+    
+    return carpeta_fecha
+
+def generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf):
+    """Genera el PDF del remito usando ReportLab"""
+    doc = SimpleDocTemplate(str(ruta_pdf), pagesize=A4,
+                           rightMargin=1.5*cm, leftMargin=1.5*cm,
+                           topMargin=1.5*cm, bottomMargin=1.5*cm)
+    
+    styles = getSampleStyleSheet()
+    
+    # Estilos personalizados
+    titulo_style = ParagraphStyle(
+        'Titulo',
+        parent=styles['Heading1'],
+        alignment=TA_CENTER,
+        fontSize=18,
+        textColor=colors.HexColor('#1a1a2e'),
+        spaceAfter=10
+    )
+    
+    subtitulo_style = ParagraphStyle(
+        'Subtitulo',
+        parent=styles['Heading2'],
+        alignment=TA_CENTER,
+        fontSize=14,
+        textColor=colors.HexColor('#555'),
+        spaceAfter=20
+    )
+    
+    campo_label_style = ParagraphStyle(
+        'CampoLabel',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=colors.HexColor('#333'),
+        fontName='Helvetica-Bold',
+        alignment=TA_LEFT
+    )
+    
+    campo_valor_style = ParagraphStyle(
+        'CampoValor',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=colors.HexColor('#555'),
+        alignment=TA_LEFT
+    )
+    
+    firma_style = ParagraphStyle(
+        'Firma',
+        parent=styles['Normal'],
+        fontSize=11,
+        alignment=TA_CENTER,
+        spaceAfter=30
+    )
+    
+    # Elementos del PDF
+    elements = []
+    
+    # Logo o título
+    elements.append(Paragraph("CONTROL DE CAMIONETAS", titulo_style))
+    elements.append(Paragraph("REMITO DE ENTREGA DE MATERIAL", subtitulo_style))
+    elements.append(Spacer(1, 0.5*cm))
+    
+    # Datos del remito
+    data = [
+        ['N° REMITO:', f"REM-{fecha_hora.strftime('%Y%m%d')}-{reporte['id']}"],
+        ['FECHA:', fecha_hora.strftime('%d/%m/%Y %H:%M')],
+        ['PATENTE:', reporte['patente']],
+        ['ZONA:', reporte['zona'] or 'No especificada'],
+        ['TÉCNICO RESPONSABLE:', reporte['tecnico_nombre'] or 'No asignado'],
+        ['MATERIAL:', reporte['elemento']],
+        ['ESTADO:', 'FALTANTE'],
+        ['DESCRIPCIÓN:', reporte['descripcion'] or 'Sin descripción'],
+    ]
+    
+    # Crear tabla de datos
+    tabla_data = []
+    for label, value in data:
+        tabla_data.append([
+            Paragraph(label, campo_label_style),
+            Paragraph(str(value), campo_valor_style)
+        ])
+    
+    tabla = Table(tabla_data, colWidths=[4*cm, 10*cm])
+    tabla.setStyle(TableStyle([
+        ('FONTSIZE', (0, 0), (-1, -1), 11),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f5f5f5')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    
+    elements.append(tabla)
+    elements.append(Spacer(1, 1*cm))
+    
+    # Línea de firma (solo para administradores)
+    elements.append(Paragraph("FIRMA DEL ADMINISTRADOR", firma_style))
+    elements.append(Spacer(1, 0.3*cm))
+    
+    # Línea de firma con nombre del admin
+    firma_linea = f"{admin_nombre} (Administrador)"
+    elements.append(Paragraph(firma_linea, ParagraphStyle(
+        'FirmaNombre',
+        parent=styles['Normal'],
+        alignment=TA_CENTER,
+        fontSize=11,
+        fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#333'),
+        spaceAfter=20
+    )))
+    elements.append(Paragraph("_________________________", ParagraphStyle(
+        'FirmaLinea',
+        parent=styles['Normal'],
+        alignment=TA_CENTER,
+        fontSize=11,
+        spaceAfter=10
+    )))
+    elements.append(Paragraph("Firma del Administrador", ParagraphStyle(
+        'FirmaTexto',
+        parent=styles['Normal'],
+        alignment=TA_CENTER,
+        fontSize=9,
+        textColor=colors.HexColor('#888')
+    )))
+    
+    elements.append(Spacer(1, 1*cm))
+    
+    # Pie de página
+    pie_style = ParagraphStyle(
+        'Pie',
+        parent=styles['Normal'],
+        alignment=TA_CENTER,
+        fontSize=8,
+        textColor=colors.HexColor('#999')
+    )
+    elements.append(Paragraph("Documento generado por el Sistema de Control de Camionetas", pie_style))
+    elements.append(Paragraph(f"Remito generado el {fecha_hora.strftime('%d/%m/%Y a las %H:%M')}", pie_style))
+    
+    # Generar PDF
+    doc.build(elements)
+    return ruta_pdf
+
+# ============================================
+# FILTROS PARA JINJA2
+# ============================================
+
+@app.template_filter('timestamp_to_datetime')
+def timestamp_to_datetime(timestamp):
+    """Convierte timestamp a fecha legible"""
+    if timestamp:
+        return datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y %H:%M')
+    return '-'
+
+# ============================================
+# FUNCIONES DE BASE DE DATOS
+# ============================================
+
 @app.before_request
 def limpiar_redirecciones():
     """Evita bucles de redirección cuando el rol no coincide con la ruta"""
@@ -94,7 +279,8 @@ def crear_base_de_datos():
     """Crea las tablas si no existen"""
     conexion = conectar_db()
     cursor = conexion.cursor()
-    #Tabla Usuarios
+    
+    # Tabla Usuarios
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,22 +291,23 @@ def crear_base_de_datos():
             activo INTEGER DEFAULT 1
         )
     ''')
-    #Tabla estadisticas para tecnicos
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS estadisticas_tecnicos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tecnico_id INTEGER NOT NULL,
-        elemento TEXT NOT NULL,
-        categoria TEXT NOT NULL,
-        tipo_reporte TEXT NOT NULL,  -- 'FALTANTE', 'FALLA', 'OBSERVACION'
-        fecha_reporte TEXT NOT NULL,
-        fecha_resolucion TEXT,
-        resuelto INTEGER DEFAULT 0,
-        FOREIGN KEY (tecnico_id) REFERENCES usuarios(id)
-    )
-''')
     
-    #Tabla camionetas
+    # Tabla estadisticas_tecnicos
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS estadisticas_tecnicos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tecnico_id INTEGER NOT NULL,
+            elemento TEXT NOT NULL,
+            categoria TEXT NOT NULL,
+            tipo_reporte TEXT NOT NULL,
+            fecha_reporte TEXT NOT NULL,
+            fecha_resolucion TEXT,
+            resuelto INTEGER DEFAULT 0,
+            FOREIGN KEY (tecnico_id) REFERENCES usuarios(id)
+        )
+    ''')
+    
+    # Tabla camionetas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS camionetas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,22 +315,23 @@ def crear_base_de_datos():
             activa INTEGER DEFAULT 1
         )
     ''')
-
-     # Tabla para los controles diarios del técnico
+    
+    # Tabla controles_tecnicos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS controles_tecnicos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             asignacion_id INTEGER NOT NULL,
             fecha TEXT NOT NULL,
-            jornada TEXT NOT NULL,  -- 'mañana' o 'tarde'
-            tipo_control TEXT NOT NULL,  -- 'RETIRO' o 'DEVOLUCION'
+            jornada TEXT NOT NULL,
+            tipo_control TEXT NOT NULL,
             finalizado INTEGER DEFAULT 0,
             fecha_hora_inicio TEXT NOT NULL,
             fecha_hora_fin TEXT,
             FOREIGN KEY (asignacion_id) REFERENCES asignaciones(id)
         )
     ''')
-
+    
+    # Tabla items_control_tecnico
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS items_control_tecnico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,24 +344,23 @@ def crear_base_de_datos():
             FOREIGN KEY (control_tecnico_id) REFERENCES controles_tecnicos(id)
         )
     ''')
-
-
-     # Tabla para el estado de elementos (bloqueados por fallas)
+    
+    # Tabla elementos_bloqueados
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS elementos_bloqueados (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             elemento TEXT NOT NULL,
             camioneta_id INTEGER NOT NULL,
-            tipo TEXT NOT NULL,  -- 'CAMIONETA', 'HERRAMIENTA', 'CAJA'
+            tipo TEXT NOT NULL,
             fecha_bloqueo TEXT NOT NULL,
             motivo TEXT,
-            resuelto INTEGER DEFAULT 0,  -- 0=pendiente, 1=resuelto
+            resuelto INTEGER DEFAULT 0,
             fecha_resolucion TEXT,
             FOREIGN KEY (camioneta_id) REFERENCES camionetas(id)
         )
     ''')
-
-    #Tabla asignaciones
+    
+    # Tabla asignaciones
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS asignaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,7 +376,8 @@ def crear_base_de_datos():
             FOREIGN KEY (tecnico2_id) REFERENCES usuarios(id)
         )
     ''')
-    #Tabla Controles
+    
+    # Tabla Controles
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS controles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -201,7 +389,8 @@ def crear_base_de_datos():
             FOREIGN KEY (asignacion_id) REFERENCES asignaciones(id)
         )
     ''')
-    #Tabla control detalles
+    
+    # Tabla control_detalles
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS control_detalles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,27 +401,29 @@ def crear_base_de_datos():
             FOREIGN KEY (control_id) REFERENCES controles(id)
         )
     ''')
-
-        # En crear_base_de_datos(), modifica la tabla reportes
+    
+    # Tabla reportes
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS reportes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        control_id INTEGER NOT NULL,
-        tipo TEXT NOT NULL,
-        elemento TEXT NOT NULL,
-        estado TEXT NOT NULL,
-        descripcion TEXT,
-        fecha_hora TEXT NOT NULL,
-        fecha_resolucion TEXT,
-        comentario_resolucion TEXT,
-        resuelto_por TEXT,
-        entregado_por TEXT,          -- NUEVO: quien entregó el material
-        recibido_por TEXT,           -- NUEVO: quien recibió el material
-        fecha_entrega TEXT,          -- NUEVO: fecha de entrega
-        FOREIGN KEY (control_id) REFERENCES controles(id)
-    )
-''')
-    #Tabla Fotos. No implementado todavia 
+        CREATE TABLE IF NOT EXISTS reportes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            control_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            elemento TEXT NOT NULL,
+            estado TEXT NOT NULL,
+            descripcion TEXT,
+            fecha_hora TEXT NOT NULL,
+            fecha_resolucion TEXT,
+            comentario_resolucion TEXT,
+            resuelto_por TEXT,
+            entregado_por TEXT,
+            recibido_por TEXT,
+            fecha_entrega TEXT,
+            ruta_remito TEXT,
+            FOREIGN KEY (control_id) REFERENCES controles(id)
+        )
+    ''')
+    
+    # Tabla Fotos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fotos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,7 +447,6 @@ def insertar_datos_prueba(conexion):
     count = cursor.fetchone()[0]
     
     if count == 0:
-        # Crear múltiples administradores
         admins = [
             ('Luciano', 'luciano', 'lucho123'),
             ('Juan', 'juan', 'juan123'),
@@ -315,6 +505,9 @@ def obtener_camionetas():
     conexion.close()
     return camionetas
 
+# ============================================
+# RUTAS DE ESTADÍSTICAS
+# ============================================
 
 @app.route('/jefe/estadisticas')
 def jefe_estadisticas():
@@ -324,7 +517,6 @@ def jefe_estadisticas():
     
     conexion = get_db()
     
-    # 1. Estadísticas generales
     stats_generales = conexion.execute('''
         SELECT 
             COUNT(DISTINCT r.elemento) as total_elementos_reportados,
@@ -339,7 +531,6 @@ def jefe_estadisticas():
         WHERE r.fecha_hora >= date('now', '-30 days')
     ''').fetchone()
     
-    # 2. Elementos más reportados como FALTANTE
     elementos_mas_faltantes = conexion.execute('''
         SELECT 
             r.elemento,
@@ -355,7 +546,6 @@ def jefe_estadisticas():
         LIMIT 10
     ''').fetchall()
     
-    # 3. Técnicos que más reportan
     tecnicos_mas_reportan = conexion.execute('''
         SELECT 
             u.nombre as tecnico,
@@ -376,7 +566,6 @@ def jefe_estadisticas():
         LIMIT 10
     ''').fetchall()
     
-    # 4. Historial por elemento (para el rastreo individual)
     historial_elementos = conexion.execute('''
         SELECT 
             r.elemento,
@@ -396,7 +585,6 @@ def jefe_estadisticas():
         ORDER BY r.elemento, r.fecha_hora DESC
     ''').fetchall()
     
-    # 5. Agrupar historial por elemento
     historial_por_elemento = {}
     for item in historial_elementos:
         elemento = item['elemento']
@@ -412,6 +600,9 @@ def jefe_estadisticas():
                          tecnicos_mas_reportan=tecnicos_mas_reportan,
                          historial_por_elemento=historial_por_elemento)
 
+# ============================================
+# RUTAS DE LOGIN
+# ============================================
 
 @app.route('/')
 def login():
@@ -447,6 +638,10 @@ def procesar_login():
     else:
         return render_template('login.html', error='Usuario o contraseña incorrectos')
 
+# ============================================
+# RUTAS DE ADMINISTRADOR
+# ============================================
+
 @app.route('/admin')
 def admin():
     if 'usuario_id' not in session or session.get('rol') != 'admin':
@@ -462,7 +657,6 @@ def admin():
         tecnicos = obtener_tecnicos()
         camionetas = obtener_camionetas()
         
-        # Obtener asignaciones por CAMIONETA
         asignaciones_actuales = conexion.execute('''
             SELECT a.id as asignacion_id, a.camioneta_id, a.tecnico_id, a.tecnico2_id, a.zona,
                    c.patente as camioneta_patente
@@ -480,7 +674,6 @@ def admin():
                 'zona': a['zona'] or ''
             }
         
-        # Reportes (se mantiene)
         try:
             reportes = conexion.execute('''
                 SELECT 
@@ -557,7 +750,6 @@ def admin():
 
 @app.route('/guardar-planilla', methods=['POST'])
 def guardar_planilla():
-    """Guarda todas las asignaciones de la planilla"""
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return redirect(url_for('login'))
     
@@ -570,28 +762,24 @@ def guardar_planilla():
     conexion = get_db()
     
     try:
-        # Procesar cada camioneta
         for camioneta_id in request.form.getlist('camioneta_ids'):
             camioneta_id = int(camioneta_id)
             tecnico_id = request.form.get(f'tecnico_{camioneta_id}') or None
             tecnico2_id = request.form.get(f'tecnico2_{camioneta_id}') or None
             zona = request.form.get(f'zona_{camioneta_id}') or ''
             
-            # Verificar si ya existe una asignación para esa camioneta en esa fecha/jornada
             existe_asignacion = conexion.execute('''
                 SELECT id FROM asignaciones 
                 WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
             ''', (camioneta_id, fecha, jornada)).fetchone()
             
             if existe_asignacion:
-                # Actualizar
                 conexion.execute('''
                     UPDATE asignaciones 
                     SET tecnico_id = ?, tecnico2_id = ?, zona = ?, estado = 'ASIGNADA'
                     WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
                 ''', (tecnico_id, tecnico2_id, zona, camioneta_id, fecha, jornada))
             else:
-                # Crear nueva
                 conexion.execute('''
                     INSERT INTO asignaciones (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, estado, zona)
                     VALUES (?, ?, ?, ?, ?, 'ASIGNADA', ?)
@@ -610,18 +798,14 @@ def guardar_planilla():
 
 @app.route('/admin/semana', methods=['GET', 'POST'])
 def asignacion_semanal():
-    """Asignación rápida para toda la semana"""
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return redirect(url_for('login'))
     
-    # Obtener la jornada y la fecha de inicio de la semana
     jornada = request.args.get('jornada', 'mañana')
     fecha_inicio = request.args.get('fecha_inicio', datetime.now().strftime('%Y-%m-%d'))
     
-    # ⚠️ DEFINIR LOS DÍAS DE LA SEMANA
     dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
     
-    # Calcular el lunes de la semana seleccionada
     fecha_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
     inicio_semana = fecha_dt - timedelta(days=fecha_dt.weekday())
     fechas_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
@@ -632,7 +816,6 @@ def asignacion_semanal():
         tecnicos = obtener_tecnicos()
         camionetas = obtener_camionetas()
         
-        # Obtener todas las asignaciones de la semana para la jornada
         fechas_str = [fecha.strftime('%Y-%m-%d') for fecha in fechas_semana]
         placeholders = ','.join('?' for _ in fechas_str)
         
@@ -667,283 +850,44 @@ def asignacion_semanal():
                          jornada=jornada,
                          fecha_inicio=fecha_inicio)
 
-
-@app.route('/guardar-control-rapido', methods=['POST'])
-def guardar_control_rapido():
-    """Guarda todos los problemas de una categoría de una vez"""
-    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
-        return jsonify({'error': 'No autorizado'}), 401
-    
-    data = request.get_json()
-    control_id = data.get('control_id')
-    problemas = data.get('problemas', [])
-    
-    if not control_id:
-        return jsonify({'error': 'ID de control requerido'}), 400
-    
-    conexion = get_db()
-    cursor = conexion.cursor()
-    
-    try:
-        fecha_hora = datetime.now().isoformat()
-        fecha_legible = datetime.now().strftime('%Y-%m-%d %H:%M')
-        
-        # Obtener la camioneta y el control
-        info = cursor.execute('''
-            SELECT a.camioneta_id, ct.asignacion_id, ct.tipo_control, 
-                   a.tecnico_id, u.nombre as tecnico_nombre, c.patente
-            FROM controles_tecnicos ct
-            JOIN asignaciones a ON ct.asignacion_id = a.id
-            JOIN camionetas c ON a.camioneta_id = c.id
-            JOIN usuarios u ON a.tecnico_id = u.id
-            WHERE ct.id = ?
-        ''', (control_id,)).fetchone()
-        
-        if not info:
-            return jsonify({'error': 'Control no encontrado'}), 404
-        
-        camioneta_id = info['camioneta_id']
-        asignacion_id = info['asignacion_id']
-        tipo_control = info['tipo_control']
-        tecnico_nombre = info['tecnico_nombre']
-        patente = info['patente']
-        
-        # Obtener o crear el control en la tabla `controles`
-        control_existente = cursor.execute('''
-            SELECT id FROM controles WHERE asignacion_id = ? AND estado = 'ABIERTO'
-        ''', (asignacion_id,)).fetchone()
-        
-        if control_existente:
-            control_id_old = control_existente['id']
-        else:
-            fecha_hora_control = datetime.now().isoformat()
-            cursor.execute('''
-                INSERT INTO controles (asignacion_id, retiro_fecha_hora, estado)
-                VALUES (?, ?, 'ABIERTO')
-            ''', (asignacion_id, fecha_hora_control))
-            control_id_old = cursor.lastrowid
-        
-        # ==========================================
-        # GUARDAR TODOS LOS ELEMENTOS (OK Y PROBLEMAS)
-        # ==========================================
-        
-        # 1. Crear un diccionario de problemas con su observación
-        problemas_dict = {}
-        for p in problemas:
-            problemas_dict[p['elemento']] = {
-                'observacion': p.get('observacion', ''),
-                'categoria': p.get('categoria', 'GENERAL')
-            }
-        
-        # 2. Recorrer TODOS los elementos de todas las categorías
-        for categoria, lista in TODOS_ELEMENTOS.items():
-            for elemento in lista:
-                if elemento in problemas_dict:
-                    # Es un problema
-                    estado = 'FALTANTE'
-                    # ✅ LA OBSERVACIÓN VA AQUÍ
-                    descripcion = problemas_dict[elemento]['observacion'] if problemas_dict[elemento]['observacion'] else 'Elemento faltante'
-                    categoria_elemento = problemas_dict[elemento]['categoria']
-                else:
-                    # Está OK
-                    estado = 'OK'
-                    descripcion = 'Elemento en buen estado'
-                    categoria_elemento = categoria
-                
-                # Guardar en items_control_tecnico
-                cursor.execute('''
-                    INSERT INTO items_control_tecnico 
-                    (control_tecnico_id, elemento, categoria, estado, observacion, fecha_hora)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (control_id, elemento, categoria_elemento, 
-                      estado, descripcion, fecha_hora))
-                
-                # ✅ Guardar en reportes con la descripción correcta
-                cursor.execute('''
-                    INSERT INTO reportes 
-                    (control_id, tipo, elemento, estado, descripcion, fecha_hora)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (control_id_old, tipo_control, elemento, 
-                      estado, descripcion, fecha_hora))
-        
-        # 3. Bloquear SOLO los elementos con problemas
-        for elemento, data in problemas_dict.items():
-            ya_bloqueado = cursor.execute('''
-                SELECT id FROM elementos_bloqueados 
-                WHERE elemento = ? AND camioneta_id = ? AND resuelto = 0
-            ''', (elemento, camioneta_id)).fetchone()
-            
-            if not ya_bloqueado:
-                cursor.execute('''
-                    INSERT INTO elementos_bloqueados 
-                    (elemento, camioneta_id, tipo, fecha_bloqueo, motivo, resuelto)
-                    VALUES (?, ?, ?, ?, ?, 0)
-                ''', (elemento, camioneta_id, data['categoria'], 
-                      fecha_hora, data['observacion']))
-        
-        # 4. Actualizar el estado del control
-        if tipo_control == 'RETIRO':
-            cursor.execute('''
-                UPDATE controles 
-                SET retiro_fecha_hora = ? 
-                WHERE id = ?
-            ''', (fecha_hora, control_id_old))
-        else:
-            cursor.execute('''
-                UPDATE controles 
-                SET devolucion_fecha_hora = ? 
-                WHERE id = ?
-            ''', (fecha_hora, control_id_old))
-        
-        conexion.commit()
-        
-        total_ok = sum(1 for cat in TODOS_ELEMENTOS.values() for e in cat if e not in problemas_dict)
-        total_problemas = len(problemas_dict)
-        
-        print(f"✅ Control guardado: {total_ok} OK, {total_problemas} problemas")
-        for elemento, data in problemas_dict.items():
-            print(f"   - {elemento}: {data['observacion']}")
-        
-        return jsonify({
-            'success': True, 
-            'message': f'Control guardado: {total_ok} OK, {total_problemas} problemas',
-            'total_ok': total_ok,
-            'total_problemas': total_problemas
-        })
-        
-    except Exception as e:
-        conexion.rollback()
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conexion.close()
-
-
-@app.route('/guardar-estado-elemento', methods=['POST'])
-def guardar_estado_elemento():
-    """Guarda el estado de un elemento durante el control"""
-    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
-        return jsonify({'error': 'No autorizado'}), 401
-    
-    control_id = request.form.get('control_id')
-    elemento = request.form.get('elemento')
-    categoria = request.form.get('categoria')
-    estado = request.form.get('estado')
-    observacion = request.form.get('observacion', '')
-    
-    # Validar datos requeridos
-    if not all([control_id, elemento, categoria, estado]):
-        return jsonify({'error': 'Datos incompletos'}), 400
-    
-    fecha_hora = datetime.now().isoformat()
-    
-    conexion = get_db()
-    cursor = conexion.cursor()
-    
-    try:
-        # Verificar si el elemento ya fue registrado en este control
-        existe = cursor.execute('''
-            SELECT id FROM items_control_tecnico 
-            WHERE control_tecnico_id = ? AND elemento = ?
-        ''', (control_id, elemento)).fetchone()
-        
-        if existe:
-            # Actualizar estado
-            cursor.execute('''
-                UPDATE items_control_tecnico 
-                SET estado = ?, observacion = ?, fecha_hora = ?
-                WHERE control_tecnico_id = ? AND elemento = ?
-            ''', (estado, observacion, fecha_hora, control_id, elemento))
-        else:
-            # Insertar nuevo registro
-            cursor.execute('''
-                INSERT INTO items_control_tecnico 
-                (control_tecnico_id, elemento, categoria, estado, observacion, fecha_hora)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (control_id, elemento, categoria, estado, observacion, fecha_hora))
-        
-        # Si el estado es FALLA o FALTANTE, bloquear el elemento
-        if estado in ['FALLA', 'FALTANTE']:
-            # Obtener la camioneta asociada al control
-            camioneta = cursor.execute('''
-                SELECT a.camioneta_id 
-                FROM controles_tecnicos ct
-                JOIN asignaciones a ON ct.asignacion_id = a.id
-                WHERE ct.id = ?
-            ''', (control_id,)).fetchone()
-            
-            if camioneta:
-                # Verificar si ya está bloqueado
-                ya_bloqueado = cursor.execute('''
-                    SELECT id FROM elementos_bloqueados 
-                    WHERE elemento = ? AND camioneta_id = ? AND resuelto = 0
-                ''', (elemento, camioneta['camioneta_id'])).fetchone()
-                
-                if not ya_bloqueado:
-                    cursor.execute('''
-                        INSERT INTO elementos_bloqueados 
-                        (elemento, camioneta_id, tipo, fecha_bloqueo, motivo, resuelto)
-                        VALUES (?, ?, ?, ?, ?, 0)
-                    ''', (elemento, camioneta['camioneta_id'], categoria, 
-                          fecha_hora, observacion))
-        
-        conexion.commit()
-        return jsonify({'success': True, 'message': 'Elemento guardado correctamente'})
-        
-    except Exception as e:
-        conexion.rollback()
-        print(f"❌ Error al guardar estado: {e}")
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conexion.close()
-
 @app.route('/guardar-semana', methods=['POST'])
 def guardar_semana():
-    """Guarda todas las asignaciones de la semana"""
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return redirect(url_for('login'))
     
-    # Obtener los datos del formulario
     fechas = request.form.getlist('fechas[]')
     jornada = request.form.get('jornada', 'mañana')
     
     conexion = get_db()
     
     try:
-        # Procesar cada camioneta
         for camioneta_id in request.form.getlist('camioneta_ids'):
             camioneta_id = int(camioneta_id)
             
-            # Procesar cada día de la semana
             for fecha in fechas:
                 tecnico_id = request.form.get(f'tecnico_{camioneta_id}_{fecha}') or None
                 tecnico2_id = request.form.get(f'tecnico2_{camioneta_id}_{fecha}') or None
                 zona = request.form.get(f'zona_{camioneta_id}_{fecha}') or ''
                 
-                # Verificar si ya existe una asignación para esa camioneta en esa fecha/jornada
                 existe_asignacion = conexion.execute('''
                     SELECT id FROM asignaciones 
                     WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
                 ''', (camioneta_id, fecha, jornada)).fetchone()
                 
                 if existe_asignacion:
-                    # Actualizar
                     conexion.execute('''
                         UPDATE asignaciones 
                         SET tecnico_id = ?, tecnico2_id = ?, zona = ?, estado = 'ASIGNADA'
                         WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
                     ''', (tecnico_id, tecnico2_id, zona, camioneta_id, fecha, jornada))
                 else:
-                    # Crear nueva
                     conexion.execute('''
                         INSERT INTO asignaciones (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, estado, zona)
                         VALUES (?, ?, ?, ?, ?, 'ASIGNADA', ?)
                     ''', (camioneta_id, tecnico_id, tecnico2_id, fecha, jornada, zona))
         
         conexion.commit()
-        mensaje = f'✅ Asignaciones de la semana guardadas correctamente'
+        mensaje = '✅ Asignaciones de la semana guardadas correctamente'
         
     except Exception as e:
         conexion.rollback()
@@ -953,9 +897,12 @@ def guardar_semana():
     
     return redirect(url_for('asignacion_semanal', mensaje=mensaje))
 
+# ============================================
+# RUTAS DE TÉCNICO
+# ============================================
+
 @app.route('/tecnico')
 def tecnico():
-    """Panel principal del técnico"""
     if 'usuario_id' not in session or session.get('rol') != 'tecnico':
         return redirect(url_for('login'))
     
@@ -963,7 +910,6 @@ def tecnico():
     fecha_actual = datetime.now().strftime('%Y-%m-%d')
     hora_actual = datetime.now().hour
     
-    # Determinar jornada
     if 6 <= hora_actual < 14:
         jornada_actual = 'mañana'
     elif 14 <= hora_actual < 22:
@@ -973,7 +919,6 @@ def tecnico():
     
     conexion = get_db()
     
-    # Buscar asignación del técnico para hoy
     asignacion = conexion.execute('''
         SELECT a.id, a.fecha, a.jornada, a.estado,
                c.patente as camioneta_patente,
@@ -985,14 +930,12 @@ def tecnico():
         AND a.estado = 'ASIGNADA'
     ''', (usuario_id, fecha_actual)).fetchone()
     
-    # Variables para el estado de los controles
     control_retiro_activo = None
     control_devolucion_activo = None
     retiro_completado = False
     devolucion_completada = False
     
     if asignacion:
-        # Buscar controles de RETIRO
         control_retiro_activo = conexion.execute('''
             SELECT * FROM controles_tecnicos 
             WHERE asignacion_id = ? 
@@ -1002,7 +945,6 @@ def tecnico():
             AND finalizado = 0
         ''', (asignacion['id'], fecha_actual, jornada_actual)).fetchone()
         
-        # Buscar controles de DEVOLUCION
         control_devolucion_activo = conexion.execute('''
             SELECT * FROM controles_tecnicos 
             WHERE asignacion_id = ? 
@@ -1012,7 +954,6 @@ def tecnico():
             AND finalizado = 0
         ''', (asignacion['id'], fecha_actual, jornada_actual)).fetchone()
         
-        # Verificar si el RETIRO ya fue completado
         retiro_finalizado = conexion.execute('''
             SELECT id FROM controles_tecnicos 
             WHERE asignacion_id = ? 
@@ -1023,7 +964,6 @@ def tecnico():
         ''', (asignacion['id'], fecha_actual, jornada_actual)).fetchone()
         retiro_completado = retiro_finalizado is not None
         
-        # Verificar si la DEVOLUCION ya fue completada
         devolucion_finalizada = conexion.execute('''
             SELECT id FROM controles_tecnicos 
             WHERE asignacion_id = ? 
@@ -1034,7 +974,6 @@ def tecnico():
         ''', (asignacion['id'], fecha_actual, jornada_actual)).fetchone()
         devolucion_completada = devolucion_finalizada is not None
     
-    # Verificar elementos bloqueados
     elementos_bloqueados = []
     if asignacion:
         bloqueados = conexion.execute('''
@@ -1059,7 +998,6 @@ def tecnico():
 
 @app.route('/iniciar-control', methods=['POST'])
 def iniciar_control():
-    """Inicia un nuevo control para el técnico"""
     if 'usuario_id' not in session or session.get('rol') != 'tecnico':
         return redirect(url_for('login'))
     
@@ -1075,11 +1013,6 @@ def iniciar_control():
     
     conexion = get_db()
     
-    # ==========================================
-    # VALIDACIONES DEL FLUJO
-    # ==========================================
-    
-    # 1. Verificar si ya hay un control activo del mismo tipo
     existe = conexion.execute('''
         SELECT id FROM controles_tecnicos 
         WHERE asignacion_id = ? AND fecha = ? AND jornada = ? 
@@ -1090,7 +1023,6 @@ def iniciar_control():
         conexion.close()
         return redirect(url_for('tecnico', error=f'Ya hay un control de {tipo_control} activo'))
     
-    # 2. Si es DEVOLUCION, verificar que el RETIRO esté completado
     if tipo_control == 'DEVOLUCION':
         retiro_completado = conexion.execute('''
             SELECT id FROM controles_tecnicos 
@@ -1103,7 +1035,6 @@ def iniciar_control():
             return redirect(url_for('tecnico', 
                 error='⚠️ No puedes iniciar una devolución sin haber completado el retiro primero.'))
     
-    # 3. Si es RETIRO, verificar que no haya una devolución ya completada (caso borde)
     if tipo_control == 'RETIRO':
         devolucion_completada = conexion.execute('''
             SELECT id FROM controles_tecnicos 
@@ -1116,7 +1047,6 @@ def iniciar_control():
             return redirect(url_for('tecnico', 
                 error='⚠️ La devolución ya fue completada. No puedes iniciar un nuevo retiro.'))
     
-    # Crear nuevo control
     cursor = conexion.cursor()
     cursor.execute('''
         INSERT INTO controles_tecnicos 
@@ -1132,13 +1062,11 @@ def iniciar_control():
 
 @app.route('/realizar-control/<int:control_id>')
 def realizar_control(control_id):
-    """Muestra el formulario para realizar el control"""
     if 'usuario_id' not in session or session.get('rol') != 'tecnico':
         return redirect(url_for('login'))
     
     conexion = get_db()
     
-    # Obtener el control
     control = conexion.execute('''
         SELECT ct.*, a.camioneta_id, c.patente, u.nombre as tecnico_nombre
         FROM controles_tecnicos ct
@@ -1152,7 +1080,6 @@ def realizar_control(control_id):
         conexion.close()
         return redirect(url_for('tecnico', error='Control no encontrado o ya finalizado'))
     
-    # Obtener elementos ya registrados en este control
     items_registrados = conexion.execute('''
         SELECT elemento, estado FROM items_control_tecnico 
         WHERE control_tecnico_id = ?
@@ -1160,7 +1087,6 @@ def realizar_control(control_id):
     
     items_registrados_lista = [item['elemento'] for item in items_registrados]
     
-    # Obtener elementos bloqueados
     elementos_bloqueados = conexion.execute('''
         SELECT elemento FROM elementos_bloqueados 
         WHERE camioneta_id = ? AND resuelto = 0
@@ -1168,7 +1094,6 @@ def realizar_control(control_id):
     
     elementos_bloqueados_lista = [eb['elemento'] for eb in elementos_bloqueados]
     
-    # Preparar los elementos para mostrar
     elementos_por_categoria = {
         'CAMIONETA': [],
         'HERRAMIENTA': [],
@@ -1181,7 +1106,6 @@ def realizar_control(control_id):
             if elemento in items_registrados_lista:
                 for item in items_registrados:
                     if item['elemento'] == elemento:
-                        # ✅ MANEJAR None - Si es None, mostrar 'PENDIENTE'
                         estado = item['estado'] if item['estado'] is not None else 'PENDIENTE'
                         break
             elif elemento in elementos_bloqueados_lista:
@@ -1203,14 +1127,12 @@ def realizar_control(control_id):
 
 @app.route('/finalizar-control/<int:control_id>', methods=['POST'])
 def finalizar_control(control_id):
-    """Finaliza un control y verifica elementos pendientes"""
     if 'usuario_id' not in session or session.get('rol') != 'tecnico':
         return redirect(url_for('login'))
     
     conexion = get_db()
     
     try:
-        # Verificar si el control ya fue finalizado
         control = conexion.execute('''
             SELECT finalizado FROM controles_tecnicos WHERE id = ?
         ''', (control_id,)).fetchone()
@@ -1223,7 +1145,6 @@ def finalizar_control(control_id):
             conexion.close()
             return redirect(url_for('tecnico', error='Este control ya fue finalizado'))
         
-        # Finalizar el control
         fecha_hora = datetime.now().isoformat()
         conexion.execute('''
             UPDATE controles_tecnicos 
@@ -1241,8 +1162,200 @@ def finalizar_control(control_id):
         conexion.close()
         print(f"❌ Error al finalizar: {e}")
         return redirect(url_for('tecnico', error=f'Error al finalizar: {str(e)}'))
+
+@app.route('/guardar-control-rapido', methods=['POST'])
+def guardar_control_rapido():
+    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
+        return jsonify({'error': 'No autorizado'}), 401
     
-    return redirect(url_for('tecnico', mensaje='✅ Control finalizado correctamente'))
+    data = request.get_json()
+    control_id = data.get('control_id')
+    problemas = data.get('problemas', [])
+    
+    if not control_id:
+        return jsonify({'error': 'ID de control requerido'}), 400
+    
+    conexion = get_db()
+    cursor = conexion.cursor()
+    
+    try:
+        fecha_hora = datetime.now().isoformat()
+        
+        info = cursor.execute('''
+            SELECT a.camioneta_id, ct.asignacion_id, ct.tipo_control
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            WHERE ct.id = ?
+        ''', (control_id,)).fetchone()
+        
+        if not info:
+            return jsonify({'error': 'Control no encontrado'}), 404
+        
+        camioneta_id = info['camioneta_id']
+        asignacion_id = info['asignacion_id']
+        tipo_control = info['tipo_control']
+        
+        control_existente = cursor.execute('''
+            SELECT id FROM controles WHERE asignacion_id = ? AND estado = 'ABIERTO'
+        ''', (asignacion_id,)).fetchone()
+        
+        if control_existente:
+            control_id_old = control_existente['id']
+        else:
+            fecha_hora_control = datetime.now().isoformat()
+            cursor.execute('''
+                INSERT INTO controles (asignacion_id, retiro_fecha_hora, estado)
+                VALUES (?, ?, 'ABIERTO')
+            ''', (asignacion_id, fecha_hora_control))
+            control_id_old = cursor.lastrowid
+        
+        problemas_dict = {}
+        for p in problemas:
+            problemas_dict[p['elemento']] = p.get('observacion', '')
+        
+        for categoria, lista in TODOS_ELEMENTOS.items():
+            for elemento in lista:
+                if elemento in problemas_dict:
+                    estado = 'FALTANTE'
+                    descripcion = problemas_dict[elemento] if problemas_dict[elemento] else 'Elemento faltante'
+                    categoria_elemento = categoria
+                else:
+                    estado = 'OK'
+                    descripcion = 'Elemento en buen estado'
+                    categoria_elemento = categoria
+                
+                cursor.execute('''
+                    INSERT INTO items_control_tecnico 
+                    (control_tecnico_id, elemento, categoria, estado, observacion, fecha_hora)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (control_id, elemento, categoria_elemento, 
+                      estado, descripcion, fecha_hora))
+                
+                cursor.execute('''
+                    INSERT INTO reportes 
+                    (control_id, tipo, elemento, estado, descripcion, fecha_hora)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (control_id_old, tipo_control, elemento, 
+                      estado, descripcion, fecha_hora))
+        
+        for p in problemas:
+            ya_bloqueado = cursor.execute('''
+                SELECT id FROM elementos_bloqueados 
+                WHERE elemento = ? AND camioneta_id = ? AND resuelto = 0
+            ''', (p['elemento'], camioneta_id)).fetchone()
+            
+            if not ya_bloqueado:
+                cursor.execute('''
+                    INSERT INTO elementos_bloqueados 
+                    (elemento, camioneta_id, tipo, fecha_bloqueo, motivo, resuelto)
+                    VALUES (?, ?, ?, ?, ?, 0)
+                ''', (p['elemento'], camioneta_id, p['categoria'], 
+                      fecha_hora, p.get('observacion', '')))
+        
+        if tipo_control == 'RETIRO':
+            cursor.execute('''
+                UPDATE controles 
+                SET retiro_fecha_hora = ? 
+                WHERE id = ?
+            ''', (fecha_hora, control_id_old))
+        else:
+            cursor.execute('''
+                UPDATE controles 
+                SET devolucion_fecha_hora = ? 
+                WHERE id = ?
+            ''', (fecha_hora, control_id_old))
+        
+        conexion.commit()
+        
+        total_ok = sum(1 for cat in TODOS_ELEMENTOS.values() for e in cat if e not in problemas_dict)
+        total_problemas = len(problemas_dict)
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Control guardado: {total_ok} OK, {total_problemas} problemas'
+        })
+        
+    except Exception as e:
+        conexion.rollback()
+        print(f"❌ Error: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conexion.close()
+
+@app.route('/guardar-estado-elemento', methods=['POST'])
+def guardar_estado_elemento():
+    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
+        return jsonify({'error': 'No autorizado'}), 401
+    
+    control_id = request.form.get('control_id')
+    elemento = request.form.get('elemento')
+    categoria = request.form.get('categoria')
+    estado = request.form.get('estado')
+    observacion = request.form.get('observacion', '')
+    
+    if not all([control_id, elemento, categoria, estado]):
+        return jsonify({'error': 'Datos incompletos'}), 400
+    
+    fecha_hora = datetime.now().isoformat()
+    
+    conexion = get_db()
+    cursor = conexion.cursor()
+    
+    try:
+        existe = cursor.execute('''
+            SELECT id FROM items_control_tecnico 
+            WHERE control_tecnico_id = ? AND elemento = ?
+        ''', (control_id, elemento)).fetchone()
+        
+        if existe:
+            cursor.execute('''
+                UPDATE items_control_tecnico 
+                SET estado = ?, observacion = ?, fecha_hora = ?
+                WHERE control_tecnico_id = ? AND elemento = ?
+            ''', (estado, observacion, fecha_hora, control_id, elemento))
+        else:
+            cursor.execute('''
+                INSERT INTO items_control_tecnico 
+                (control_tecnico_id, elemento, categoria, estado, observacion, fecha_hora)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (control_id, elemento, categoria, estado, observacion, fecha_hora))
+        
+        if estado in ['FALLA', 'FALTANTE']:
+            camioneta = cursor.execute('''
+                SELECT a.camioneta_id 
+                FROM controles_tecnicos ct
+                JOIN asignaciones a ON ct.asignacion_id = a.id
+                WHERE ct.id = ?
+            ''', (control_id,)).fetchone()
+            
+            if camioneta:
+                ya_bloqueado = cursor.execute('''
+                    SELECT id FROM elementos_bloqueados 
+                    WHERE elemento = ? AND camioneta_id = ? AND resuelto = 0
+                ''', (elemento, camioneta['camioneta_id'])).fetchone()
+                
+                if not ya_bloqueado:
+                    cursor.execute('''
+                        INSERT INTO elementos_bloqueados 
+                        (elemento, camioneta_id, tipo, fecha_bloqueo, motivo, resuelto)
+                        VALUES (?, ?, ?, ?, ?, 0)
+                    ''', (elemento, camioneta['camioneta_id'], categoria, 
+                          fecha_hora, observacion))
+        
+        conexion.commit()
+        return jsonify({'success': True, 'message': 'Elemento guardado correctamente'})
+        
+    except Exception as e:
+        conexion.rollback()
+        print(f"❌ Error al guardar estado: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conexion.close()
+
+# ============================================
+# RUTAS DE JEFE
+# ============================================
+
 @app.route('/jefe')
 def jefe():
     if 'usuario_id' not in session or session.get('rol') != 'jefe':
@@ -1309,10 +1422,12 @@ def jefe():
                          resumen_flota=resumen_flota,
                          fecha_actual=fecha_actual)
 
+# ============================================
+# RUTAS DE HISTORIAL
+# ============================================
 
 @app.route('/historial-camioneta/<string:patente>')
 def historial_camioneta(patente):
-    """Vista detallada del historial de una camioneta"""
     if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
         return redirect(url_for('login'))
     
@@ -1326,7 +1441,6 @@ def historial_camioneta(patente):
         conexion.close()
         return redirect(url_for('admin', error='Camioneta no encontrada'))
     
-    # 1. Controles agrupados por fecha
     controles = conexion.execute('''
         SELECT DISTINCT 
             ct.fecha,
@@ -1379,30 +1493,29 @@ def historial_camioneta(patente):
             'elementos': [dict(e) for e in elementos]
         })
     
-    # 2. Historial por elemento con técnico y fecha
     historial_elementos = conexion.execute('''
-    SELECT 
-        r.elemento,
-        r.estado,
-        r.descripcion,
-        r.fecha_hora,
-        r.fecha_resolucion,
-        r.resuelto_por,
-        r.comentario_resolucion,
-        r.entregado_por,
-        r.recibido_por,
-        r.fecha_entrega,
-        c.patente,
-        u.nombre as tecnico_nombre,
-        r.tipo as tipo_control
-    FROM reportes r
-    JOIN controles co ON r.control_id = co.id
-    JOIN asignaciones a ON co.asignacion_id = a.id
-    JOIN camionetas c ON a.camioneta_id = c.id
-    JOIN usuarios u ON a.tecnico_id = u.id
-    WHERE c.patente = ?
-    ORDER BY r.elemento, r.fecha_hora DESC
-''', (patente,)).fetchall()
+        SELECT 
+            r.elemento,
+            r.estado,
+            r.descripcion,
+            r.fecha_hora,
+            r.fecha_resolucion,
+            r.resuelto_por,
+            r.comentario_resolucion,
+            r.entregado_por,
+            r.recibido_por,
+            r.fecha_entrega,
+            c.patente,
+            u.nombre as tecnico_nombre,
+            r.tipo as tipo_control
+        FROM reportes r
+        JOIN controles co ON r.control_id = co.id
+        JOIN asignaciones a ON co.asignacion_id = a.id
+        JOIN camionetas c ON a.camioneta_id = c.id
+        JOIN usuarios u ON a.tecnico_id = u.id
+        WHERE c.patente = ?
+        ORDER BY r.elemento, r.fecha_hora DESC
+    ''', (patente,)).fetchall()
     
     historial_por_elemento = {}
     for item in historial_elementos:
@@ -1418,6 +1531,10 @@ def historial_camioneta(patente):
                          historial_detallado=historial_detallado,
                          historial_por_elemento=historial_por_elemento)
 
+# ============================================
+# RUTAS DE REPORTES Y REMITOS
+# ============================================
+
 @app.route('/iniciar-retiro')
 def iniciar_retiro():
     if 'usuario_id' not in session or session.get('rol') != 'tecnico':
@@ -1426,13 +1543,11 @@ def iniciar_retiro():
 
 @app.route('/resolver-reporte/<int:reporte_id>', methods=['POST'])
 def resolver_reporte(reporte_id):
-    """Cambia el estado de un reporte a 'RESUELTO' y desbloquea el elemento"""
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     
     nombre_admin = session.get('nombre', 'Administrador')
     
-    # Obtener el comentario del cuerpo de la solicitud
     try:
         data = request.get_json()
         comentario = data.get('comentario', '').strip() if data else ''
@@ -1440,17 +1555,14 @@ def resolver_reporte(reporte_id):
         comentario = ''
         print(f"⚠️ Error al leer JSON: {e}")
     
-    # DEBUG - Ver en consola del servidor
     print(f"📝 Resolviendo reporte ID: {reporte_id}")
     print(f"💬 Comentario recibido: '{comentario}'")
-    print(f"👤 Admin: {nombre_admin}")
     
     conexion = get_db()
     try:
         ahora = datetime.now().strftime('%Y-%m-%d %H:%M')
         ahora_iso = datetime.now().isoformat()
         
-        # 1. Obtener el elemento y la camioneta del reporte
         reporte = conexion.execute('''
             SELECT r.id, r.elemento, r.control_id, r.tipo, 
                    a.camioneta_id
@@ -1463,7 +1575,6 @@ def resolver_reporte(reporte_id):
         if not reporte:
             return jsonify({'success': False, 'error': 'Reporte no encontrado'}), 404
         
-        # 2. Actualizar el reporte con el comentario
         cursor = conexion.cursor()
         cursor.execute('''
             UPDATE reportes 
@@ -1474,9 +1585,6 @@ def resolver_reporte(reporte_id):
             WHERE id = ?
         ''', (ahora, nombre_admin, comentario, reporte_id))
         
-        print(f"✅ Reporte {reporte_id} actualizado")
-        
-        # 3. Desbloquear el elemento en elementos_bloqueados
         elemento_bloqueado = cursor.execute('''
             SELECT id FROM elementos_bloqueados 
             WHERE elemento = ? AND camioneta_id = ? AND resuelto = 0
@@ -1489,16 +1597,8 @@ def resolver_reporte(reporte_id):
                 WHERE id = ?
             ''', (ahora_iso, elemento_bloqueado['id']))
             print(f"✅ Elemento '{reporte['elemento']}' desbloqueado")
-        else:
-            print(f"⚠️ No se encontró elemento bloqueado para '{reporte['elemento']}'")
         
         conexion.commit()
-        
-        # Verificar que se guardó el comentario
-        verificar = cursor.execute('''
-            SELECT comentario_resolucion FROM reportes WHERE id = ?
-        ''', (reporte_id,)).fetchone()
-        print(f"🔍 Comentario guardado: '{verificar[0] if verificar and verificar[0] else 'VACÍO'}'")
         
         return jsonify({
             'success': True, 
@@ -1509,15 +1609,12 @@ def resolver_reporte(reporte_id):
     except Exception as e:
         conexion.rollback()
         print(f"❌ Error al resolver reporte: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         conexion.close()
 
 @app.route('/comentar-reporte/<int:reporte_id>', methods=['POST'])
 def comentar_reporte(reporte_id):
-    """Agrega un comentario a un reporte ya resuelto"""
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     
@@ -1529,7 +1626,6 @@ def comentar_reporte(reporte_id):
     
     conexion = get_db()
     try:
-        # Actualizar el comentario del reporte
         conexion.execute('''
             UPDATE reportes 
             SET comentario_resolucion = ?
@@ -1541,45 +1637,131 @@ def comentar_reporte(reporte_id):
         conexion.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
-        conexion.close()       
+        conexion.close()
 
-@app.route('/remito/<int:reporte_id>')
-def generar_remito(reporte_id):
-    """Genera un remito específico para un reporte de tipo FALTANTE"""
-    if 'usuario_id' not in session or session.get('rol') not in ('admin', 'jefe'):
-        return redirect(url_for('login'))
+@app.route('/generar-remito/<int:reporte_id>', methods=['POST'])
+def generar_remito_pdf(reporte_id):
+    """Genera un remito en PDF y lo guarda en la carpeta correspondiente"""
+    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    
+    admin_nombre = session.get('nombre', 'Administrador')
     
     conexion = get_db()
     try:
-        # Obtener el reporte y sus datos vinculados
         reporte = conexion.execute('''
             SELECT r.id, r.elemento, r.descripcion, r.estado, r.fecha_hora,
-                   c.patente, u.nombre as tecnico_nombre
+                   c.patente, u.nombre as tecnico_nombre, a.zona
             FROM reportes r
             LEFT JOIN controles co ON r.control_id = co.id
             LEFT JOIN asignaciones a ON co.asignacion_id = a.id
             LEFT JOIN camionetas c ON a.camioneta_id = c.id
             LEFT JOIN usuarios u ON a.tecnico_id = u.id
-            WHERE r.id = ?
+            WHERE r.id = ? AND r.estado = 'FALTANTE'
         ''', (reporte_id,)).fetchone()
         
-        if not reporte or reporte['estado'] != 'FALTANTE':
-            return redirect(url_for('admin', error='Remito no disponible para este reporte'))
+        if not reporte:
+            return jsonify({'success': False, 'error': 'Reporte no encontrado o ya resuelto'}), 404
         
-        # Obtener el nombre del admin que generó el remito
-        admin_nombre = session.get('nombre', 'Administrador')
+        fecha_hora = datetime.now()
+        fecha_str = fecha_hora.strftime('%Y-%m-%d')
+        hora_str = fecha_hora.strftime('%H-%M-%S')
         
+        carpeta_destino = crear_carpeta_remitos(reporte['patente'], fecha_str)
+        nombre_archivo = f"{reporte['patente']}_{fecha_str}_{hora_str}_{reporte['elemento'].replace(' ', '_')}.pdf"
+        ruta_pdf = carpeta_destino / nombre_archivo
+        
+        generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf)
+        
+        # Guardar la ruta en la base de datos
+        cursor = conexion.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(reportes)")
+            columnas = [col[1] for col in cursor.fetchall()]
+            if 'ruta_remito' not in columnas:
+                cursor.execute('ALTER TABLE reportes ADD COLUMN ruta_remito TEXT')
+        except Exception:
+            pass
+        
+        cursor.execute('''
+            UPDATE reportes SET ruta_remito = ? WHERE id = ?
+        ''', (str(ruta_pdf), reporte_id))
+        conexion.commit()
+        
+        url_pdf = f"/remitos/{reporte['patente']}/{fecha_str[:7]}/{nombre_archivo}"
+        
+        return jsonify({
+            'success': True,
+            'url': url_pdf,
+            'ruta': str(ruta_pdf)
+        })
+        
+    except Exception as e:
+        print(f"❌ Error al generar remito: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         conexion.close()
+
+@app.route('/remitos/<path:filename>')
+def servir_remito(filename):
+    """Sirve archivos PDF de remitos"""
+    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
+        return redirect(url_for('login'))
     
-    return render_template('remito.html', 
-                         reporte=reporte,
-                         admin_nombre=admin_nombre)       
+    ruta_completa = REMITOS_DIR / filename
+    
+    if not ruta_completa.exists():
+        return "Archivo no encontrado", 404
+    
+    try:
+        ruta_real = ruta_completa.resolve()
+        remitos_real = REMITOS_DIR.resolve()
+        if not str(ruta_real).startswith(str(remitos_real)):
+            return "Acceso denegado", 403
+    except Exception:
+        return "Acceso denegado", 403
+    
+    return send_file(ruta_completa, as_attachment=False, mimetype='application/pdf')
+
+@app.route('/admin/remitos')
+def admin_remitos():
+    """Lista todos los remitos generados"""
+    if 'usuario_id' not in session or session.get('rol') != 'admin':
+        return redirect(url_for('login'))
+    
+    remitos = []
+    if REMITOS_DIR.exists():
+        for patente_dir in REMITOS_DIR.iterdir():
+            if patente_dir.is_dir():
+                for mes_dir in patente_dir.iterdir():
+                    if mes_dir.is_dir():
+                        for archivo in mes_dir.glob('*.pdf'):
+                            remitos.append({
+                                'patente': patente_dir.name,
+                                'mes': mes_dir.name,
+                                'archivo': archivo.name,
+                                'ruta': f"/remitos/{patente_dir.name}/{mes_dir.name}/{archivo.name}",
+                                'fecha': archivo.stat().st_mtime
+                            })
+    
+    remitos.sort(key=lambda x: x['fecha'], reverse=True)
+    
+    return render_template('admin_remitos.html', remitos=remitos)
+
+# ============================================
+# RUTAS DE LOGOUT
+# ============================================
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+# ============================================
+# MAIN
+# ============================================
 
 if __name__ == '__main__':
     try:

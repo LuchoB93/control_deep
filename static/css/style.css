@@ -1047,9 +1047,8 @@ section h2 {
 }
 
 /* ============================================
-   MODALES FULLSCREEN - MEJORADOS
+   MODALES FULLSCREEN
    ============================================ */
-
 .modal-fullscreen {
     max-width: 100%;
     margin: 0;
@@ -1078,7 +1077,6 @@ section h2 {
     font-weight: 600;
 }
 
-/* Mejoras para tablas en modales fullscreen */
 .modal-fullscreen .table {
     font-size: 0.9rem;
 }
@@ -1103,24 +1101,19 @@ section h2 {
     margin-bottom: 0;
 }
 
-/* Responsive para modales fullscreen */
 @media (max-width: 768px) {
     .modal-fullscreen .modal-body {
         padding: 15px;
     }
-    
     .modal-fullscreen .modal-header {
         padding: 10px 15px;
     }
-    
     .modal-fullscreen .modal-header .modal-title {
         font-size: 1rem;
     }
-    
     .modal-fullscreen .table {
         font-size: 0.75rem;
     }
-    
     .modal-fullscreen .table th,
     .modal-fullscreen .table td {
         padding: 4px 6px;
@@ -1131,11 +1124,9 @@ section h2 {
     .modal-fullscreen .modal-body {
         padding: 10px;
     }
-    
     .modal-fullscreen .table {
         font-size: 0.7rem;
     }
-    
     .modal-fullscreen .table th,
     .modal-fullscreen .table td {
         padding: 3px 4px;
@@ -1173,9 +1164,8 @@ section h2 {
 }
 
 /* ============================================
-   PANEL JEFE - ESTILOS
+   PANEL JEFE
    ============================================ */
-
 .jefe-header {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
     color: white;
@@ -1217,7 +1207,6 @@ section h2 {
 /* ============================================
    STAT CARDS
    ============================================ */
-
 .stat-card {
     background: white;
     border-radius: 12px;
@@ -1252,7 +1241,6 @@ section h2 {
 /* ============================================
    CARDS DE FLOTA
    ============================================ */
-
 .card-flota {
     background: white;
     border-radius: 12px;
@@ -1297,7 +1285,6 @@ section h2 {
 /* ============================================
    MODAL ESTADÍSTICAS
    ============================================ */
-
 .modal-xl {
     max-width: 95%;
 }
@@ -1336,7 +1323,6 @@ section h2 {
 /* ============================================
    TIMELINE
    ============================================ */
-
 .timeline-item {
     padding: 8px 12px;
     border-left: 3px solid #6c757d;
@@ -1362,16 +1348,13 @@ section h2 {
 /* ============================================
    RESPONSIVE PANEL JEFE
    ============================================ */
-
 @media (max-width: 768px) {
     .stat-card .number {
         font-size: 1.5rem;
     }
-    
     .jefe-header h1 {
         font-size: 1.2rem;
     }
-    
     .btn-estadisticas {
         padding: 6px 12px;
         font-size: 0.85rem;
@@ -1382,7 +1365,6 @@ section h2 {
     .card-flota {
         padding: 10px 12px;
     }
-    
     .card-flota .card-title {
         font-size: 0.8rem;
     }
@@ -1391,8 +1373,6 @@ section h2 {
 /* ============================================
    VISTA DE TARJETAS PARA DETALLE DE CAMIONETA
    ============================================ */
-
-/* Contenedor de tarjetas */
 .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -1400,7 +1380,6 @@ section h2 {
     margin-top: 15px;
 }
 
-/* Tarjeta individual */
 .card-item {
     background: white;
     border-radius: 10px;
@@ -1446,13 +1425,11 @@ section h2 {
     word-wrap: break-word;
 }
 
-/* Estados en tarjetas */
 .card-item.estado-ok { border-left-color: #28a745; }
 .card-item.estado-faltante { border-left-color: #ffc107; background: #fffef5; }
 .card-item.estado-falla { border-left-color: #dc3545; background: #fff5f5; }
 .card-item.estado-resuelto { border-left-color: #17a2b8; background: #f5faff; }
 
-/* Badge en tarjeta */
 .card-item .badge-estado {
     font-size: 0.65rem;
     padding: 2px 8px;
@@ -1460,7 +1437,6 @@ section h2 {
     font-weight: 600;
 }
 
-/* Resumen rápido en el modal */
 .resumen-rapido {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -1486,7 +1462,6 @@ section h2 {
     color: #6c757d;
 }
 
-/* Responsive para tarjetas */
 @media (max-width: 768px) {
     .card-grid {
         grid-template-columns: 1fr 1fr;
@@ -1504,9 +1479,8 @@ section h2 {
 }
 
 /* ============================================
-   HISTORIAL DE CAMIONETA - ESTILOS RESTAURADOS Y MEJORADOS
+   HISTORIAL DE CAMIONETA
    ============================================ */
-
 .historial-container {
     max-width: 1200px;
     margin: 0 auto;
@@ -1545,7 +1519,6 @@ section h2 {
     color: white;
 }
 
-/* Tabs */
 .nav-tabs-historial {
     border-bottom: 2px solid #dee2e6;
     margin-bottom: 20px;
@@ -1570,7 +1543,6 @@ section h2 {
     background: transparent;
 }
 
-/* Tarjetas de fecha */
 .fecha-card {
     background: white;
     border-radius: 12px;
@@ -1598,27 +1570,27 @@ section h2 {
     font-size: 0.9rem;
 }
 
-.fecha-card .badge-tipo {
+.badge-tipo {
     font-size: 0.75rem;
     padding: 4px 12px;
 }
 
-.fecha-card .badge-retiro {
+.badge-retiro {
     background: #28a745;
     color: white;
 }
 
-.fecha-card .badge-devolucion {
+.badge-devolucion {
     background: #17a2b8;
     color: white;
 }
 
-.fecha-card .badge-finalizado {
+.badge-finalizado {
     background: #28a745;
     color: white;
 }
 
-.fecha-card .badge-pendiente {
+.badge-pendiente {
     background: #ffc107;
     color: #000;
 }
@@ -1632,7 +1604,6 @@ section h2 {
     transform: rotate(180deg);
 }
 
-/* Detalles expandibles */
 .detalle-control {
     display: none;
     padding: 15px 20px;
@@ -1717,7 +1688,6 @@ section h2 {
     color: #17a2b8;
 }
 
-/* Historial por elemento */
 .elemento-historial {
     background: white;
     border-radius: 12px;
@@ -1758,7 +1728,6 @@ section h2 {
     padding: 3px 10px;
 }
 
-/* Línea de tiempo */
 .linea-tiempo {
     position: relative;
     padding-left: 25px;
@@ -1861,7 +1830,6 @@ section h2 {
     padding: 3px 8px;
 }
 
-/* Buscador */
 .buscador-elemento {
     border-radius: 8px;
     border: 2px solid #dee2e6;
@@ -1875,33 +1843,317 @@ section h2 {
     box-shadow: none;
 }
 
-/* Responsive historial */
 @media (max-width: 768px) {
     .historial-header h1 {
         font-size: 1.3rem;
     }
-    
     .fecha-card .fecha-texto {
         font-size: 0.95rem;
     }
-    
     .detalle-control .elemento-item {
         font-size: 0.85rem;
         flex-wrap: wrap;
         gap: 4px;
     }
-    
     .detalle-control .elemento-item .info-entrega {
         font-size: 0.7rem;
         margin-left: 0;
         width: 100%;
     }
-    
     .elemento-historial .ultimo-estado {
         font-size: 0.75rem;
     }
-    
     .linea-tiempo .evento {
         font-size: 0.85rem;
+    }
+}
+
+/* ============================================
+   CATEGORÍAS COLAPSABLES EN HISTORIAL
+   ============================================ */
+.categoria-colapsable {
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: 8px;
+}
+
+.categoria-header-click {
+    padding: 8px 12px;
+    background: #f8f9fa;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.categoria-header-click:hover {
+    background: #e9ecef;
+}
+
+.categoria-header-click .toggle-cat-icon {
+    transition: transform 0.3s ease;
+}
+
+.categoria-contenido {
+    padding: 5px 10px;
+    background: white;
+}
+
+.categoria-contenido .elemento-item {
+    padding: 4px 8px;
+    border-bottom: 1px solid #f5f5f5;
+}
+
+.categoria-contenido .elemento-item:last-child {
+    border-bottom: none;
+}
+
+/* ============================================
+   MEJORA DE CONTRASTE PARA ESTADOS
+   ============================================ */
+.estado-ok {
+    color: #155724 !important;
+    background: #d4edda;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.estado-faltante {
+    color: #721c24 !important;
+    background: #f8d7da;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.estado-observacion {
+    color: #856404 !important;
+    background: #fff3cd;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.estado-resuelto {
+    color: #0c5460 !important;
+    background: #d1ecf1;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.info-entrega {
+    font-size: 0.7rem;
+    color: #6c757d;
+}
+
+.info-entrega .entregado {
+    color: #28a745;
+}
+
+.info-entrega .recibido {
+    color: #17a2b8;
+}
+
+/* ============================================
+   ADMIN - SIDEBAR Y NAVEGACIÓN
+   ============================================ */
+
+.admin-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 270px;
+    height: 100vh;
+    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: white;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.3s ease;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.2);
+    overflow-y: hidden;  /* ✅ Elimina scroll lateral */
+}
+
+.admin-sidebar .sidebar-header {
+    padding: 20px 20px 15px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;  /* ✅ Evita que se comprima */
+}
+
+.admin-sidebar .sidebar-header h2 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.admin-sidebar .sidebar-header .sidebar-subtitle {
+    font-size: 0.75rem;
+    opacity: 0.7;
+}
+
+.sidebar-nav {
+    flex: 1;
+    padding: 10px 0;
+    overflow-y: auto;  /* ✅ Scroll solo en el nav si es necesario */
+    overflow-x: hidden;  /* ✅ Elimina scroll horizontal */
+}
+
+/* ✅ Ocultar scrollbar pero permitir scroll (opcional) */
+.sidebar-nav::-webkit-scrollbar {
+    width: 3px;
+}
+.sidebar-nav::-webkit-scrollbar-track {
+    background: transparent;
+}
+.sidebar-nav::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.2);
+    border-radius: 10px;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    color: rgba(255,255,255,0.7);
+    text-decoration: none;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;  /* ✅ Evita que el texto se rompa */
+}
+
+.sidebar-link:hover {
+    background: rgba(255,255,255,0.05);
+    color: white;
+    text-decoration: none;
+}
+
+.sidebar-link.active {
+    background: rgba(255,255,255,0.1);
+    color: white;
+    border-left-color: #667eea;
+}
+
+.sidebar-link i {
+    font-size: 1.1rem;
+    width: 24px;
+    text-align: center;
+    flex-shrink: 0;  /* ✅ Evita que el icono se comprima */
+}
+
+.sidebar-link span {
+    flex: 1;
+}
+
+.sidebar-link .badge-proximamente {
+    font-size: 0.55rem;
+    background: #ffc107;
+    color: #000;
+    padding: 2px 6px;
+    border-radius: 10px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-footer {
+    padding: 15px 20px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;  /* ✅ Evita que se comprima */
+}
+
+/* ✅ Nombre de usuario más grande y sin emoji */
+.sidebar-footer .user-name {
+    font-size: 1rem;
+    font-weight: 500;
+    color: white;
+}
+
+.sidebar-footer .btn-danger {
+    padding: 4px 12px;
+    font-size: 0.75rem;
+}
+
+.admin-main {
+    margin-left: 250px;
+    padding: 20px 30px;
+    min-height: 100vh;
+    background: #f5f6fa;
+}
+
+.btn-toggle-sidebar {
+    display: none;
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    z-index: 1001;
+    background: #1a1a2e;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 1.2rem;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+}
+
+.seccion-content {
+    animation: fadeIn 0.3s ease;
+}
+
+.seccion-header {
+    margin-bottom: 25px;
+}
+
+.seccion-header h1 {
+    font-size: 1.8rem;
+    margin: 0;
+    color: #333;
+}
+
+.seccion-header h1 i {
+    color: #667eea;
+}
+
+.seccion-header .text-muted {
+    font-size: 0.95rem;
+    margin-top: 5px;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
+   SIDEBAR - RESPONSIVE
+   ============================================ */
+@media (max-width: 768px) {
+    .admin-sidebar {
+        transform: translateX(-100%);
+        width: 280px;
+    }
+    .admin-sidebar.active {
+        transform: translateX(0);
+    }
+    .admin-main {
+        margin-left: 0;
+        padding: 15px;
+        padding-top: 70px;
+    }
+    .btn-toggle-sidebar {
+        display: block;
+    }
+    .seccion-header h1 {
+        font-size: 1.3rem;
     }
 }

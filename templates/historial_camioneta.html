@@ -67,17 +67,43 @@
                                     <i class="bi bi-chevron-down toggle-icon"></i>
                                 </div>
                             </div>
+                            
+                            <!-- Detalle del control con categorías colapsables -->
                             <div class="detalle-control">
                                 <div class="row">
                                     <div class="col-12">
                                         <strong>Elementos revisados:</strong>
-                                        <div class="mt-2">
-                                            {% if item.elementos %}
-                                                {% for elem in item.elementos %}
+                                        
+                                        {% set categorias = {'CAMIONETA': [], 'HERRAMIENTA': [], 'CAJA': []} %}
+                                        {% set elementos_vistos = [] %}
+                                        
+                                        {% for elem in item.elementos %}
+                                            {% if elem.elemento not in elementos_vistos %}
+                                                {% if elem.categoria in categorias %}
+                                                    {% set _ = categorias[elem.categoria].append(elem) %}
+                                                    {% set _ = elementos_vistos.append(elem.elemento) %}
+                                                {% endif %}
+                                            {% endif %}
+                                        {% endfor %}
+                                        
+                                        <!-- Categoría: CAMIONETA -->
+                                        {% if categorias['CAMIONETA'] %}
+                                        <div class="categoria-colapsable mt-2">
+                                            <div class="categoria-header-click" onclick="toggleCategoria(event, this)">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <span>
+                                                        <i class="bi bi-truck"></i> 
+                                                        <strong>Camioneta</strong>
+                                                        <span class="badge bg-secondary">{{ categorias['CAMIONETA']|length }}</span>
+                                                    </span>
+                                                    <i class="bi bi-chevron-down toggle-cat-icon"></i>
+                                                </div>
+                                            </div>
+                                            <div class="categoria-contenido" style="display: none;">
+                                                {% for elem in categorias['CAMIONETA'] %}
                                                     <div class="elemento-item">
                                                         <div class="nombre-categoria">
                                                             <span>{{ elem.elemento }}</span>
-                                                            <span class="categoria-tag">{{ elem.categoria }}</span>
                                                         </div>
                                                         <div class="d-flex align-items-center flex-wrap gap-2">
                                                             {% if elem.estado == 'OK' %}
@@ -94,7 +120,6 @@
                                                             {% if elem.observacion and elem.observacion != 'Elemento en buen estado' %}
                                                                 <small class="text-muted">({{ elem.observacion }})</small>
                                                             {% endif %}
-                                                            <!-- Información de entrega -->
                                                             {% if elem.entregado_por or elem.recibido_por %}
                                                                 <span class="info-entrega">
                                                                     {% if elem.entregado_por %}
@@ -108,10 +133,112 @@
                                                         </div>
                                                     </div>
                                                 {% endfor %}
-                                            {% else %}
-                                                <span class="text-muted">Sin elementos registrados</span>
-                                            {% endif %}
+                                            </div>
                                         </div>
+                                        {% endif %}
+                                        
+                                        <!-- Categoría: HERRAMIENTA -->
+                                        {% if categorias['HERRAMIENTA'] %}
+                                        <div class="categoria-colapsable mt-2">
+                                            <div class="categoria-header-click" onclick="toggleCategoria(event, this)">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <span>
+                                                        <i class="bi bi-tools"></i> 
+                                                        <strong>Herramientas</strong>
+                                                        <span class="badge bg-secondary">{{ categorias['HERRAMIENTA']|length }}</span>
+                                                    </span>
+                                                    <i class="bi bi-chevron-down toggle-cat-icon"></i>
+                                                </div>
+                                            </div>
+                                            <div class="categoria-contenido" style="display: none;">
+                                                {% for elem in categorias['HERRAMIENTA'] %}
+                                                    <div class="elemento-item">
+                                                        <div class="nombre-categoria">
+                                                            <span>{{ elem.elemento }}</span>
+                                                        </div>
+                                                        <div class="d-flex align-items-center flex-wrap gap-2">
+                                                            {% if elem.estado == 'OK' %}
+                                                                <span class="estado-ok"><i class="bi bi-check-circle"></i> OK</span>
+                                                            {% elif elem.estado == 'FALTANTE' %}
+                                                                <span class="estado-faltante"><i class="bi bi-x-circle"></i> FALTANTE</span>
+                                                            {% elif elem.estado == 'OBSERVACION' %}
+                                                                <span class="estado-observacion"><i class="bi bi-chat"></i> OBSERVACIÓN</span>
+                                                            {% elif elem.estado == 'RESUELTO' %}
+                                                                <span class="estado-resuelto"><i class="bi bi-check-circle-fill"></i> RESUELTO</span>
+                                                            {% else %}
+                                                                {{ elem.estado }}
+                                                            {% endif %}
+                                                            {% if elem.observacion and elem.observacion != 'Elemento en buen estado' %}
+                                                                <small class="text-muted">({{ elem.observacion }})</small>
+                                                            {% endif %}
+                                                            {% if elem.entregado_por or elem.recibido_por %}
+                                                                <span class="info-entrega">
+                                                                    {% if elem.entregado_por %}
+                                                                        <span class="entregado">📤 {{ elem.entregado_por }}</span>
+                                                                    {% endif %}
+                                                                    {% if elem.recibido_por %}
+                                                                        <span class="recibido">📥 {{ elem.recibido_por }}</span>
+                                                                    {% endif %}
+                                                                </span>
+                                                            {% endif %}
+                                                        </div>
+                                                    </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                        
+                                        <!-- Categoría: CAJA -->
+                                        {% if categorias['CAJA'] %}
+                                        <div class="categoria-colapsable mt-2">
+                                            <div class="categoria-header-click" onclick="toggleCategoria(event, this)">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <span>
+                                                        <i class="bi bi-box"></i> 
+                                                        <strong>Caja de Herramientas</strong>
+                                                        <span class="badge bg-secondary">{{ categorias['CAJA']|length }}</span>
+                                                    </span>
+                                                    <i class="bi bi-chevron-down toggle-cat-icon"></i>
+                                                </div>
+                                            </div>
+                                            <div class="categoria-contenido" style="display: none;">
+                                                {% for elem in categorias['CAJA'] %}
+                                                    <div class="elemento-item">
+                                                        <div class="nombre-categoria">
+                                                            <span>{{ elem.elemento }}</span>
+                                                        </div>
+                                                        <div class="d-flex align-items-center flex-wrap gap-2">
+                                                            {% if elem.estado == 'OK' %}
+                                                                <span class="estado-ok"><i class="bi bi-check-circle"></i> OK</span>
+                                                            {% elif elem.estado == 'FALTANTE' %}
+                                                                <span class="estado-faltante"><i class="bi bi-x-circle"></i> FALTANTE</span>
+                                                            {% elif elem.estado == 'OBSERVACION' %}
+                                                                <span class="estado-observacion"><i class="bi bi-chat"></i> OBSERVACIÓN</span>
+                                                            {% elif elem.estado == 'RESUELTO' %}
+                                                                <span class="estado-resuelto"><i class="bi bi-check-circle-fill"></i> RESUELTO</span>
+                                                            {% else %}
+                                                                {{ elem.estado }}
+                                                            {% endif %}
+                                                            {% if elem.observacion and elem.observacion != 'Elemento en buen estado' %}
+                                                                <small class="text-muted">({{ elem.observacion }})</small>
+                                                            {% endif %}
+                                                            {% if elem.entregado_por or elem.recibido_por %}
+                                                                <span class="info-entrega">
+                                                                    {% if elem.entregado_por %}
+                                                                        <span class="entregado">📤 {{ elem.entregado_por }}</span>
+                                                                    {% endif %}
+                                                                    {% if elem.recibido_por %}
+                                                                        <span class="recibido">📥 {{ elem.recibido_por }}</span>
+                                                                    {% endif %}
+                                                                </span>
+                                                            {% endif %}
+                                                        </div>
+                                                    </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                        
                                     </div>
                                 </div>
                             </div>
@@ -179,97 +306,95 @@
                                 </div>
                                 
                                 <!-- Línea de tiempo -->
-<div class="linea-tiempo mt-2" style="display: none;">
-    {% for r in registros %}
-        <div class="evento 
-            {% if r.estado == 'OK' %}ok
-            {% elif r.estado == 'FALTANTE' %}faltante
-            {% elif r.estado == 'OBSERVACION' %}observacion
-            {% elif r.estado == 'RESUELTO' %}resuelto
-            {% endif %}">
-            <div class="d-flex justify-content-between align-items-start flex-wrap">
-                <div>
-                    <span class="fecha-evento">
-                        <i class="bi bi-calendar3"></i> 
-                        {{ r.fecha_hora[:16]|replace('T', ' ') }}
-                    </span>
-                    <span class="badge 
-                        {% if r.estado == 'OK' %}bg-success
-                        {% elif r.estado == 'FALTANTE' %}bg-danger
-                        {% elif r.estado == 'OBSERVACION' %}bg-warning text-dark
-                        {% elif r.estado == 'RESUELTO' %}bg-info
-                        {% else %}bg-secondary{% endif %} ms-2">
-                        {{ r.estado }}
-                    </span>
-                    {% if r.tipo_control %}
-                        <span class="badge 
-                            {% if r.tipo_control == 'RETIRO' %}bg-primary
-                            {% else %}bg-secondary{% endif %} ms-1">
-                            {{ r.tipo_control|title }}
-                        </span>
-                    {% endif %}
-                </div>
-                <div class="text-end">
-                    <span class="tecnico-evento">
-                        <i class="bi bi-person"></i> {{ r.tecnico_nombre }}
-                    </span>
-                </div>
-            </div>
-            
-            {% if r.descripcion and r.descripcion != 'Elemento en buen estado' %}
-                <div class="mt-1">
-                    <span class="text-muted small">
-                        <i class="bi bi-chat"></i> {{ r.descripcion }}
-                    </span>
-                </div>
-            {% endif %}
-            
-            <!-- Información de entrega -->
-            {% if r.entregado_por or r.recibido_por %}
-                <div class="entrega-info mt-1">
-                    {% if r.entregado_por %}
-                        <span class="entregado-por">📤 Entregado por: {{ r.entregado_por }}</span>
-                    {% endif %}
-                    {% if r.recibido_por %}
-                        <span class="recibido-por ms-2">📥 Recibido por: {{ r.recibido_por }}</span>
-                    {% endif %}
-                    {% if r.fecha_entrega %}
-                        <span class="text-muted ms-2">📅 {{ r.fecha_entrega[:16]|replace('T', ' ') }}</span>
-                    {% endif %}
-                </div>
-            {% endif %}
-            
-            <!-- ✅ NUEVO: Comentario de resolución -->
-            {% if r.estado == 'RESUELTO' and r.resuelto_por %}
-                <div class="mt-1">
-                    <span class="text-success small">
-                        <i class="bi bi-check-circle"></i> Resuelto por: {{ r.resuelto_por }}
-                        {% if r.fecha_resolucion %}
-                            ({{ r.fecha_resolucion[:16]|replace('T', ' ') }})
-                        {% endif %}
-                    </span>
-                    {% if r.comentario_resolucion and r.comentario_resolucion != '-' %}
-                        <div class="mt-1 ps-3">
-                            <span class="text-muted small">
-                                <i class="bi bi-quote"></i> "{{ r.comentario_resolucion }}"
-                            </span>
-                        </div>
-                    {% endif %}
-                </div>
-            {% endif %}
-            
-            {% if r.estado == 'FALTANTE' %}
-                <div class="mt-1">
-                    <span class="text-danger small">
-                        <i class="bi bi-exclamation-triangle"></i> 
-                        <strong>Reportado por:</strong> {{ r.tecnico_nombre }}
-                        <span class="text-muted">el {{ r.fecha_hora[:16]|replace('T', ' ') }}</span>
-                    </span>
-                </div>
-            {% endif %}
-        </div>
-    {% endfor %}
-</div>
+                                <div class="linea-tiempo mt-2" style="display: none;">
+                                    {% for r in registros %}
+                                        <div class="evento 
+                                            {% if r.estado == 'OK' %}ok
+                                            {% elif r.estado == 'FALTANTE' %}faltante
+                                            {% elif r.estado == 'OBSERVACION' %}observacion
+                                            {% elif r.estado == 'RESUELTO' %}resuelto
+                                            {% endif %}">
+                                            <div class="d-flex justify-content-between align-items-start flex-wrap">
+                                                <div>
+                                                    <span class="fecha-evento">
+                                                        <i class="bi bi-calendar3"></i> 
+                                                        {{ r.fecha_hora[:16]|replace('T', ' ') }}
+                                                    </span>
+                                                    <span class="badge 
+                                                        {% if r.estado == 'OK' %}bg-success
+                                                        {% elif r.estado == 'FALTANTE' %}bg-danger
+                                                        {% elif r.estado == 'OBSERVACION' %}bg-warning text-dark
+                                                        {% elif r.estado == 'RESUELTO' %}bg-info
+                                                        {% else %}bg-secondary{% endif %} ms-2">
+                                                        {{ r.estado }}
+                                                    </span>
+                                                    {% if r.tipo_control %}
+                                                        <span class="badge 
+                                                            {% if r.tipo_control == 'RETIRO' %}bg-primary
+                                                            {% else %}bg-secondary{% endif %} ms-1">
+                                                            {{ r.tipo_control|title }}
+                                                        </span>
+                                                    {% endif %}
+                                                </div>
+                                                <div class="text-end">
+                                                    <span class="tecnico-evento">
+                                                        <i class="bi bi-person"></i> {{ r.tecnico_nombre }}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            
+                                            {% if r.descripcion and r.descripcion != 'Elemento en buen estado' %}
+                                                <div class="mt-1">
+                                                    <span class="text-muted small">
+                                                        <i class="bi bi-chat"></i> {{ r.descripcion }}
+                                                    </span>
+                                                </div>
+                                            {% endif %}
+                                            
+                                            {% if r.entregado_por or r.recibido_por %}
+                                                <div class="entrega-info mt-1">
+                                                    {% if r.entregado_por %}
+                                                        <span class="entregado-por">📤 Entregado por: {{ r.entregado_por }}</span>
+                                                    {% endif %}
+                                                    {% if r.recibido_por %}
+                                                        <span class="recibido-por ms-2">📥 Recibido por: {{ r.recibido_por }}</span>
+                                                    {% endif %}
+                                                    {% if r.fecha_entrega %}
+                                                        <span class="text-muted ms-2">📅 {{ r.fecha_entrega[:16]|replace('T', ' ') }}</span>
+                                                    {% endif %}
+                                                </div>
+                                            {% endif %}
+                                            
+                                            {% if r.estado == 'RESUELTO' and r.resuelto_por %}
+                                                <div class="mt-1">
+                                                    <span class="text-success small">
+                                                        <i class="bi bi-check-circle"></i> Resuelto por: {{ r.resuelto_por }}
+                                                        {% if r.fecha_resolucion %}
+                                                            ({{ r.fecha_resolucion[:16]|replace('T', ' ') }})
+                                                        {% endif %}
+                                                    </span>
+                                                    {% if r.comentario_resolucion and r.comentario_resolucion != '-' %}
+                                                        <div class="mt-1 ps-3">
+                                                            <span class="text-muted small">
+                                                                <i class="bi bi-quote"></i> "{{ r.comentario_resolucion }}"
+                                                            </span>
+                                                        </div>
+                                                    {% endif %}
+                                                </div>
+                                            {% endif %}
+                                            
+                                            {% if r.estado == 'FALTANTE' %}
+                                                <div class="mt-1">
+                                                    <span class="text-danger small">
+                                                        <i class="bi bi-exclamation-triangle"></i> 
+                                                        <strong>Reportado por:</strong> {{ r.tecnico_nombre }}
+                                                        <span class="text-muted">el {{ r.fecha_hora[:16]|replace('T', ' ') }}</span>
+                                                    </span>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    {% endfor %}
+                                </div>
                             </div>
                         {% endfor %}
                     {% else %}
@@ -298,13 +423,29 @@
             }
         }
 
+        // Toggle categoría dentro del detalle - CON stopPropagation
+        function toggleCategoria(event, header) {
+            event.stopPropagation(); // ⬅️ EVITA QUE SE CIERRE EL DETALLE PRINCIPAL
+            
+            const contenido = header.nextElementSibling;
+            const icon = header.querySelector('.toggle-cat-icon');
+            
+            if (contenido.style.display === 'none' || contenido.style.display === '') {
+                contenido.style.display = 'block';
+                icon.className = 'bi bi-chevron-up toggle-cat-icon';
+            } else {
+                contenido.style.display = 'none';
+                icon.className = 'bi bi-chevron-down toggle-cat-icon';
+            }
+        }
+
         // Toggle línea de tiempo de elemento
         function toggleLineaTiempo(element) {
             const parent = element.closest('.elemento-historial');
             const timeline = parent.querySelector('.linea-tiempo');
             const icon = element.querySelector('.bi');
             
-            if (timeline.style.display === 'none') {
+            if (timeline.style.display === 'none' || timeline.style.display === '') {
                 timeline.style.display = 'block';
                 icon.className = 'bi bi-chevron-down';
             } else {
@@ -327,6 +468,13 @@
                 }
             });
         }
+
+        // Inicializar: asegurar que las categorías empiecen colapsadas
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.categoria-contenido').forEach(el => {
+                el.style.display = 'none';
+            });
+        });
     </script>
 </body>
 </html>
