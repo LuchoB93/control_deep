@@ -3,118 +3,265 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Panel Jefe - Estado General de Flota</title>
+    <title>Panel Jefe - Control de Camionetas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body class="jefe">
-    <div class="jefe-container">
-        <header class="jefe-header">
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="jefe-header d-flex justify-content-between align-items-center">
             <div>
-                <h1>🚐 Estado General de Flota</h1>
-                <p>Fecha: {{ fecha_actual }}</p>
+                <h1><i class="bi bi-graph-up-arrow"></i> Panel de Jefatura</h1>
+                <p class="mb-0 opacity-75">
+                    <i class="bi bi-calendar3"></i> {{ fecha_actual }} | 
+                    <i class="bi bi-truck"></i> Monitoreo de Flota
+                </p>
             </div>
-            <div class="jefe-user">
-                <span>👤 {{ session.nombre }}</span>
-                <a href="{{ url_for('logout') }}" class="jefe-btn-volver">Cerrar Sesión</a>
+            <div>
+                <button class="btn-estadisticas" onclick="abrirEstadisticas()">
+                    <i class="bi bi-bar-chart"></i> Ver Estadísticas
+                </button>
+                <a href="{{ url_for('logout') }}" class="btn btn-outline-light ms-2">
+                    <i class="bi bi-box-arrow-right"></i> Salir
+                </a>
             </div>
-        </header>
+        </div>
 
-        <div class="jefe-grid">
-            {% for patente, info in resumen_flota.items() %}
-                <div class="jefe-card 
-                    {% if info.estado_general == 'FALLA' %}jefe-card-falla
-                    {% elif info.estado_general == 'ALERTA' %}jefe-card-alerta
-                    {% else %}jefe-card-ok{% endif %}">
-                    
-                    <h2 class="jefe-patente" onclick="abrirHistorial('{{ patente }}')">{{ patente }}</h2>
-                    
-                    {% if info.estado_general == 'FALLA' %}
-                        <span class="jefe-estado-badge">🔴 CON FALLAS</span>
-                    {% elif info.estado_general == 'ALERTA' %}
-                        <span class="jefe-estado-badge">🟡 CON FALTANTES</span>
-                    {% else %}
-                        <span class="jefe-estado-badge">🟢 EN CONDICIÓN</span>
-                    {% endif %}
-
-                    <div class="jefe-sin-registros">
-                        Último control: {{ info.ultimo_registro }}
+        <!-- Resumen rápido de flota -->
+        <div class="row">
+            <div class="col-md-3 col-6">
+                <div class="stat-card primary">
+                    <div class="number">{{ resumen_flota|length }}</div>
+                    <div class="label"><i class="bi bi-truck"></i> Camionetas Activas</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="stat-card danger">
+                    <div class="number">
+                        {% set fallas = 0 %}
+                        {% for patente, info in resumen_flota.items() %}
+                            {% if info.estado_general == 'FALLA' %}{% set fallas = fallas + 1 %}{% endif %}
+                        {% endfor %}
+                        {{ fallas }}
                     </div>
-                    
-                    <button class="jefe-btn-historial" onclick="abrirHistorial('{{ patente }}')">📜 Ver Historial</button>
+                    <div class="label"><i class="bi bi-exclamation-triangle"></i> Con Fallas</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="stat-card warning">
+                    <div class="number">
+                        {% set alertas = 0 %}
+                        {% for patente, info in resumen_flota.items() %}
+                            {% if info.estado_general == 'ALERTA' %}{% set alertas = alertas + 1 %}{% endif %}
+                        {% endfor %}
+                        {{ alertas }}
+                    </div>
+                    <div class="label"><i class="bi bi-exclamation-circle"></i> En Alerta</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="stat-card success">
+                    <div class="number">
+                        {% set ok = 0 %}
+                        {% for patente, info in resumen_flota.items() %}
+                            {% if info.estado_general == 'OK' %}{% set ok = ok + 1 %}{% endif %}
+                        {% endfor %}
+                        {{ ok }}
+                    </div>
+                    <div class="label"><i class="bi bi-check-circle"></i> En Orden</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cards de camionetas -->
+        <div class="row mt-3">
+            {% for patente, info in resumen_flota.items() %}
+                <div class="col-md-4 col-lg-3 col-6 mb-3">
+                    <div class="card-flota" onclick="verDetalleCamioneta('{{ patente }}')">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="card-title mb-0">
+                                <i class="bi bi-truck"></i> {{ patente }}
+                            </h6>
+                            <span class="estado-badge 
+                                {% if info.estado_general == 'OK' %}ok
+                                {% elif info.estado_general == 'ALERTA' %}alerta
+                                {% elif info.estado_general == 'FALLA' %}falla
+                                {% endif %}">
+                            </span>
+                        </div>
+                        <div class="small">
+                            <span class="badge 
+                                {% if info.estado_general == 'OK' %}bg-success
+                                {% elif info.estado_general == 'ALERTA' %}bg-warning text-dark
+                                {% elif info.estado_general == 'FALLA' %}bg-danger
+                                {% endif %}">
+                                {{ info.estado_general }}
+                            </span>
+                            <span class="text-muted ms-2 ultimo-registro">
+                                <i class="bi bi-clock"></i> {{ info.ultimo_registro }}
+                            </span>
+                        </div>
+                        <div class="mt-1 small">
+                            {% if info.historial %}
+                                <span class="text-muted">Último: {{ info.historial[-1].elemento }}</span>
+                            {% else %}
+                                <span class="text-muted">Sin registros</span>
+                            {% endif %}
+                        </div>
+                    </div>
                 </div>
             {% endfor %}
         </div>
     </div>
 
-    <!-- Ventana Modal para el Historial -->
-    <div id="modal-historial" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="modal-titulo">Historial</h2>
-                <button class="modal-close" onclick="cerrarHistorial()">&times;</button>
+    <!-- MODAL DE ESTADÍSTICAS -->
+    <div class="modal fade" id="modalEstadisticas" tabindex="-1">
+        <div class="modal-dialog modal-fullscreen">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-bar-chart"></i> Estadísticas Detalladas</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="contenido-estadisticas" style="overflow-y: auto;">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Cargando...</span>
+                        </div>
+                        <p class="mt-2">Cargando estadísticas...</p>
+                    </div>
+                </div>
             </div>
-            <div class="modal-body" id="modal-body"></div>
         </div>
     </div>
 
-    <script>
-        // Datos de las camionetas (pasados desde Flask)
-         const datosCamionetas = {{ resumen_flota | tojson }};
+    <!-- MODAL DE DETALLE DE CAMIONETA (SOLO UNO) -->
+    <div class="modal fade" id="modalDetalleCamioneta" tabindex="-1">
+        <div class="modal-dialog modal-fullscreen">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="detalle-titulo">Detalle de Camioneta</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="detalle-contenido" style="overflow-y: auto; padding: 20px 30px;">
+                </div>
+            </div>
+        </div>
+    </div>
 
-                // Función para abrir el historial
-                // Función para abrir el historial
-        function abrirHistorial(patente) {
-            const info = datosCamionetas[patente];
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const flotaData = {{ resumen_flota | tojson }};
+
+        // ============================================
+        // VISTA DE TARJETAS PARA DETALLE DE CAMIONETA
+        // ============================================
+        function verDetalleCamioneta(patente) {
+            const info = flotaData[patente];
             if (!info) return;
             
-            let html = '<table><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Resuelto Por</th><th>Fecha de Resolución</th><th>Comentario</th></tr></thead><tbody>';
+            document.getElementById('detalle-titulo').textContent = '🚚 Detalle - ' + patente;
+            
+            // Contar estadísticas
+            let totalOk = 0, totalFaltante = 0, totalFalla = 0, totalResuelto = 0;
+            info.historial.forEach(r => {
+                if (r.estado === 'OK') totalOk++;
+                else if (r.estado === 'FALTANTE') totalFaltante++;
+                else if (r.estado === 'FALLA') totalFalla++;
+                else if (r.estado === 'RESUELTO') totalResuelto++;
+            });
+            
+            let html = `
+                <!-- Resumen rápido -->
+                <div class="resumen-rapido">
+                    <div class="stat-mini">
+                        <div class="numero">${info.historial.length}</div>
+                        <div class="etiqueta">Total Reportes</div>
+                    </div>
+                    <div class="stat-mini">
+                        <div class="numero" style="color:#28a745;">${totalOk}</div>
+                        <div class="etiqueta">✅ OK</div>
+                    </div>
+                    <div class="stat-mini">
+                        <div class="numero" style="color:#dc3545;">${totalFaltante + totalFalla}</div>
+                        <div class="etiqueta">❌ Problemas</div>
+                    </div>
+                    <div class="stat-mini">
+                        <div class="numero" style="color:#17a2b8;">${totalResuelto}</div>
+                        <div class="etiqueta">🔄 Resueltos</div>
+                    </div>
+                </div>
+                
+                <!-- Estado general -->
+                <div class="alert ${info.estado_general == 'OK' ? 'alert-success' : info.estado_general == 'ALERTA' ? 'alert-warning' : 'alert-danger'} mb-3">
+                    <strong>Estado:</strong> ${info.estado_general} | 
+                    <strong>Último registro:</strong> ${info.ultimo_registro}
+                </div>
+                
+                <h6 class="mb-3">Historial de Reportes</h6>
+                <div class="card-grid">
+            `;
             
             if (info.historial.length === 0) {
-                html += '<tr><td colspan="8">✅ Sin registros para esta camioneta.</td></tr>';
+                html += `<div class="text-center text-muted">Sin registros</div>`;
             } else {
-                info.historial.forEach(item => {
-                    let badge = '';
-                    if (item.estado === 'FALLA') badge = '<span class="estado-falla">FALLA</span>';
-                    else if (item.estado === 'FALTANTE') badge = '<span class="estado-faltante">FALTANTE</span>';
-                    else if (item.estado === 'OBSERVACION') badge = '<span class="estado-observacion">OBSERVACION</span>';
-                    else if (item.estado === 'RESUELTO') badge = '<span class="estado-resuelto">RESUELTO</span>';
-                    else badge = '<span class="estado-ok">OK</span>';
+                info.historial.slice().reverse().forEach(r => {
+                    const estadoClass = r.estado == 'OK' ? 'estado-ok' : 
+                                       r.estado == 'FALTANTE' ? 'estado-faltante' : 
+                                       r.estado == 'FALLA' ? 'estado-falla' : 
+                                       r.estado == 'RESUELTO' ? 'estado-resuelto' : '';
                     
-                    let fechaResolucion = item.fecha_resolucion || '-';
-                    let resueltoPor = item.resuelto_por || '-';
-                    let comentario = item.comentario_resolucion || '-';
+                    const badgeText = r.estado == 'FALLA' ? '⚠️ FALLA' : 
+                                     r.estado == 'FALTANTE' ? '❌ FALTANTE' : 
+                                     r.estado == 'RESUELTO' ? '✅ RESUELTO' : '✔️ OK';
                     
-                    html += `<tr>
-                        <td style="white-space: nowrap;">${item.fecha}</td>
-                        <td>${item.elemento}</td>
-                        <td>${badge}</td>
-                        <td>${item.descripcion || '-'}</td>
-                        <td>${item.tecnico}</td>
-                        <td>${resueltoPor}</td>
-                        <td style="white-space: nowrap;">${fechaResolucion}</td>
-                        <td>${comentario}</td>
-                    </tr>`;
+                    const badgeClass = r.estado == 'FALLA' ? 'danger' : 
+                                      r.estado == 'FALTANTE' ? 'warning' : 
+                                      r.estado == 'RESUELTO' ? 'info' : 'success';
+                    
+                    const descripcion = r.descripcion && r.descripcion != 'Elemento en buen estado' ? r.descripcion : '';
+                    
+                    html += `
+                        <div class="card-item ${estadoClass}">
+                            <div class="card-header-info">
+                                <span class="card-elemento">${r.elemento}</span>
+                                <span class="badge badge-estado bg-${badgeClass}">${badgeText}</span>
+                            </div>
+                            <div class="card-fecha"><i class="bi bi-calendar3"></i> ${r.fecha || '-'}</div>
+                            <div class="card-tecnico"><i class="bi bi-person"></i> ${r.tecnico || '-'}</div>
+                            ${descripcion ? `<div class="card-observacion"><i class="bi bi-chat"></i> ${descripcion}</div>` : ''}
+                            ${r.resuelto_por && r.resuelto_por != '-' ? `<div class="text-success small">✅ Resuelto por: ${r.resuelto_por}</div>` : ''}
+                        </div>
+                    `;
                 });
             }
             
-            html += '</tbody></table>';
+            html += `
+                </div>
+            `;
             
-            document.getElementById('modal-titulo').textContent = 'Historial de ' + patente;
-            document.getElementById('modal-body').innerHTML = html;
-            document.getElementById('modal-historial').style.display = 'flex';
+            document.getElementById('detalle-contenido').innerHTML = html;
+            new bootstrap.Modal(document.getElementById('modalDetalleCamioneta')).show();
         }
 
-        // Función para cerrar el historial
-        function cerrarHistorial() {
-            document.getElementById('modal-historial').style.display = 'none';
+        function abrirEstadisticas() {
+            const modal = new bootstrap.Modal(document.getElementById('modalEstadisticas'));
+            modal.show();
+            
+            fetch('/jefe/estadisticas')
+                .then(response => response.text())
+                .then(html => {
+                    document.getElementById('contenido-estadisticas').innerHTML = html;
+                })
+                .catch(error => {
+                    document.getElementById('contenido-estadisticas').innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="bi bi-exclamation-triangle"></i> Error al cargar estadísticas.
+                        </div>
+                    `;
+                });
         }
-
-        // Cerrar modal al hacer clic fuera del contenido
-        document.getElementById('modal-historial').addEventListener('click', function(e) {
-            if (e.target === this) {
-                cerrarHistorial();
-            }
-        });
     </script>
 </body>
 </html>

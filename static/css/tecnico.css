@@ -1,0 +1,254 @@
+/* ==========================================
+   ESTILOS PARA CONTROL RÁPIDO - MÓVIL
+   ========================================== */
+
+* {
+    touch-action: manipulation;
+}
+
+body {
+    background: #f5f6fa;
+    padding-bottom: 80px;
+}
+
+/* ===== HEADER ===== */
+.header-control {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 15px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+}
+
+.header-control h1 {
+    font-size: 1.2rem;
+    margin: 0;
+}
+
+.header-control .info {
+    font-size: 0.75rem;
+    opacity: 0.9;
+}
+
+.progreso-movil {
+    background: rgba(255,255,255,0.2);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-top: 5px;
+}
+
+.progreso-movil .progress {
+    height: 6px;
+    background: rgba(255,255,255,0.3);
+}
+
+.progreso-movil .progress-bar {
+    background: #fff;
+}
+
+/* ===== TARJETAS ===== */
+.elemento-card {
+    border-radius: 12px;
+    padding: 12px 15px;
+    margin-bottom: 8px;
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border-left: 5px solid #ced4da;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    touch-action: manipulation;
+    min-height: 60px;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.elemento-card:active {
+    transform: scale(0.97);
+}
+
+.elemento-card .nombre {
+    font-weight: 600;
+    font-size: 0.95rem;
+    flex: 1;
+}
+
+.elemento-card .estado-badge {
+    font-size: 0.7rem;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    min-width: 65px;
+    text-align: center;
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+
+/* ===== ESTADOS - Usando SOLO clases ===== */
+
+/* Estado: OK */
+.elemento-card.estado-ok {
+    border-left-color: #28a745;
+    background: #f0fff4;
+}
+.elemento-card.estado-ok .estado-badge {
+    background: #28a745;
+    color: white;
+}
+
+/* Estado: FALLA */
+.elemento-card.estado-falla {
+    border-left-color: #dc3545;
+    background: #fff5f5;
+}
+.elemento-card.estado-falla .estado-badge {
+    background: #dc3545;
+    color: white;
+}
+
+/* Estado: FALTANTE */
+.elemento-card.estado-faltante {
+    border-left-color: #ffc107;
+    background: #fffef5;
+}
+.elemento-card.estado-faltante .estado-badge {
+    background: #ffc107;
+    color: #000;
+}
+
+/* Estado: OBSERVACION */
+.elemento-card.estado-observacion {
+    border-left-color: #17a2b8;
+    background: #f5faff;
+}
+.elemento-card.estado-observacion .estado-badge {
+    background: #17a2b8;
+    color: white;
+}
+
+/* Estado: PENDIENTE (default) */
+.elemento-card.estado-pendiente {
+    border-left-color: #6c757d;
+    background: white;
+}
+.elemento-card.estado-pendiente .estado-badge {
+    background: #6c757d;
+    color: white;
+}
+
+/* Bloqueado */
+.elemento-card.bloqueado {
+    opacity: 0.5;
+    pointer-events: none;
+}
+.elemento-card.bloqueado .estado-badge {
+    background: #dc3545;
+}
+
+/* ===== CATEGORÍAS ===== */
+.categoria-header {
+    background: #2d3436;
+    color: white;
+    padding: 8px 15px;
+    border-radius: 8px;
+    margin: 12px 0 8px 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.categoria-header .badge {
+    background: rgba(255,255,255,0.2);
+    color: white;
+}
+
+/* ===== MODAL ===== */
+.modal-dialog {
+    margin: 10px;
+}
+
+.modal-content {
+    border-radius: 20px;
+}
+
+.modal-body .btn-estado {
+    padding: 15px;
+    font-size: 1.1rem;
+    border-radius: 12px;
+    margin-bottom: 6px;
+    touch-action: manipulation;
+}
+
+.modal-body .btn-estado:active {
+    transform: scale(0.96);
+}
+
+.btn-estado.active {
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.15);
+    transform: scale(1.02);
+}
+
+.modal-body textarea {
+    font-size: 0.95rem;
+    border-radius: 12px;
+}
+
+/* ===== BOTONES FIJOS ===== */
+.fixed-actions {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    padding: 10px 15px;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+    z-index: 200;
+    display: flex;
+    gap: 8px;
+}
+
+.fixed-actions .btn {
+    flex: 1;
+    padding: 12px;
+    font-size: 0.9rem;
+    border-radius: 12px;
+    touch-action: manipulation;
+}
+
+/* ===== ANIMACIONES ===== */
+@keyframes pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+.elemento-card.animar {
+    animation: pop 0.2s ease;
+}
+
+/* ===== CONTENEDOR ===== */
+.scroll-container {
+    padding-bottom: 80px;
+}
+
+/* ===== MENSAJES FLOTANTES ===== */
+.mensaje-flotante {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    border-radius: 12px;
+    padding: 12px 20px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    font-weight: 600;
+    font-size: 0.95rem;
+    max-width: 90%;
+    transition: opacity 0.5s ease;
+}

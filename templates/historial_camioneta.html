@@ -1,1 +1,332 @@
-<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Historial</title><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"></head><body><div class="admin-container"><header class="admin-header"><div><h1>Historial de {{ camioneta.patente }}</h1><p>Asignaciones y responsables</p></div><a href="{{ url_for('admin') }}" class="logout-button">← Volver</a></header><section class="panel">{% if historial %}<div class="table-container"><table><thead><tr><th>Fecha</th><th>Turno</th><th>Cuadrilla</th><th>Zona</th><th>Técnicos</th><th>Estado</th></tr></thead><tbody>{% for a in historial %}<tr><td>{{ a.fecha }}</td><td>{{ a.jornada|capitalize }}</td><td>{{ a.cuadrilla or '-' }}</td><td>{{ a.zona or '-' }}</td><td>{{ a.tecnicos or '-' }}</td><td>{{ a.estado }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p>No hay historial.</p>{% endif %}</section></div></body></html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historial - {{ patente }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="historial-container container">
+        <!-- Header -->
+        <div class="historial-header d-flex justify-content-between align-items-center">
+            <div>
+                <h1><i class="bi bi-clock-history"></i> Historial - {{ patente }}</h1>
+                <div class="subtitle">
+                    <i class="bi bi-truck"></i> Todos los controles y reportes de esta camioneta
+                </div>
+            </div>
+            <div>
+                <a href="{{ url_for('admin') }}" class="btn-volver-historial">
+                    <i class="bi bi-arrow-left"></i> Volver
+                </a>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <ul class="nav nav-tabs nav-tabs-historial" id="historialTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="controles-tab" data-bs-toggle="tab" data-bs-target="#controles" type="button" role="tab">
+                    <i class="bi bi-list-ul"></i> Controles por Fecha
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="elementos-tab" data-bs-toggle="tab" data-bs-target="#elementos" type="button" role="tab">
+                    <i class="bi bi-search"></i> Rastrear Elemento
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content mt-3">
+            <!-- TAB 1: Controles por Fecha -->
+            <div class="tab-pane fade show active" id="controles" role="tabpanel">
+                {% if historial_detallado %}
+                    {% for item in historial_detallado %}
+                        {% set control = item.control %}
+                        <div class="fecha-card" onclick="toggleDetalle(this)">
+                            <div class="d-flex justify-content-between align-items-center flex-wrap">
+                                <div>
+                                    <span class="fecha-texto">
+                                        <i class="bi bi-calendar3"></i> 
+                                        {{ control.fecha }}
+                                        <span class="badge bg-secondary ms-2">{{ control.jornada|title }}</span>
+                                    </span>
+                                    <span class="tecnico-nombre ms-3">
+                                        <i class="bi bi-person"></i> {{ control.tecnico_nombre }}
+                                    </span>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge badge-tipo {% if control.tipo_control == 'RETIRO' %}badge-retiro{% else %}badge-devolucion{% endif %}">
+                                        {{ control.tipo_control|title }}
+                                    </span>
+                                    <span class="badge badge-tipo {% if control.finalizado %}badge-finalizado{% else %}badge-pendiente{% endif %}">
+                                        {% if control.finalizado %}✅ Finalizado{% else %}⏳ Pendiente{% endif %}
+                                    </span>
+                                    <i class="bi bi-chevron-down toggle-icon"></i>
+                                </div>
+                            </div>
+                            <div class="detalle-control">
+                                <div class="row">
+                                    <div class="col-12">
+                                        <strong>Elementos revisados:</strong>
+                                        <div class="mt-2">
+                                            {% if item.elementos %}
+                                                {% for elem in item.elementos %}
+                                                    <div class="elemento-item">
+                                                        <div class="nombre-categoria">
+                                                            <span>{{ elem.elemento }}</span>
+                                                            <span class="categoria-tag">{{ elem.categoria }}</span>
+                                                        </div>
+                                                        <div class="d-flex align-items-center flex-wrap gap-2">
+                                                            {% if elem.estado == 'OK' %}
+                                                                <span class="estado-ok"><i class="bi bi-check-circle"></i> OK</span>
+                                                            {% elif elem.estado == 'FALTANTE' %}
+                                                                <span class="estado-faltante"><i class="bi bi-x-circle"></i> FALTANTE</span>
+                                                            {% elif elem.estado == 'OBSERVACION' %}
+                                                                <span class="estado-observacion"><i class="bi bi-chat"></i> OBSERVACIÓN</span>
+                                                            {% elif elem.estado == 'RESUELTO' %}
+                                                                <span class="estado-resuelto"><i class="bi bi-check-circle-fill"></i> RESUELTO</span>
+                                                            {% else %}
+                                                                {{ elem.estado }}
+                                                            {% endif %}
+                                                            {% if elem.observacion and elem.observacion != 'Elemento en buen estado' %}
+                                                                <small class="text-muted">({{ elem.observacion }})</small>
+                                                            {% endif %}
+                                                            <!-- Información de entrega -->
+                                                            {% if elem.entregado_por or elem.recibido_por %}
+                                                                <span class="info-entrega">
+                                                                    {% if elem.entregado_por %}
+                                                                        <span class="entregado">📤 {{ elem.entregado_por }}</span>
+                                                                    {% endif %}
+                                                                    {% if elem.recibido_por %}
+                                                                        <span class="recibido">📥 {{ elem.recibido_por }}</span>
+                                                                    {% endif %}
+                                                                </span>
+                                                            {% endif %}
+                                                        </div>
+                                                    </div>
+                                                {% endfor %}
+                                            {% else %}
+                                                <span class="text-muted">Sin elementos registrados</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i> No hay controles registrados para esta camioneta.
+                    </div>
+                {% endif %}
+            </div>
+
+            <!-- TAB 2: Rastrear Elemento -->
+            <div class="tab-pane fade" id="elementos" role="tabpanel">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <div class="input-group">
+                            <input type="text" class="form-control buscador-elemento" id="buscador-elemento" 
+                                   placeholder="Buscar elemento... (ej: GUANTES)" 
+                                   oninput="filtrarElementos(this.value)">
+                            <button class="btn btn-outline-secondary" type="button">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="lista-elementos">
+                    {% if historial_por_elemento %}
+                        {% for elemento, registros in historial_por_elemento.items() %}
+                            <div class="elemento-historial" data-elemento="{{ elemento }}">
+                                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                                    <span class="nombre-elemento" onclick="toggleLineaTiempo(this)">
+                                        <i class="bi bi-chevron-right"></i> {{ elemento }}
+                                    </span>
+                                    <div class="ultimo-estado">
+                                        Último: 
+                                        {% if registros[0].estado == 'OK' %}
+                                            <span class="text-success"><i class="bi bi-check-circle"></i> OK</span>
+                                        {% elif registros[0].estado == 'FALTANTE' %}
+                                            <span class="text-danger"><i class="bi bi-x-circle"></i> FALTANTE</span>
+                                        {% elif registros[0].estado == 'OBSERVACION' %}
+                                            <span class="text-warning"><i class="bi bi-chat"></i> OBSERVACIÓN</span>
+                                        {% elif registros[0].estado == 'RESUELTO' %}
+                                            <span class="text-info"><i class="bi bi-check-circle-fill"></i> RESUELTO</span>
+                                        {% else %}
+                                            {{ registros[0].estado }}
+                                        {% endif %}
+                                        - {{ registros[0].fecha_hora[:16]|replace('T', ' ') }}
+                                        
+                                        {% set faltantes = registros|selectattr('estado', 'equalto', 'FALTANTE')|list %}
+                                        {% if faltantes|length > 0 %}
+                                            <span class="badge bg-danger badge-contador">
+                                                <i class="bi bi-exclamation-triangle"></i> {{ faltantes|length }}
+                                            </span>
+                                        {% endif %}
+                                        
+                                        {% set resueltos = registros|selectattr('estado', 'equalto', 'RESUELTO')|list %}
+                                        {% if resueltos|length > 0 %}
+                                            <span class="badge bg-success badge-contador">
+                                                <i class="bi bi-check-circle"></i> {{ resueltos|length }}
+                                            </span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                
+                                <!-- Línea de tiempo -->
+<div class="linea-tiempo mt-2" style="display: none;">
+    {% for r in registros %}
+        <div class="evento 
+            {% if r.estado == 'OK' %}ok
+            {% elif r.estado == 'FALTANTE' %}faltante
+            {% elif r.estado == 'OBSERVACION' %}observacion
+            {% elif r.estado == 'RESUELTO' %}resuelto
+            {% endif %}">
+            <div class="d-flex justify-content-between align-items-start flex-wrap">
+                <div>
+                    <span class="fecha-evento">
+                        <i class="bi bi-calendar3"></i> 
+                        {{ r.fecha_hora[:16]|replace('T', ' ') }}
+                    </span>
+                    <span class="badge 
+                        {% if r.estado == 'OK' %}bg-success
+                        {% elif r.estado == 'FALTANTE' %}bg-danger
+                        {% elif r.estado == 'OBSERVACION' %}bg-warning text-dark
+                        {% elif r.estado == 'RESUELTO' %}bg-info
+                        {% else %}bg-secondary{% endif %} ms-2">
+                        {{ r.estado }}
+                    </span>
+                    {% if r.tipo_control %}
+                        <span class="badge 
+                            {% if r.tipo_control == 'RETIRO' %}bg-primary
+                            {% else %}bg-secondary{% endif %} ms-1">
+                            {{ r.tipo_control|title }}
+                        </span>
+                    {% endif %}
+                </div>
+                <div class="text-end">
+                    <span class="tecnico-evento">
+                        <i class="bi bi-person"></i> {{ r.tecnico_nombre }}
+                    </span>
+                </div>
+            </div>
+            
+            {% if r.descripcion and r.descripcion != 'Elemento en buen estado' %}
+                <div class="mt-1">
+                    <span class="text-muted small">
+                        <i class="bi bi-chat"></i> {{ r.descripcion }}
+                    </span>
+                </div>
+            {% endif %}
+            
+            <!-- Información de entrega -->
+            {% if r.entregado_por or r.recibido_por %}
+                <div class="entrega-info mt-1">
+                    {% if r.entregado_por %}
+                        <span class="entregado-por">📤 Entregado por: {{ r.entregado_por }}</span>
+                    {% endif %}
+                    {% if r.recibido_por %}
+                        <span class="recibido-por ms-2">📥 Recibido por: {{ r.recibido_por }}</span>
+                    {% endif %}
+                    {% if r.fecha_entrega %}
+                        <span class="text-muted ms-2">📅 {{ r.fecha_entrega[:16]|replace('T', ' ') }}</span>
+                    {% endif %}
+                </div>
+            {% endif %}
+            
+            <!-- ✅ NUEVO: Comentario de resolución -->
+            {% if r.estado == 'RESUELTO' and r.resuelto_por %}
+                <div class="mt-1">
+                    <span class="text-success small">
+                        <i class="bi bi-check-circle"></i> Resuelto por: {{ r.resuelto_por }}
+                        {% if r.fecha_resolucion %}
+                            ({{ r.fecha_resolucion[:16]|replace('T', ' ') }})
+                        {% endif %}
+                    </span>
+                    {% if r.comentario_resolucion and r.comentario_resolucion != '-' %}
+                        <div class="mt-1 ps-3">
+                            <span class="text-muted small">
+                                <i class="bi bi-quote"></i> "{{ r.comentario_resolucion }}"
+                            </span>
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+            
+            {% if r.estado == 'FALTANTE' %}
+                <div class="mt-1">
+                    <span class="text-danger small">
+                        <i class="bi bi-exclamation-triangle"></i> 
+                        <strong>Reportado por:</strong> {{ r.tecnico_nombre }}
+                        <span class="text-muted">el {{ r.fecha_hora[:16]|replace('T', ' ') }}</span>
+                    </span>
+                </div>
+            {% endif %}
+        </div>
+    {% endfor %}
+</div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i> No hay elementos registrados para esta camioneta.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Toggle detalle de control (fecha card)
+        function toggleDetalle(card) {
+            const detalle = card.querySelector('.detalle-control');
+            const icon = card.querySelector('.toggle-icon');
+            
+            if (detalle.classList.contains('mostrar')) {
+                detalle.classList.remove('mostrar');
+                icon.classList.remove('rotated');
+            } else {
+                detalle.classList.add('mostrar');
+                icon.classList.add('rotated');
+            }
+        }
+
+        // Toggle línea de tiempo de elemento
+        function toggleLineaTiempo(element) {
+            const parent = element.closest('.elemento-historial');
+            const timeline = parent.querySelector('.linea-tiempo');
+            const icon = element.querySelector('.bi');
+            
+            if (timeline.style.display === 'none') {
+                timeline.style.display = 'block';
+                icon.className = 'bi bi-chevron-down';
+            } else {
+                timeline.style.display = 'none';
+                icon.className = 'bi bi-chevron-right';
+            }
+        }
+
+        // Filtrar elementos en el tab de rastreo
+        function filtrarElementos(texto) {
+            const elementos = document.querySelectorAll('.elemento-historial');
+            const busqueda = texto.toLowerCase().trim();
+            
+            elementos.forEach(el => {
+                const nombre = el.getAttribute('data-elemento').toLowerCase();
+                if (busqueda === '' || nombre.includes(busqueda)) {
+                    el.style.display = 'block';
+                } else {
+                    el.style.display = 'none';
+                }
+            });
+        }
+    </script>
+</body>
+</html>

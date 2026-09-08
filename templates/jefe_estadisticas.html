@@ -1,0 +1,208 @@
+<div class="container-fluid">
+    <!-- Resumen general -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-6">
+            <div class="stat-card primary">
+                <div class="number">{{ stats_generales.total_elementos_reportados or 0 }}</div>
+                <div class="label"><i class="bi bi-box"></i> Elementos Reportados</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stat-card danger">
+                <div class="number">{{ stats_generales.total_faltantes or 0 }}</div>
+                <div class="label"><i class="bi bi-x-circle"></i> Faltantes</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stat-card warning">
+                <div class="number">{{ stats_generales.total_fallas or 0 }}</div>
+                <div class="label"><i class="bi bi-exclamation-triangle"></i> Fallas</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stat-card success">
+                <div class="number">{{ stats_generales.total_resueltos or 0 }}</div>
+                <div class="label"><i class="bi bi-check-circle"></i> Resueltos</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Elementos más faltantes -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h6><i class="bi bi-box-seam"></i> Elementos más Faltantes</h6>
+                </div>
+                <div class="card-body p-0">
+                    {% if elementos_mas_faltantes %}
+                        <div class="list-group list-group-flush">
+                            {% for item in elementos_mas_faltantes %}
+                                <div class="list-group-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>{{ item.elemento }}</strong>
+                                        <span class="badge bg-secondary ms-2">{{ item.tecnicos_diferentes }} técnicos</span>
+                                    </div>
+                                    <span class="badge bg-danger rounded-pill">{{ item.total }}</span>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted p-3">Sin datos en los últimos 30 días</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Técnicos que más reportan -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h6><i class="bi bi-person"></i> Técnicos que más reportan</h6>
+                </div>
+                <div class="card-body p-0">
+                    {% if tecnicos_mas_reportan %}
+                        <div class="list-group list-group-flush">
+                            {% for tecnico in tecnicos_mas_reportan %}
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>{{ tecnico.tecnico }}</strong>
+                                            <span class="badge bg-secondary ms-2">{{ tecnico.usuario }}</span>
+                                        </div>
+                                        <span class="badge bg-primary rounded-pill">{{ tecnico.total_reportes }}</span>
+                                    </div>
+                                    <div class="mt-1 small">
+                                        <span class="text-danger">Faltantes: {{ tecnico.faltantes or 0 }}</span>
+                                        <span class="text-warning ms-2">Fallas: {{ tecnico.fallas or 0 }}</span>
+                                        <span class="text-info ms-2">Observaciones: {{ tecnico.observaciones or 0 }}</span>
+                                        <span class="text-success ms-2">Resueltos: {{ tecnico.resueltos or 0 }}</span>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted p-3">Sin datos en los últimos 30 días</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Historial por elemento (buscador) -->
+    <div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6><i class="bi bi-search"></i> Buscar Historial por Elemento</h6>
+            </div>
+            <div class="card-body">
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="buscador-elemento-stats" 
+                           placeholder="Buscar elemento..." onkeyup="filtrarHistorialStats(this.value)">
+                    <button class="btn btn-outline-secondary" type="button" onclick="filtrarHistorialStats(document.getElementById('buscador-elemento-stats').value)">
+                        <i class="bi bi-search"></i>
+                    </button>
+                    <button class="btn btn-outline-danger" type="button" onclick="limpiarBusqueda()">
+                        <i class="bi bi-x-circle"></i>
+                    </button>
+                </div>
+                <div id="historial-stats-container">
+                    {% for elemento, registros in historial_por_elemento.items() %}
+                        <div class="elemento-stats-item" data-elemento="{{ elemento|lower }}">
+                            <h6 class="mt-3">
+                                <i class="bi bi-box"></i> {{ elemento }}
+                                <span class="badge bg-secondary">{{ registros|length }} registros</span>
+                            </h6>
+                            {% for r in registros[:5] %}
+                                <div class="timeline-item 
+                                    {% if r.estado == 'FALTANTE' %}faltante
+                                    {% elif r.estado == 'RESUELTO' %}resuelto
+                                    {% elif r.estado == 'OBSERVACION' %}observacion
+                                    {% endif %}">
+                                    <div class="d-flex justify-content-between align-items-center flex-wrap">
+                                        <span>
+                                            <span class="badge 
+                                                {% if r.estado == 'OK' %}bg-success
+                                                {% elif r.estado == 'FALTANTE' %}bg-danger
+                                                {% elif r.estado == 'OBSERVACION' %}bg-warning text-dark
+                                                {% elif r.estado == 'RESUELTO' %}bg-info
+                                                {% else %}bg-secondary{% endif %}">
+                                                {{ r.estado }}
+                                            </span>
+                                            <span class="tecnico">{{ r.tecnico_nombre or 'S/A' }}</span>
+                                        </span>
+                                        <span class="fecha">{{ r.fecha_hora[:16]|replace('T', ' ') }}</span>
+                                    </div>
+                                    {% if r.descripcion and r.descripcion != 'Elemento en buen estado' %}
+                                        <div class="text-muted small mt-1">{{ r.descripcion }}</div>
+                                    {% endif %}
+                                    {% if r.resuelto_por %}
+                                        <div class="text-success small">✅ Resuelto por: {{ r.resuelto_por }}</div>
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                            {% if registros|length > 5 %}
+                                <div class="text-muted small">... y {{ registros|length - 5 }} más</div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<script>
+    function filtrarHistorialStats(texto) {
+        const elementos = document.querySelectorAll('.elemento-stats-item');
+        const busqueda = texto.toLowerCase().trim();
+        let encontrados = 0;
+        
+        elementos.forEach(el => {
+            const nombre = el.getAttribute('data-elemento') || '';
+            if (busqueda === '' || nombre.includes(busqueda)) {
+                el.style.display = 'block';
+                encontrados++;
+            } else {
+                el.style.display = 'none';
+            }
+        });
+        
+        // Mostrar mensaje si no hay resultados
+        let mensaje = document.getElementById('sin-resultados');
+        if (busqueda !== '' && encontrados === 0) {
+            if (!mensaje) {
+                mensaje = document.createElement('div');
+                mensaje.id = 'sin-resultados';
+                mensaje.className = 'alert alert-info mt-3';
+                mensaje.innerHTML = '<i class="bi bi-info-circle"></i> No se encontraron elementos que coincidan con "<strong>' + busqueda + '</strong>"';
+                document.getElementById('historial-stats-container').appendChild(mensaje);
+            } else {
+                mensaje.innerHTML = '<i class="bi bi-info-circle"></i> No se encontraron elementos que coincidan con "<strong>' + busqueda + '</strong>"';
+                mensaje.style.display = 'block';
+            }
+        } else if (mensaje) {
+            mensaje.style.display = 'none';
+        }
+    }
+    
+    function limpiarBusqueda() {
+        document.getElementById('buscador-elemento-stats').value = '';
+        filtrarHistorialStats('');
+    }
+    
+    // Inicializar el buscador con el evento correcto
+    document.addEventListener('DOMContentLoaded', function() {
+        const buscador = document.getElementById('buscador-elemento-stats');
+        if (buscador) {
+            buscador.addEventListener('keyup', function() {
+                filtrarHistorialStats(this.value);
+            });
+            buscador.addEventListener('search', function() {
+                filtrarHistorialStats(this.value);
+            });
+        }
+    });
+</script>
