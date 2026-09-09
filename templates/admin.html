@@ -34,6 +34,10 @@
                 <i class="bi bi-file-pdf"></i>
                 <span>Remitos</span>
             </a>
+            <a href="#" class="sidebar-link" data-section="firma" onclick="cambiarSeccion('firma')">
+                <i class="bi bi-pen"></i>
+                <span>Mi Firma</span>
+            </a>
             <a href="#" class="sidebar-link" data-section="materiales" onclick="cambiarSeccion('materiales')">
                 <i class="bi bi-box-seam"></i>
                 <span>Materiales</span>
@@ -65,6 +69,11 @@
         <button class="btn-toggle-sidebar" onclick="toggleSidebar()">
             <i class="bi bi-list"></i>
         </button>
+
+        <!-- ========================================== -->
+        <!-- NOTIFICACIONES DE REMITOS - ADMIN -->
+        <!-- ========================================== -->
+        <div id="contenedor-notificaciones-admin"></div>
 
         <!-- ========================================== -->
         <!-- SECCIÓN 1: ASIGNACIONES -->
@@ -317,7 +326,22 @@
         </div>
 
         <!-- ========================================== -->
-        <!-- SECCIÓN 5: MATERIALES (Próximamente) -->
+        <!-- SECCIÓN 5: MI FIRMA -->
+        <!-- ========================================== -->
+        <div id="seccion-firma" class="seccion-content" style="display:none;">
+            <div class="seccion-header">
+                <h1><i class="bi bi-pen"></i> Mi Firma</h1>
+                <p class="text-muted">Gestioná tu firma digital para los remitos</p>
+            </div>
+            <div class="card">
+                <div class="card-body">
+                    <iframe src="{{ url_for('admin_firma') }}" style="width:100%; min-height:500px; border:none; border-radius:8px;"></iframe>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- SECCIÓN 6: MATERIALES (Próximamente) -->
         <!-- ========================================== -->
         <div id="seccion-materiales" class="seccion-content" style="display:none;">
             <div class="seccion-header">
@@ -334,7 +358,7 @@
         </div>
 
         <!-- ========================================== -->
-        <!-- SECCIÓN 6: TÉCNICOS (Próximamente) -->
+        <!-- SECCIÓN 7: TÉCNICOS (Próximamente) -->
         <!-- ========================================== -->
         <div id="seccion-tecnicos" class="seccion-content" style="display:none;">
             <div class="seccion-header">
@@ -351,7 +375,7 @@
         </div>
 
         <!-- ========================================== -->
-        <!-- SECCIÓN 7: CONFIGURACIÓN (Próximamente) -->
+        <!-- SECCIÓN 8: CONFIGURACIÓN (Próximamente) -->
         <!-- ========================================== -->
         <div id="seccion-configuracion" class="seccion-content" style="display:none;">
             <div class="seccion-header">
@@ -406,7 +430,6 @@
             
             localStorage.setItem('adminSeccion', seccion);
             
-            // Si es la sección de remitos, cargar los remitos
             if (seccion === 'remitos') {
                 cargarRemitos();
             }
@@ -459,6 +482,9 @@
             const seccionGuardada = localStorage.getItem('adminSeccion') || 'asignaciones';
             cambiarSeccion(seccionGuardada);
             
+            // Cargar notificaciones al iniciar
+            cargarNotificacionesAdmin();
+            
             document.querySelectorAll('.tecnico-select').forEach(select => {
                 select.addEventListener('change', function() {
                     const fila = this.closest('tr');
@@ -502,6 +528,95 @@
         });
 
         // ==========================================
+        // FUNCIONES DE NOTIFICACIONES - ADMIN
+        // ==========================================
+
+        function cargarNotificacionesAdmin() {
+            fetch('/api/notificaciones')
+                .then(response => response.json())
+                .then(data => {
+                    const contenedor = document.getElementById('contenedor-notificaciones-admin');
+                    if (data.length > 0) {
+                        let html = `
+                            <div class="card border-warning mb-4">
+                                <div class="card-header bg-warning text-dark">
+                                    <h5 class="mb-0"><i class="bi bi-bell-fill"></i> Alertas de Remitos</h5>
+                                </div>
+                                <div class="card-body" id="lista-notificaciones-admin">
+                        `;
+                        data.forEach(notif => {
+                            const tipoClase = notif.tipo === 'REMITO_FIRMADO' ? 'success' : 'info';
+                            const icono = notif.tipo === 'REMITO_FIRMADO' ? 'file-check' : 'bell';
+                            // Extraer el reporte_id del enlace
+                            let reporteId = 0;
+                            if (notif.enlace) {
+                                const partes = notif.enlace.split('/');
+                                reporteId = parseInt(partes[partes.length - 1]) || 0;
+                            }
+                            html += `
+                                <div class="alert alert-${tipoClase} alert-dismissible fade show" id="notif-${notif.id}">
+                                    <i class="bi bi-${icono}"></i>
+                                    ${notif.mensaje}
+                                    ${notif.patente ? `<a href="/admin/remitos" class="btn btn-sm btn-primary ms-2">Ver Remitos</a>` : ''}
+                                    ${notif.tipo === 'REMITO_FIRMADO' && reporteId > 0 ? `<button class="btn btn-sm btn-success ms-2" onclick="revisarRemito(${reporteId})"><i class="bi bi-check-circle"></i> Marcar como Revisado</button>` : ''}
+                                    <button type="button" class="btn-close" onclick="marcarNotificacionLeidaAdmin(${notif.id})"></button>
+                                </div>
+                            `;
+                        });
+                        html += `
+                                </div>
+                            </div>
+                        `;
+                        contenedor.innerHTML = html;
+                    } else {
+                        contenedor.innerHTML = '';
+                    }
+                })
+                .catch(error => console.error('Error al cargar notificaciones:', error));
+        }
+
+        function marcarNotificacionLeidaAdmin(notificacionId) {
+            fetch(`/api/notificaciones/marcar/${notificacionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const elemento = document.getElementById(`notif-${notificacionId}`);
+                    if (elemento) elemento.remove();
+                    // Verificar si quedan notificaciones
+                    const restantes = document.querySelectorAll('#lista-notificaciones-admin .alert');
+                    if (restantes.length === 0) {
+                        document.getElementById('contenedor-notificaciones-admin').innerHTML = '';
+                    }
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function revisarRemito(reporteId) {
+            if (!confirm('¿Confirmás que este remito fue revisado y está correcto?')) return;
+            
+            fetch(`/revisar-remito/${reporteId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    mostrarMensaje('✅ Remito revisado y cerrado correctamente!', 'success');
+                    cargarNotificacionesAdmin();
+                } else {
+                    alert('❌ Error: ' + (data.error || 'Desconocido'));
+                }
+            })
+            .catch(error => {
+                alert('❌ Error de conexión: ' + error);
+            });
+        }
+
+        // ==========================================
         // FUNCIONES DE REPORTES
         // ==========================================
         const contenedorDatos = document.getElementById('datos-reportes');
@@ -528,6 +643,8 @@
                 if (data.success) {
                     window.open(data.url, '_blank');
                     mostrarMensaje('✅ Remito generado exitosamente!', 'success');
+                    // Recargar notificaciones después de generar remito
+                    cargarNotificacionesAdmin();
                 } else {
                     alert('❌ Error al generar remito: ' + (data.error || 'Desconocido'));
                 }

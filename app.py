@@ -5,10 +5,12 @@ from datetime import datetime, timedelta
 import os
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from werkzeug.utils import secure_filename
+from PIL import Image as PILImage
 
 app = Flask(__name__)
 app.secret_key = 'clave_secreta_para_desarrollo'
@@ -19,6 +21,19 @@ DATABASE = BASE_DIR / "database.db"
 
 # Configuración de la carpeta de remitos
 REMITOS_DIR = BASE_DIR / "remitos"
+
+# Configuración para subida de firmas
+UPLOAD_FOLDER = BASE_DIR / "static" / "firmas"
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+# Crear carpetas necesarias
+if not REMITOS_DIR.exists():
+    REMITOS_DIR.mkdir()
+if not UPLOAD_FOLDER.exists():
+    UPLOAD_FOLDER.mkdir(parents=True)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # Constantes para los elementos de la camioneta
 EXPECTED_CAMIONETA = [
@@ -71,7 +86,6 @@ EXPECTED_CAJA = [
     "MULTIMETRO",
 ]
 
-# Combinar todas las categorías para facilitar el uso
 TODOS_ELEMENTOS = {
     'CAMIONETA': EXPECTED_CAMIONETA,
     'HERRAMIENTA': EXPECTED_HERRAMIENTAS,
@@ -79,7 +93,7 @@ TODOS_ELEMENTOS = {
 }
 
 # ============================================
-# FUNCIONES AUXILIARES PARA REMITOS
+# FUNCIONES AUXILIARES PARA REMITOS CON FIRMA
 # ============================================
 
 def crear_carpeta_remitos(patente, fecha):
@@ -98,15 +112,18 @@ def crear_carpeta_remitos(patente, fecha):
     
     return carpeta_fecha
 
-def generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf):
-    """Genera el PDF del remito usando ReportLab"""
+
+
+
+
+def generar_pdf_remito(reporte, admin_nombre, admin_firma, fecha_hora, ruta_pdf):
+    """Genera el PDF del remito usando ReportLab con firma"""
     doc = SimpleDocTemplate(str(ruta_pdf), pagesize=A4,
                            rightMargin=1.5*cm, leftMargin=1.5*cm,
                            topMargin=1.5*cm, bottomMargin=1.5*cm)
     
     styles = getSampleStyleSheet()
     
-    # Estilos personalizados
     titulo_style = ParagraphStyle(
         'Titulo',
         parent=styles['Heading1'],
@@ -150,15 +167,12 @@ def generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf):
         spaceAfter=30
     )
     
-    # Elementos del PDF
     elements = []
     
-    # Logo o título
     elements.append(Paragraph("CONTROL DE CAMIONETAS", titulo_style))
     elements.append(Paragraph("REMITO DE ENTREGA DE MATERIAL", subtitulo_style))
     elements.append(Spacer(1, 0.5*cm))
     
-    # Datos del remito
     data = [
         ['N° REMITO:', f"REM-{fecha_hora.strftime('%Y%m%d')}-{reporte['id']}"],
         ['FECHA:', fecha_hora.strftime('%d/%m/%Y %H:%M')],
@@ -170,7 +184,6 @@ def generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf):
         ['DESCRIPCIÓN:', reporte['descripcion'] or 'Sin descripción'],
     ]
     
-    # Crear tabla de datos
     tabla_data = []
     for label, value in data:
         tabla_data.append([
@@ -189,39 +202,82 @@ def generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf):
     ]))
     
     elements.append(tabla)
-    elements.append(Spacer(1, 1*cm))
+    elements.append(Spacer(1, 0.8*cm))
     
-    # Línea de firma (solo para administradores)
+    # ==========================================
+    # SECCIÓN DE FIRMA
+    # ==========================================
     elements.append(Paragraph("FIRMA DEL ADMINISTRADOR", firma_style))
-    elements.append(Spacer(1, 0.3*cm))
+    elements.append(Spacer(1, 0.2*cm))
     
-    # Línea de firma con nombre del admin
-    firma_linea = f"{admin_nombre} (Administrador)"
-    elements.append(Paragraph(firma_linea, ParagraphStyle(
-        'FirmaNombre',
-        parent=styles['Normal'],
-        alignment=TA_CENTER,
-        fontSize=11,
-        fontName='Helvetica-Bold',
-        textColor=colors.HexColor('#333'),
-        spaceAfter=20
-    )))
-    elements.append(Paragraph("_________________________", ParagraphStyle(
-        'FirmaLinea',
-        parent=styles['Normal'],
-        alignment=TA_CENTER,
-        fontSize=11,
-        spaceAfter=10
-    )))
-    elements.append(Paragraph("Firma del Administrador", ParagraphStyle(
-        'FirmaTexto',
+    # Si hay firma cargada, mostrarla
+    if admin_firma and Path(admin_firma).exists():
+        try:
+            img_path = Path(admin_firma)
+            if img_path.exists():
+                with PILImage.open(img_path) as img:
+                    img_width, img_height = img.size
+                    target_width = 4 * cm
+                    target_height = 2 * cm
+                    scale = min(target_width / img_width, target_height / img_height)
+                    final_width = img_width * scale
+                    final_height = img_height * scale
+                
+                img = Image(str(img_path), width=final_width, height=final_height)
+                img.hAlign = 'CENTER'
+                elements.append(img)
+                elements.append(Spacer(1, 0.2*cm))
+                elements.append(Paragraph(admin_nombre, ParagraphStyle(
+                    'FirmaNombreImg',
+                    parent=styles['Normal'],
+                    alignment=TA_CENTER,
+                    fontSize=10,
+                    textColor=colors.HexColor('#666')
+                )))
+            else:
+                raise Exception("Archivo no encontrado")
+        except Exception as e:
+            print(f"Error al cargar firma: {e}")
+            elements.append(Paragraph(admin_nombre, ParagraphStyle(
+                'FirmaNombreFallback',
+                parent=styles['Normal'],
+                alignment=TA_CENTER,
+                fontSize=12,
+                fontName='Helvetica-Bold',
+                textColor=colors.HexColor('#333')
+            )))
+            elements.append(Paragraph("_________________________", ParagraphStyle(
+                'FirmaLineaFallback',
+                parent=styles['Normal'],
+                alignment=TA_CENTER,
+                fontSize=11
+            )))
+    else:
+        elements.append(Paragraph(admin_nombre, ParagraphStyle(
+            'FirmaNombre',
+            parent=styles['Normal'],
+            alignment=TA_CENTER,
+            fontSize=12,
+            fontName='Helvetica-Bold',
+            textColor=colors.HexColor('#333'),
+            spaceAfter=5
+        )))
+        elements.append(Paragraph("_________________________", ParagraphStyle(
+            'FirmaLinea',
+            parent=styles['Normal'],
+            alignment=TA_CENTER,
+            fontSize=11,
+            spaceAfter=5
+        )))
+    
+    elements.append(Paragraph(f"{admin_nombre} (Administrador)", ParagraphStyle(
+        'FirmaCargo',
         parent=styles['Normal'],
         alignment=TA_CENTER,
         fontSize=9,
-        textColor=colors.HexColor('#888')
+        textColor=colors.HexColor('#666'),
+        spaceAfter=20
     )))
-    
-    elements.append(Spacer(1, 1*cm))
     
     # Pie de página
     pie_style = ParagraphStyle(
@@ -234,9 +290,127 @@ def generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf):
     elements.append(Paragraph("Documento generado por el Sistema de Control de Camionetas", pie_style))
     elements.append(Paragraph(f"Remito generado el {fecha_hora.strftime('%d/%m/%Y a las %H:%M')}", pie_style))
     
-    # Generar PDF
     doc.build(elements)
     return ruta_pdf
+
+
+# ============================================
+# FUNCIONES DE NOTIFICACIONES Y SEGUIMIENTO
+# ============================================
+
+def crear_notificacion(tipo, mensaje, patente=None, elemento=None, destinatario_rol='todos', enlace=None):
+    """Crea una notificación en el sistema"""
+    conexion = get_db()
+    try:
+        fecha = datetime.now().isoformat()
+        conexion.execute('''
+            INSERT INTO notificaciones (tipo, mensaje, patente, elemento, fecha, destinatario_rol, enlace)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (tipo, mensaje, patente, elemento, fecha, destinatario_rol, enlace))
+        conexion.commit()
+        return True
+    except Exception as e:
+        print(f"Error al crear notificación: {e}")
+        return False
+    finally:
+        conexion.close()
+
+def crear_seguimiento_remito(reporte_id, patente, elemento, ruta_pdf):
+    """Crea un seguimiento para un remito generado"""
+    conexion = get_db()
+    try:
+        fecha = datetime.now().isoformat()
+        conexion.execute('''
+            INSERT INTO seguimiento_remitos 
+            (reporte_id, patente, elemento, fecha_generacion, estado, ruta_pdf)
+            VALUES (?, ?, ?, ?, 'PENDIENTE_FIRMA', ?)
+        ''', (reporte_id, patente, elemento, fecha, ruta_pdf))
+        conexion.commit()
+        return True
+    except Exception as e:
+        print(f"Error al crear seguimiento: {e}")
+        return False
+    finally:
+        conexion.close()
+
+def firmar_remito(reporte_id, tecnico_nombre):
+    """Marca un remito como firmado por el técnico"""
+    conexion = get_db()
+    try:
+        fecha = datetime.now().isoformat()
+        conexion.execute('''
+            UPDATE reportes 
+            SET remito_firmado = 1, firma_tecnico = ?, fecha_firma = ?
+            WHERE id = ?
+        ''', (tecnico_nombre, fecha, reporte_id))
+        conexion.commit()
+        return True
+    except Exception as e:
+        print(f"Error al firmar remito: {e}")
+        return False
+    finally:
+        conexion.close()
+
+def revisar_remito(reporte_id, admin_nombre):
+    """Marca un remito como revisado por el administrador"""
+    conexion = get_db()
+    try:
+        fecha = datetime.now().isoformat()
+        conexion.execute('''
+            UPDATE reportes 
+            SET remito_revisado = 1
+            WHERE id = ?
+        ''', (reporte_id,))
+        conexion.commit()
+        return True
+    except Exception as e:
+        print(f"Error al revisar remito: {e}")
+        return False
+    finally:
+        conexion.close()
+
+def obtener_notificaciones(rol=None):
+    """Obtiene notificaciones para un rol específico"""
+    conexion = get_db()
+    try:
+        if rol:
+            query = '''
+                SELECT * FROM notificaciones 
+                WHERE (destinatario_rol = ? OR destinatario_rol = 'todos') 
+                AND leido = 0
+                ORDER BY fecha DESC
+            '''
+            notificaciones = conexion.execute(query, (rol,)).fetchall()
+        else:
+            query = '''
+                SELECT * FROM notificaciones 
+                WHERE leido = 0
+                ORDER BY fecha DESC
+            '''
+            notificaciones = conexion.execute(query).fetchall()
+        return [dict(n) for n in notificaciones]
+    finally:
+        conexion.close()
+
+def marcar_notificacion_leida(notificacion_id):
+    """Marca una notificación como leída"""
+    conexion = get_db()
+    try:
+        fecha = datetime.now().isoformat()
+        conexion.execute('''
+            UPDATE notificaciones 
+            SET leido = 1, fecha_lectura = ?
+            WHERE id = ?
+        ''', (fecha, notificacion_id))
+        conexion.commit()
+        return True
+    except Exception as e:
+        print(f"Error al marcar notificación: {e}")
+        return False
+    finally:
+        conexion.close()
+
+
 
 # ============================================
 # FILTROS PARA JINJA2
@@ -244,7 +418,6 @@ def generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf):
 
 @app.template_filter('timestamp_to_datetime')
 def timestamp_to_datetime(timestamp):
-    """Convierte timestamp a fecha legible"""
     if timestamp:
         return datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y %H:%M')
     return '-'
@@ -255,7 +428,6 @@ def timestamp_to_datetime(timestamp):
 
 @app.before_request
 def limpiar_redirecciones():
-    """Evita bucles de redirección cuando el rol no coincide con la ruta"""
     if 'usuario_id' in session:
         rol = session.get('rol')
         if rol == 'admin' and request.path == '/tecnico':
@@ -266,21 +438,59 @@ def limpiar_redirecciones():
             return redirect(url_for('tecnico'))
 
 def conectar_db():
-    """Conecta a la base de datos"""
     return sqlite3.connect(str(DATABASE))
 
 def get_db():
-    """Obtiene una conexión a la base de datos con row_factory"""
     conexion = conectar_db()
     conexion.row_factory = sqlite3.Row
     return conexion
 
 def crear_base_de_datos():
-    """Crea las tablas si no existen"""
     conexion = conectar_db()
     cursor = conexion.cursor()
+
+
+    # En crear_base_de_datos(), agregar estas tablas:
+
+# Tabla para el seguimiento de remitos
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS seguimiento_remitos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reporte_id INTEGER NOT NULL,
+        patente TEXT NOT NULL,
+        elemento TEXT NOT NULL,
+        fecha_generacion TEXT NOT NULL,
+        fecha_firma TEXT,
+        fecha_revision TEXT,
+        estado TEXT DEFAULT 'PENDIENTE_FIRMA',  -- 'PENDIENTE_FIRMA', 'FIRMADO', 'REVISADO', 'CERRADO'
+        tecnico_firma TEXT,
+        admin_revision TEXT,
+        observaciones TEXT,
+        ruta_pdf TEXT,
+        FOREIGN KEY (reporte_id) REFERENCES reportes(id)
+    )
+''')
+
+# Tabla para notificaciones del sistema
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS notificaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tipo TEXT NOT NULL,  -- 'REMITO_PENDIENTE', 'REMITO_FIRMADO', 'REMITO_REVISADO'
+        mensaje TEXT NOT NULL,
+        patente TEXT,
+        elemento TEXT,
+        fecha TEXT NOT NULL,
+        leido INTEGER DEFAULT 0,
+        destinatario_rol TEXT,  -- 'admin', 'tecnico', 'todos'
+        enlace TEXT,
+        fecha_lectura TEXT
+    )
+''')
+
+
+
     
-    # Tabla Usuarios
+    # Tabla Usuarios (con columna firma)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,7 +498,8 @@ def crear_base_de_datos():
             usuario TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             rol TEXT NOT NULL,
-            activo INTEGER DEFAULT 1
+            activo INTEGER DEFAULT 1,
+            firma TEXT
         )
     ''')
     
@@ -403,25 +614,30 @@ def crear_base_de_datos():
     ''')
     
     # Tabla reportes
+    # En crear_base_de_datos(), modificar la tabla reportes
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reportes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            control_id INTEGER NOT NULL,
-            tipo TEXT NOT NULL,
-            elemento TEXT NOT NULL,
-            estado TEXT NOT NULL,
-            descripcion TEXT,
-            fecha_hora TEXT NOT NULL,
-            fecha_resolucion TEXT,
-            comentario_resolucion TEXT,
-            resuelto_por TEXT,
-            entregado_por TEXT,
-            recibido_por TEXT,
-            fecha_entrega TEXT,
-            ruta_remito TEXT,
-            FOREIGN KEY (control_id) REFERENCES controles(id)
-        )
-    ''')
+    CREATE TABLE IF NOT EXISTS reportes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        control_id INTEGER NOT NULL,
+        tipo TEXT NOT NULL,
+        elemento TEXT NOT NULL,
+        estado TEXT NOT NULL,
+        descripcion TEXT,
+        fecha_hora TEXT NOT NULL,
+        fecha_resolucion TEXT,
+        comentario_resolucion TEXT,
+        resuelto_por TEXT,
+        entregado_por TEXT,
+        recibido_por TEXT,
+        fecha_entrega TEXT,
+        ruta_remito TEXT,
+        remito_firmado INTEGER DEFAULT 0,
+        remito_revisado INTEGER DEFAULT 0,
+        firma_tecnico TEXT,
+        fecha_firma TEXT,
+        FOREIGN KEY (control_id) REFERENCES controles(id)
+    )
+''')
     
     # Tabla Fotos
     cursor.execute('''
@@ -440,7 +656,6 @@ def crear_base_de_datos():
     conexion.close()
 
 def insertar_datos_prueba(conexion):
-    """Inserta datos de prueba si no existen"""
     cursor = conexion.cursor()
     
     cursor.execute('SELECT COUNT(*) as count FROM usuarios')
@@ -506,12 +721,80 @@ def obtener_camionetas():
     return camionetas
 
 # ============================================
+# RUTAS DE FIRMA
+# ============================================
+
+@app.route('/admin/firma', methods=['GET', 'POST'])
+def admin_firma():
+    if 'usuario_id' not in session or session.get('rol') != 'admin':
+        return redirect(url_for('login'))
+    
+    usuario_id = session['usuario_id']
+    mensaje = None
+    error = None
+    
+    conexion = get_db()
+    usuario = conexion.execute('SELECT id, nombre, usuario, firma FROM usuarios WHERE id = ?', (usuario_id,)).fetchone()
+    
+    if request.method == 'POST':
+        if 'firma' not in request.files:
+            error = 'No se seleccionó ningún archivo'
+        else:
+            archivo = request.files['firma']
+            if archivo.filename == '':
+                error = 'No se seleccionó ningún archivo'
+            elif not allowed_file(archivo.filename):
+                error = 'Formato no permitido. Usá PNG, JPG o GIF.'
+            else:
+                try:
+                    filename = secure_filename(f"firma_{usuario_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png")
+                    ruta_completa = UPLOAD_FOLDER / filename
+                    archivo.save(str(ruta_completa))
+                    
+                    conexion.execute('UPDATE usuarios SET firma = ? WHERE id = ?', (str(ruta_completa), usuario_id))
+                    conexion.commit()
+                    mensaje = '✅ Firma cargada exitosamente!'
+                    usuario = conexion.execute('SELECT id, nombre, usuario, firma FROM usuarios WHERE id = ?', (usuario_id,)).fetchone()
+                    
+                except Exception as e:
+                    error = f'Error al guardar la firma: {str(e)}'
+    
+    conexion.close()
+    return render_template('admin_firma.html', usuario=usuario, mensaje=mensaje, error=error)
+
+@app.route('/admin/firma/eliminar', methods=['POST'])
+def eliminar_firma():
+    if 'usuario_id' not in session or session.get('rol') != 'admin':
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    
+    usuario_id = session['usuario_id']
+    
+    conexion = get_db()
+    try:
+        usuario = conexion.execute('SELECT firma FROM usuarios WHERE id = ?', (usuario_id,)).fetchone()
+        
+        if usuario and usuario['firma']:
+            ruta_firma = Path(usuario['firma'])
+            if ruta_firma.exists():
+                ruta_firma.unlink()
+            
+            conexion.execute('UPDATE usuarios SET firma = NULL WHERE id = ?', (usuario_id,))
+            conexion.commit()
+            return jsonify({'success': True, 'mensaje': 'Firma eliminada correctamente'})
+        
+        return jsonify({'success': False, 'error': 'No hay firma para eliminar'})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conexion.close()
+
+# ============================================
 # RUTAS DE ESTADÍSTICAS
 # ============================================
 
 @app.route('/jefe/estadisticas')
 def jefe_estadisticas():
-    """Obtiene estadísticas para el panel del jefe"""
     if 'usuario_id' not in session or session.get('rol') != 'jefe':
         return redirect(url_for('login'))
     
@@ -1641,11 +1924,12 @@ def comentar_reporte(reporte_id):
 
 @app.route('/generar-remito/<int:reporte_id>', methods=['POST'])
 def generar_remito_pdf(reporte_id):
-    """Genera un remito en PDF y lo guarda en la carpeta correspondiente"""
+    """Genera un remito en PDF con la firma del administrador"""
     if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     
     admin_nombre = session.get('nombre', 'Administrador')
+    admin_id = session.get('usuario_id')
     
     conexion = get_db()
     try:
@@ -1663,6 +1947,17 @@ def generar_remito_pdf(reporte_id):
         if not reporte:
             return jsonify({'success': False, 'error': 'Reporte no encontrado o ya resuelto'}), 404
         
+        # Verificar si ya tiene seguimiento
+        seguimiento = conexion.execute('''
+            SELECT id FROM seguimiento_remitos WHERE reporte_id = ?
+        ''', (reporte_id,)).fetchone()
+        
+        if seguimiento:
+            return jsonify({'success': False, 'error': 'Este remito ya fue generado'}), 400
+        
+        admin_info = conexion.execute('SELECT nombre, firma FROM usuarios WHERE id = ?', (admin_id,)).fetchone()
+        admin_firma = admin_info['firma'] if admin_info else None
+        
         fecha_hora = datetime.now()
         fecha_str = fecha_hora.strftime('%Y-%m-%d')
         hora_str = fecha_hora.strftime('%H-%M-%S')
@@ -1671,21 +1966,26 @@ def generar_remito_pdf(reporte_id):
         nombre_archivo = f"{reporte['patente']}_{fecha_str}_{hora_str}_{reporte['elemento'].replace(' ', '_')}.pdf"
         ruta_pdf = carpeta_destino / nombre_archivo
         
-        generar_pdf_remito(reporte, admin_nombre, fecha_hora, ruta_pdf)
+        generar_pdf_remito(reporte, admin_nombre, admin_firma, fecha_hora, ruta_pdf)
         
-        # Guardar la ruta en la base de datos
         cursor = conexion.cursor()
-        try:
-            cursor.execute("PRAGMA table_info(reportes)")
-            columnas = [col[1] for col in cursor.fetchall()]
-            if 'ruta_remito' not in columnas:
-                cursor.execute('ALTER TABLE reportes ADD COLUMN ruta_remito TEXT')
-        except Exception:
-            pass
-        
         cursor.execute('''
             UPDATE reportes SET ruta_remito = ? WHERE id = ?
         ''', (str(ruta_pdf), reporte_id))
+        
+        # Crear seguimiento de remito
+        crear_seguimiento_remito(reporte_id, reporte['patente'], reporte['elemento'], str(ruta_pdf))
+        
+        # Crear notificación para técnicos
+        crear_notificacion(
+            'REMITO_PENDIENTE',
+            f'📄 Remito pendiente de firma para la camioneta {reporte["patente"]} - Elemento: {reporte["elemento"]}',
+            reporte['patente'],
+            reporte['elemento'],
+            'tecnico',
+            f'/historial-camioneta/{reporte["patente"]}'
+        )
+        
         conexion.commit()
         
         url_pdf = f"/remitos/{reporte['patente']}/{fecha_str[:7]}/{nombre_archivo}"
@@ -1693,10 +1993,12 @@ def generar_remito_pdf(reporte_id):
         return jsonify({
             'success': True,
             'url': url_pdf,
-            'ruta': str(ruta_pdf)
+            'ruta': str(ruta_pdf),
+            'mensaje': 'Remito generado. Pendiente de firma del técnico.'
         })
         
     except Exception as e:
+        conexion.rollback()
         print(f"❌ Error al generar remito: {e}")
         import traceback
         traceback.print_exc()
@@ -1704,9 +2006,102 @@ def generar_remito_pdf(reporte_id):
     finally:
         conexion.close()
 
+
+ # ============================================
+# RUTAS DE SEGUIMIENTO DE REMITOS
+# ============================================
+
+@app.route('/api/notificaciones')
+def api_notificaciones():
+    """Obtiene notificaciones para el usuario actual"""
+    if 'usuario_id' not in session:
+        return jsonify({'error': 'No autorizado'}), 401
+    
+    rol = session.get('rol')
+    notificaciones = obtener_notificaciones(rol)
+    return jsonify(notificaciones)
+
+@app.route('/api/notificaciones/marcar/<int:notificacion_id>', methods=['POST'])
+def marcar_notificacion(notificacion_id):
+    """Marca una notificación como leída"""
+    if 'usuario_id' not in session:
+        return jsonify({'error': 'No autorizado'}), 401
+    
+    if marcar_notificacion_leida(notificacion_id):
+        return jsonify({'success': True})
+    return jsonify({'success': False}), 500
+
+@app.route('/firmar-remito/<int:reporte_id>', methods=['POST'])
+def firmar_remito_tecnico(reporte_id):
+    """El técnico firma el remito desde el panel"""
+    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    
+    tecnico_nombre = session.get('nombre', 'Técnico')
+    
+    conexion = get_db()
+    try:
+        reporte = conexion.execute('''
+            SELECT r.id, r.remito_firmado, r.estado, c.patente, r.elemento
+            FROM reportes r
+            JOIN controles co ON r.control_id = co.id
+            JOIN asignaciones a ON co.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            WHERE r.id = ? AND r.estado = 'FALTANTE'
+        ''', (reporte_id,)).fetchone()
+        
+        if not reporte:
+            return jsonify({'success': False, 'error': 'Reporte no encontrado'}), 404
+        
+        if reporte['remito_firmado'] == 1:
+            return jsonify({'success': False, 'error': 'Este remito ya fue firmado'}), 400
+        
+        # Firmar el remito
+        if firmar_remito(reporte_id, tecnico_nombre):
+            # Crear notificación para administradores
+            crear_notificacion(
+                'REMITO_FIRMADO',
+                f'✍️ Remito firmado para revisión - Patente: {reporte["patente"]} - Elemento: {reporte["elemento"]}',
+                reporte['patente'],
+                reporte['elemento'],
+                'admin',
+                f'/admin/remitos/seguimiento'
+            )
+            return jsonify({
+                'success': True,
+                'mensaje': '✅ Remito firmado correctamente. El administrador lo revisará.'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Error al firmar el remito'}), 500
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conexion.close()
+
+@app.route('/revisar-remito/<int:reporte_id>', methods=['POST'])
+def revisar_remito_admin(reporte_id):
+    """Administrador revisa y cierra el remito firmado"""
+    if 'usuario_id' not in session or session.get('rol') != 'admin':
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    
+    admin_nombre = session.get('nombre', 'Administrador')
+    
+    if revisar_remito(reporte_id, admin_nombre):
+        crear_notificacion(
+            'REMITO_REVISADO',
+            f'✅ Remito revisado y cerrado por {admin_nombre}',
+            None,
+            None,
+            'todos',
+            None
+        )
+        return jsonify({'success': True, 'mensaje': 'Remito revisado y cerrado'})
+    
+    return jsonify({'success': False, 'error': 'Error al revisar el remito'}), 500       
+
 @app.route('/remitos/<path:filename>')
 def servir_remito(filename):
-    """Sirve archivos PDF de remitos"""
     if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
         return redirect(url_for('login'))
     
@@ -1727,7 +2122,6 @@ def servir_remito(filename):
 
 @app.route('/admin/remitos')
 def admin_remitos():
-    """Lista todos los remitos generados"""
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return redirect(url_for('login'))
     

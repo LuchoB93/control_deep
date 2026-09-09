@@ -29,6 +29,11 @@
             </div>
         </div>
 
+        <!-- ========================================== -->
+        <!-- NOTIFICACIONES DE REMITOS -->
+        <!-- ========================================== -->
+        <div id="contenedor-notificaciones-tecnico"></div>
+
         <!-- Mensajes -->
         {% with messages = get_flashed_messages() %}
             {% if messages %}
@@ -165,30 +170,30 @@
             </div>
 
            <!-- Elementos Bloqueados -->
-{% if elementos_bloqueados %}
-    <div class="card border-danger mb-4">
-        <div class="card-header bg-danger text-white">
-            <h5 class="mb-0"><i class="bi bi-lock"></i> Elementos Bloqueados</h5>
-        </div>
-        <div class="card-body">
-            <p class="text-muted">Estos elementos no están disponibles hasta que el administrador resuelva el problema:</p>
-            <div class="row">
-                {% for eb in elementos_bloqueados %}
-                    <div class="col-md-3 col-sm-6 mb-2">
-                        <div class="alert alert-danger elemento-bloqueado mb-0">
-                            <i class="bi bi-exclamation-circle"></i>
-                            <strong>{{ eb.elemento }}</strong>
-                            {% if eb.motivo %}
-                                <br><small>{{ eb.motivo }}</small>
-                            {% endif %}
-                            <br><small class="text-muted">⚠️ Bloqueado hasta resolución del administrador</small>
+            {% if elementos_bloqueados %}
+                <div class="card border-danger mb-4">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="mb-0"><i class="bi bi-lock"></i> Elementos Bloqueados</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">Estos elementos no están disponibles hasta que el administrador resuelva el problema:</p>
+                        <div class="row">
+                            {% for eb in elementos_bloqueados %}
+                                <div class="col-md-3 col-sm-6 mb-2">
+                                    <div class="alert alert-danger elemento-bloqueado mb-0">
+                                        <i class="bi bi-exclamation-circle"></i>
+                                        <strong>{{ eb.elemento }}</strong>
+                                        {% if eb.motivo %}
+                                            <br><small>{{ eb.motivo }}</small>
+                                        {% endif %}
+                                        <br><small class="text-muted">⚠️ Bloqueado hasta resolución del administrador</small>
+                                    </div>
+                                </div>
+                            {% endfor %}
                         </div>
                     </div>
-                {% endfor %}
-            </div>
-        </div>
-    </div>
-{% endif %}
+                </div>
+            {% endif %}
 
         {% else %}
             <!-- Sin asignación -->
@@ -211,5 +216,135 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ==========================================
+        // FUNCIONES DE NOTIFICACIONES - TÉCNICO
+        // ==========================================
+
+        function cargarNotificacionesTecnico() {
+            fetch('/api/notificaciones')
+                .then(response => response.json())
+                .then(data => {
+                    const contenedor = document.getElementById('contenedor-notificaciones-tecnico');
+                    if (data.length > 0) {
+                        let html = `
+                            <div class="card border-warning mb-4">
+                                <div class="card-header bg-warning text-dark">
+                                    <h5 class="mb-0"><i class="bi bi-bell-fill"></i> Alertas de Remitos</h5>
+                                </div>
+                                <div class="card-body" id="lista-notificaciones-tecnico">
+                        `;
+                        data.forEach(notif => {
+                            const tipoClase = notif.tipo === 'REMITO_PENDIENTE' ? 'warning' : 'info';
+                            const icono = notif.tipo === 'REMITO_PENDIENTE' ? 'file-earmark-pdf' : 'bell';
+                            // Extraer el reporte_id del enlace
+                            let reporteId = 0;
+                            if (notif.enlace) {
+                                const partes = notif.enlace.split('/');
+                                reporteId = parseInt(partes[partes.length - 1]) || 0;
+                            }
+                            html += `
+                                <div class="alert alert-${tipoClase} alert-dismissible fade show" id="notif-${notif.id}">
+                                    <i class="bi bi-${icono}"></i>
+                                    ${notif.mensaje}
+                                    ${notif.patente ? `<a href="/historial-camioneta/${notif.patente}" class="btn btn-sm btn-primary ms-2">Ver Detalle</a>` : ''}
+                                    ${notif.tipo === 'REMITO_PENDIENTE' && reporteId > 0 ? `<button class="btn btn-sm btn-success ms-2" onclick="firmarRemito(${reporteId})"><i class="bi bi-pen"></i> Firmar Remito</button>` : ''}
+                                    <button type="button" class="btn-close" onclick="marcarNotificacionLeidaTecnico(${notif.id})"></button>
+                                </div>
+                            `;
+                        });
+                        html += `
+                                </div>
+                            </div>
+                        `;
+                        contenedor.innerHTML = html;
+                    } else {
+                        contenedor.innerHTML = '';
+                    }
+                })
+                .catch(error => console.error('Error al cargar notificaciones:', error));
+        }
+
+        function marcarNotificacionLeidaTecnico(notificacionId) {
+            fetch(`/api/notificaciones/marcar/${notificacionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const elemento = document.getElementById(`notif-${notificacionId}`);
+                    if (elemento) elemento.remove();
+                    // Verificar si quedan notificaciones
+                    const restantes = document.querySelectorAll('#lista-notificaciones-tecnico .alert');
+                    if (restantes.length === 0) {
+                        document.getElementById('contenedor-notificaciones-tecnico').innerHTML = '';
+                    }
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function firmarRemito(reporteId) {
+            if (!confirm('¿Confirmás que querés firmar este remito?')) return;
+            
+            fetch(`/firmar-remito/${reporteId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    mostrarMensaje('✅ Remito firmado correctamente!', 'success');
+                    cargarNotificacionesTecnico();
+                } else {
+                    alert('❌ Error: ' + (data.error || 'Desconocido'));
+                }
+            })
+            .catch(error => {
+                alert('❌ Error de conexión: ' + error);
+            });
+        }
+
+        function mostrarMensaje(mensaje, tipo) {
+            const colores = {
+                'success': '#28a745',
+                'danger': '#dc3545',
+                'warning': '#ffc107',
+                'info': '#17a2b8'
+            };
+            
+            const alerta = document.createElement('div');
+            alerta.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 9999;
+                background: ${colores[tipo] || '#6c757d'};
+                color: white;
+                padding: 15px 25px;
+                border-radius: 8px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+                font-weight: 500;
+                max-width: 400px;
+                animation: slideIn 0.3s ease;
+                font-size: 0.95rem;
+            `;
+            alerta.textContent = mensaje;
+            document.body.appendChild(alerta);
+            
+            setTimeout(() => {
+                alerta.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                alerta.style.opacity = '0';
+                alerta.style.transform = 'translateX(100px)';
+                setTimeout(() => alerta.remove(), 500);
+            }, 3000);
+        }
+
+        // Cargar notificaciones al iniciar la página
+        document.addEventListener('DOMContentLoaded', function() {
+            cargarNotificacionesTecnico();
+        });
+    </script>
 </body>
 </html>
