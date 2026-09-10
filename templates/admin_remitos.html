@@ -13,49 +13,13 @@
             <h1><i class="bi bi-file-pdf"></i> Remitos Generados</h1>
             <p class="text-muted">Lista de todos los remitos generados por el sistema</p>
         </div>
-        
+
         <div class="card">
             <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-sm table-striped">
-                        <thead>
-                            <tr>
-                                <th>Patente</th>
-                                <th>Mes</th>
-                                <th>Archivo</th>
-                                <th>Fecha</th>
-                                <th>Acción</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% if remitos %}
-                                {% for r in remitos %}
-                                <tr>
-                                    <td><strong>{{ r.patente }}</strong></td>
-                                    <td>{{ r.mes }}</td>
-                                    <td>{{ r.archivo }}</td>
-                                    <td>{{ r.fecha|timestamp_to_datetime }}</td>
-                                    <td>
-                                        <a href="{{ r.ruta }}" target="_blank" class="btn btn-info btn-sm">
-                                            <i class="bi bi-eye"></i> Ver
-                                        </a>
-                                        <a href="{{ r.ruta }}" download class="btn btn-success btn-sm">
-                                            <i class="bi bi-download"></i> Descargar
-                                        </a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted">No hay remitos generados</td>
-                                </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
+                {% include '_tabla_remitos.html' %}
             </div>
         </div>
-        
+
         <div class="mt-3">
             <a href="{{ url_for('admin') }}" class="btn btn-secondary">
                 <i class="bi bi-arrow-left"></i> Volver

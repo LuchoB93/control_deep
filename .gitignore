@@ -1,0 +1,24 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Base de datos y archivos generados en cada instalación
+database.db
+database.db-wal
+database.db-shm
+remitos/
+static/firmas/
+
+# Variables de entorno (contienen la clave de sesión)
+.env
+
+# Editores / sistema
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

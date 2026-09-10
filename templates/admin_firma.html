@@ -110,7 +110,7 @@
             <h5><i class="bi bi-pen"></i> Firma Actual</h5>
             <div class="firma-preview" id="firma-preview">
                 {% if usuario and usuario.firma %}
-                    <img src="{{ url_for('static', filename='firmas/' + usuario.firma.split('/')[-1]) }}" alt="Firma" id="img-firma">
+                    <img src="{{ url_for('static', filename='firmas/' + (usuario.firma|nombre_firma)) }}" alt="Firma" id="img-firma">
                     <div class="mt-2">
                         <button class="btn-eliminar" onclick="eliminarFirma()">
                             <i class="bi bi-trash"></i> Eliminar Firma

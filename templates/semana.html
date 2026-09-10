@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Asignación Semanal - Control de Camionetas</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    
+</head>
 <body>
 
     <div class="container">
@@ -103,7 +103,12 @@
                                     </select>
                                 </td>
                                 <td>
-                                    <input type="text" name="zona_{{ camioneta.id }}_{{ fecha_vista_str }}" value="{{ asignacion.get('zona', '') }}" placeholder="Ej: C13" class="zona-input" data-camioneta="{{ camioneta.id }}">
+                                    <select name="zona_{{ camioneta.id }}_{{ fecha_vista_str }}" class="zona-input" data-camioneta="{{ camioneta.id }}">
+                                        <option value="">Sin zona</option>
+                                        {% for z in zonas %}
+                                            <option value="{{ z.nombre }}" {% if z.nombre == asignacion.get('zona') %}selected{% endif %}>{{ z.nombre }}</option>
+                                        {% endfor %}
+                                    </select>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -149,7 +154,12 @@
                                                     </option>
                                                 {% endfor %}
                                             </select>
-                                            <input type="text" name="zona_{{ camioneta.id }}_{{ fecha_str }}" value="{{ asignacion.get('zona', '') }}" placeholder="Zona" class="zona-dia-input">
+                                            <select name="zona_{{ camioneta.id }}_{{ fecha_str }}" class="zona-dia-input">
+                                                <option value="">Sin zona</option>
+                                                {% for z in zonas %}
+                                                    <option value="{{ z.nombre }}" {% if z.nombre == asignacion.get('zona') %}selected{% endif %}>{{ z.nombre }}</option>
+                                                {% endfor %}
+                                            </select>
                                         </td>
                                     {% endfor %}
                                 </tr>
@@ -200,7 +210,7 @@
                     // Buscar los campos de ese día para esa camioneta
                     const campoTecnico = formulario.querySelector(`select[name="tecnico_${camionetaId}_${fecha}"]`);
                     const campoTecnico2 = formulario.querySelector(`select[name="tecnico2_${camionetaId}_${fecha}"]`);
-                    const campoZona = formulario.querySelector(`input[name="zona_${camionetaId}_${fecha}"]`);
+                    const campoZona = formulario.querySelector(`[name="zona_${camionetaId}_${fecha}"]`);
                     
                     if (campoTecnico) campoTecnico.value = tecnicoValor;
                     if (campoTecnico2) campoTecnico2.value = tecnico2Valor;

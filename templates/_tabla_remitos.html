@@ -1,0 +1,54 @@
+{# Fragmento reutilizado por la página completa de remitos y por la sección
+   "Remitos" del panel del administrador. #}
+<div class="table-responsive">
+    <table class="table table-sm table-striped">
+        <thead>
+            <tr>
+                <th>Patente</th>
+                <th>Elemento</th>
+                <th>Motivo</th>
+                <th>Fecha</th>
+                <th>Estado</th>
+                <th>Acción</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if remitos %}
+                {% for r in remitos %}
+                <tr>
+                    <td><strong>{{ r.patente }}</strong></td>
+                    <td>{{ r.elemento or '-' }}</td>
+                    <td>{{ r.motivo or '-' }}</td>
+                    <td>{{ r.fecha|timestamp_to_datetime }}</td>
+                    <td>
+                        {% if r.estado == 'PENDIENTE_FIRMA' %}
+                            <span class="badge bg-warning text-dark">⏳ Pendiente de firma</span>
+                        {% elif r.estado == 'FIRMADO' %}
+                            <span class="badge bg-info">✍️ Firmado{% if r.tecnico_firma %} por {{ r.tecnico_firma }}{% endif %}</span>
+                        {% elif r.estado == 'REVISADO' %}
+                            <span class="badge bg-success">✅ Revisado{% if r.admin_revision %} por {{ r.admin_revision }}{% endif %}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Sin seguimiento</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ r.ruta }}" target="_blank" class="btn btn-info btn-sm">
+                            <i class="bi bi-eye"></i> Ver
+                        </a>
+                        {% if r.estado == 'FIRMADO' and r.reporte_id %}
+                            <button class="btn btn-success btn-sm"
+                                    onclick="revisarRemito({{ r.reporte_id }})">
+                                <i class="bi bi-check-circle"></i> Marcar revisado
+                            </button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">No hay remitos generados</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>

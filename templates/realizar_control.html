@@ -207,6 +207,54 @@
             </div>
         </div>
 
+        <!-- ========================================== -->
+        <!-- RECUPERAR ELEMENTOS FALTANTES -->
+        <!-- ========================================== -->
+        {% if faltantes_recuperables %}
+        <div class="categoria-card mb-4" id="card-recuperar">
+            <div class="categoria-header categoria-header-recuperar" onclick="toggleRecuperar()">
+                <span>
+                    <i class="bi bi-arrow-counterclockwise"></i> Elementos faltantes de esta camioneta
+                </span>
+                <span>
+                    <span class="badge">{{ faltantes_recuperables|length }}</span>
+                    <i class="bi bi-chevron-down" id="icono-recuperar"></i>
+                </span>
+            </div>
+
+            <div id="detalle-recuperar" style="display: none;">
+                <div class="card p-3" style="border-radius: 12px; background: #f1f8f4; border: 1px solid #28a745;">
+                    <p class="small text-muted mb-2">
+                        Si encontraste o recuperaste alguno de estos elementos, marcalo y explicá qué pasó.
+                        La explicación es obligatoria.
+                    </p>
+                    <div class="row g-2">
+                        {% for f in faltantes_recuperables %}
+                        <div class="col-12">
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <input class="form-check-input recuperar-check" type="checkbox"
+                                       value="{{ f.elemento }}"
+                                       id="rec-{{ loop.index }}">
+                                <label class="form-check-label small flex-grow-1" for="rec-{{ loop.index }}">
+                                    <strong>{{ f.elemento }}</strong>
+                                    <span class="text-muted">
+                                        · falta desde {{ f.desde }}{% if f.dias is not none %} ({{ f.dias }} d){% endif %}
+                                    </span>
+                                    {% if f.motivo %}<br><small class="text-muted">“{{ f.motivo }}”</small>{% endif %}
+                                </label>
+                                <input type="text" class="form-control form-control-sm recuperar-obs"
+                                       placeholder="¿Qué pasó? (obligatorio)"
+                                       data-elemento="{{ f.elemento }}"
+                                       style="display: none; width: 220px; font-size: 0.75rem;">
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
     </div>
 
     <!-- BOTONES FIJOS -->
@@ -314,9 +362,56 @@
         }
 
         // ==========================================
+        // RECUPERAR ELEMENTOS FALTANTES
+        // ==========================================
+        function toggleRecuperar() {
+            const detalle = document.getElementById('detalle-recuperar');
+            const icono = document.getElementById('icono-recuperar');
+            const oculto = detalle.style.display === 'none';
+            detalle.style.display = oculto ? 'block' : 'none';
+            icono.className = oculto ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+        }
+
+        // La observación aparece al marcar, y se limpia al desmarcar.
+        document.addEventListener('change', function(e) {
+            if (e.target.classList.contains('recuperar-check')) {
+                const fila = e.target.closest('.d-flex');
+                const obs = fila.querySelector('.recuperar-obs');
+                if (!obs) return;
+                if (e.target.checked) {
+                    obs.style.display = 'inline-block';
+                    obs.focus();
+                } else {
+                    obs.style.display = 'none';
+                    obs.value = '';
+                }
+            }
+        });
+
+        function recolectarRecuperados() {
+            const recuperados = [];
+            const checks = document.querySelectorAll('.recuperar-check:checked');
+            for (const cb of checks) {
+                const fila = cb.closest('.d-flex');
+                const obs = fila.querySelector('.recuperar-obs');
+                const texto = obs ? obs.value.trim() : '';
+                if (!texto) {
+                    alert('⚠️ Explicá qué pasó con "' + cb.value + '" para poder marcarlo como recuperado.');
+                    if (obs) obs.focus();
+                    return null;
+                }
+                recuperados.push({ elemento: cb.value, observacion: texto });
+            }
+            return recuperados;
+        }
+
+        // ==========================================
         // FINALIZAR CONTROL RÁPIDO
         // ==========================================
         function finalizarControlRapido() {
+            const recuperados = recolectarRecuperados();
+            if (recuperados === null) return;  // falta una explicación
+
             const problemas = [];
             
             for (const cat in categorias) {
@@ -343,30 +438,36 @@
                 }
             }
             
-            if (problemas.length === 0) {
-                if (confirm('✅ Todos los elementos están en orden. ¿Finalizar control?')) {
-                    guardarControlRapido([]);
-                }
-                return;
+            let mensaje = '';
+            if (problemas.length > 0) {
+                mensaje += '⚠️ Se registrarán los siguientes problemas:\n\n';
+                problemas.forEach(p => {
+                    mensaje += `• ${p.categoria}: ${p.elemento}`;
+                    if (p.observacion) mensaje += ` (${p.observacion})`;
+                    mensaje += '\n';
+                });
             }
-            
-            let mensaje = '⚠️ Se registrarán los siguientes problemas:\n\n';
-            problemas.forEach(p => {
-                mensaje += `• ${p.categoria}: ${p.elemento}`;
-                if (p.observacion) mensaje += ` (${p.observacion})`;
-                mensaje += '\n';
-            });
-            mensaje += '\n¿Confirmar?';
-            
+            if (recuperados.length > 0) {
+                mensaje += (mensaje ? '\n' : '') + '✅ Se darán por recuperados:\n\n';
+                recuperados.forEach(r => {
+                    mensaje += `• ${r.elemento} (${r.observacion})\n`;
+                });
+            }
+            if (!mensaje) {
+                mensaje = '✅ Todos los elementos están en orden. ¿Finalizar control?';
+            } else {
+                mensaje += '\n¿Confirmar?';
+            }
+
             if (confirm(mensaje)) {
-                guardarControlRapido(problemas);
+                guardarControlRapido(problemas, recuperados);
             }
         }
 
         // ==========================================
         // GUARDAR CONTROL RÁPIDO
         // ==========================================
-        function guardarControlRapido(problemas) {
+        function guardarControlRapido(problemas, recuperados) {
             const controlId = document.getElementById('control-id').value;
             
             const btnFinalizar = document.querySelector('.fixed-actions .btn-success');
@@ -378,7 +479,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     control_id: controlId,
-                    problemas: problemas
+                    problemas: problemas,
+                    recuperados: recuperados || []
                 })
             })
             .then(response => response.json())

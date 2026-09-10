@@ -1,0 +1,33 @@
+services:
+  control:
+    build: .
+    container_name: control-camionetas
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      # OBLIGATORIA en producción: sin esta clave las sesiones se cierran en
+      # cada reinicio. Generar una con:  python -c "import secrets; print(secrets.token_hex(32))"
+      CONTROL_SECRET_KEY: ${CONTROL_SECRET_KEY:?definir CONTROL_SECRET_KEY en el archivo .env}
+      TZ: America/Argentina/Buenos_Aires
+      # La base y los archivos generados viven en los volúmenes de abajo.
+      CONTROL_DATA_DIR: /app/datos
+      CONTROL_REMITOS_DIR: /app/remitos
+      CONTROL_FIRMAS_DIR: /app/static/firmas
+    volumes:
+      # Todo lo que no se puede perder vive fuera de la imagen: si se
+      # reconstruye el contenedor, los datos siguen estando.
+      - control-datos:/app/datos
+      - control-remitos:/app/remitos
+      - control-firmas:/app/static/firmas
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/').status\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  control-datos:
+  control-remitos:
+  control-firmas:

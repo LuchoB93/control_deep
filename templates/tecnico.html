@@ -46,6 +46,13 @@
             {% endif %}
         {% endwith %}
 
+        {% if mensaje %}
+            <div class="alert alert-success alert-dismissible fade show">
+                <i class="bi bi-check-circle"></i> {{ mensaje }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endif %}
+
         {% if error %}
             <div class="alert alert-danger alert-dismissible fade show">
                 <i class="bi bi-exclamation-triangle"></i> {{ error }}
@@ -64,35 +71,60 @@
                         <div class="col-md-6">
                             <p><strong><i class="bi bi-truck"></i> Camioneta:</strong> {{ asignacion.camioneta_patente }}</p>
                             <p><strong><i class="bi bi-clock"></i> Jornada:</strong> {{ asignacion.jornada|title }}</p>
+                            {% if asignacion.zona %}
+                                <p><strong><i class="bi bi-geo-alt"></i> Zona:</strong> {{ asignacion.zona }}</p>
+                            {% endif %}
+                            <p><strong><i class="bi bi-people"></i> Dupla:</strong>
+                                {{ asignacion.tecnico_nombre or 'Sin asignar' }}
+                                <span class="badge bg-primary">Responsable</span>
+                                {% if asignacion.tecnico_id == session.usuario_id %}
+                                    <span class="badge bg-dark">vos</span>
+                                {% endif %}
+                                {% if asignacion.tecnico2_nombre %}
+                                    &middot; {{ asignacion.tecnico2_nombre }}
+                                    <span class="badge bg-secondary">Acompañante</span>
+                                    {% if asignacion.tecnico2_id == session.usuario_id %}
+                                        <span class="badge bg-dark">vos</span>
+                                    {% endif %}
+                                {% endif %}
+                            </p>
                             <p><strong><i class="bi bi-check-circle"></i> Estado:</strong> 
                                 <span class="badge bg-success">ASIGNADA</span>
                             </p>
                             
-                            <!-- Mostrar estado del control -->
+                            <!-- Retiro -->
                             {% if retiro_completado %}
-                                <p><strong><i class="bi bi-box-arrow-right"></i> Retiro:</strong> 
+                                <p><strong><i class="bi bi-box-arrow-right"></i> Retiro:</strong>
                                     <span class="badge bg-success">✅ COMPLETADO</span>
+                                    {% if retiro_en_otro_turno %}
+                                        <small class="text-muted">(en un turno anterior)</small>
+                                    {% endif %}
                                 </p>
                             {% elif control_retiro_activo %}
-                                <p><strong><i class="bi bi-box-arrow-right"></i> Retiro:</strong> 
+                                <p><strong><i class="bi bi-box-arrow-right"></i> Retiro:</strong>
                                     <span class="badge bg-warning text-dark">⏳ EN CURSO</span>
                                 </p>
                             {% else %}
-                                <p><strong><i class="bi bi-box-arrow-right"></i> Retiro:</strong> 
+                                <p><strong><i class="bi bi-box-arrow-right"></i> Retiro:</strong>
                                     <span class="badge bg-secondary">⏳ PENDIENTE</span>
                                 </p>
                             {% endif %}
-                            
-                            {% if devolucion_completada %}
-                                <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong> 
+
+                            <!-- Devolución -->
+                            {% if not necesita_devolucion %}
+                                <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong>
+                                    <span class="badge bg-info">🚚 Seguís con la camioneta</span>
+                                </p>
+                            {% elif devolucion_completada %}
+                                <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong>
                                     <span class="badge bg-success">✅ COMPLETADA</span>
                                 </p>
                             {% elif control_devolucion_activo %}
-                                <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong> 
+                                <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong>
                                     <span class="badge bg-warning text-dark">⏳ EN CURSO</span>
                                 </p>
                             {% else %}
-                                <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong> 
+                                <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong>
                                     <span class="badge bg-secondary">⏳ PENDIENTE</span>
                                 </p>
                             {% endif %}
@@ -102,67 +134,86 @@
                             <!-- LÓGICA DE BOTONES SEGÚN ESTADO -->
                             <!-- ========================================== -->
                             
-                            {% if control_retiro_activo %}
-                                <!-- ✅ RETIRO ACTIVO → Solo continuar retiro -->
+                            {% if not es_responsable %}
+                                <!-- Acompañante: ve la asignación, no realiza el control -->
+                                <div class="alert alert-info mb-0">
+                                    <i class="bi bi-info-circle"></i>
+                                    <strong>Vas de acompañante</strong>
+                                    <br>
+                                    <small>El control lo realiza
+                                    {{ asignacion.tecnico_nombre or 'el técnico responsable' }}.</small>
+                                </div>
+
+                            {% elif control_retiro_activo %}
                                 <div class="alert alert-warning mb-0">
                                     <i class="bi bi-exclamation-triangle"></i>
                                     <strong>Retiro en curso</strong>
                                     <br>
                                     <small class="text-muted">Iniciado: {{ control_retiro_activo.fecha_hora_inicio[:16]|replace('T', ' ') }}</small>
                                     <br>
-                                    <a href="{{ url_for('realizar_control', control_id=control_retiro_activo.id) }}" 
+                                    <a href="{{ url_for('realizar_control', control_id=control_retiro_activo.id) }}"
                                        class="btn btn-primary btn-sm mt-2">
                                         <i class="bi bi-arrow-right"></i> Continuar Retiro
                                     </a>
                                 </div>
-                                
+
                             {% elif control_devolucion_activo %}
-                                <!-- ✅ DEVOLUCIÓN ACTIVA → Solo continuar devolución -->
                                 <div class="alert alert-warning mb-0">
                                     <i class="bi bi-exclamation-triangle"></i>
                                     <strong>Devolución en curso</strong>
                                     <br>
                                     <small class="text-muted">Iniciada: {{ control_devolucion_activo.fecha_hora_inicio[:16]|replace('T', ' ') }}</small>
                                     <br>
-                                    <a href="{{ url_for('realizar_control', control_id=control_devolucion_activo.id) }}" 
+                                    <a href="{{ url_for('realizar_control', control_id=control_devolucion_activo.id) }}"
                                        class="btn btn-primary btn-sm mt-2">
                                         <i class="bi bi-arrow-right"></i> Continuar Devolución
                                     </a>
                                 </div>
-                                
-                            {% elif retiro_completado and not devolucion_completada %}
-                                <!-- ✅ RETIRO COMPLETADO → Mostrar solo "Iniciar Devolución" -->
+
+                            {% elif retiro_pendiente %}
+                                <!-- El retiro de esta racha todavía no se hizo -->
                                 <form method="POST" action="{{ url_for('iniciar_control') }}" class="mt-2">
-                                    <input type="hidden" name="asignacion_id" value="{{ asignacion.id }}">
-                                    <input type="hidden" name="jornada" value="{{ jornada_actual }}">
-                                    <button type="submit" name="tipo_control" value="DEVOLUCION" 
-                                            class="btn btn-info btn-lg">
-                                        <i class="bi bi-box-arrow-in-left"></i> Iniciar Devolución
-                                    </button>
-                                </form>
-                                <small class="text-muted d-block mt-1">✅ Retiro completado. Ahora podés iniciar la devolución.</small>
-                                
-                            {% elif retiro_completado and devolucion_completada %}
-                                <!-- ✅ RETIRO Y DEVOLUCIÓN COMPLETADOS → Jornada finalizada -->
-                                <div class="alert alert-success mb-0">
-                                    <i class="bi bi-check-circle"></i>
-                                    <strong>¡Jornada completada!</strong>
-                                    <br>
-                                    <small>Retiro y Devolución finalizados correctamente.</small>
-                                </div>
-                                
-                            {% else %}
-                                <!-- ✅ NADA INICIADO → Mostrar solo "Iniciar Retiro" -->
-                                <form method="POST" action="{{ url_for('iniciar_control') }}" class="mt-2">
-                                    <input type="hidden" name="asignacion_id" value="{{ asignacion.id }}">
-                                    <input type="hidden" name="jornada" value="{{ jornada_actual }}">
-                                    <button type="submit" name="tipo_control" value="RETIRO" 
+                                    <input type="hidden" name="asignacion_id" value="{{ asignacion_retiro_id }}">
+                                    <input type="hidden" name="jornada" value="{{ jornada_retiro }}">
+                                    <button type="submit" name="tipo_control" value="RETIRO"
                                             class="btn btn-success btn-lg">
                                         <i class="bi bi-box-arrow-right"></i> Iniciar Retiro
                                     </button>
                                 </form>
-                                <small class="text-muted d-block mt-1">⚠️ Debes completar el retiro antes de iniciar la devolución.</small>
-                                
+                                <small class="text-muted d-block mt-1">⚠️ Revisá la camioneta antes de salir.</small>
+
+                            {% elif not necesita_devolucion %}
+                                <!-- Guardia o turno encadenado: la camioneta no cambia de manos -->
+                                <div class="alert alert-info mb-0">
+                                    <i class="bi bi-truck"></i>
+                                    <strong>{% if es_guardia %}Estás de guardia{% else %}Seguís con la camioneta{% endif %}</strong>
+                                    <br>
+                                    <small>
+                                        No hace falta devolverla: la seguís teniendo en el próximo turno.
+                                        La devolución se hace cuando pasa a otro responsable.
+                                    </small>
+                                </div>
+
+                            {% elif devolucion_completada %}
+                                <div class="alert alert-success mb-0">
+                                    <i class="bi bi-check-circle"></i>
+                                    <strong>¡Jornada completada!</strong>
+                                    <br>
+                                    <small>Retiro y devolución finalizados correctamente.</small>
+                                </div>
+
+                            {% else %}
+                                <!-- Corresponde devolver: la camioneta cambia de manos -->
+                                <form method="POST" action="{{ url_for('iniciar_control') }}" class="mt-2">
+                                    <input type="hidden" name="asignacion_id" value="{{ asignacion.id }}">
+                                    <input type="hidden" name="jornada" value="{{ jornada_actual }}">
+                                    <button type="submit" name="tipo_control" value="DEVOLUCION"
+                                            class="btn btn-info btn-lg">
+                                        <i class="bi bi-box-arrow-in-left"></i> Iniciar Devolución
+                                    </button>
+                                </form>
+                                <small class="text-muted d-block mt-1">✅ Retiro completado. Al terminar el turno, hacé la devolución.</small>
+
                             {% endif %}
                         </div>
                     </div>
@@ -237,12 +288,10 @@
                         data.forEach(notif => {
                             const tipoClase = notif.tipo === 'REMITO_PENDIENTE' ? 'warning' : 'info';
                             const icono = notif.tipo === 'REMITO_PENDIENTE' ? 'file-earmark-pdf' : 'bell';
-                            // Extraer el reporte_id del enlace
-                            let reporteId = 0;
-                            if (notif.enlace) {
-                                const partes = notif.enlace.split('/');
-                                reporteId = parseInt(partes[partes.length - 1]) || 0;
-                            }
+                            // El id viene del backend. Antes se intentaba deducir del
+                            // enlace ("/historial-camioneta/AA123BB"), lo que daba NaN
+                            // y el botón de firmar nunca aparecía.
+                            const reporteId = notif.reporte_id || 0;
                             html += `
                                 <div class="alert alert-${tipoClase} alert-dismissible fade show" id="notif-${notif.id}">
                                     <i class="bi bi-${icono}"></i>

@@ -48,10 +48,9 @@
                 <span>Técnicos</span>
                 <span class="badge badge-proximamente">Próximamente</span>
             </a>
-            <a href="#" class="sidebar-link" data-section="configuracion" onclick="cambiarSeccion('configuracion')">
+            <a href="{{ url_for('admin_configuracion') }}" class="sidebar-link">
                 <i class="bi bi-gear"></i>
                 <span>Configuración</span>
-                <span class="badge badge-proximamente">Próximamente</span>
             </a>
         </nav>
         <div class="sidebar-footer">
@@ -74,6 +73,10 @@
         <!-- NOTIFICACIONES DE REMITOS - ADMIN -->
         <!-- ========================================== -->
         <div id="contenedor-notificaciones-admin"></div>
+
+        <div id="contenedor-alertas-control">
+            {% include '_alertas_control.html' %}
+        </div>
 
         <!-- ========================================== -->
         <!-- SECCIÓN 1: ASIGNACIONES -->
@@ -139,7 +142,15 @@
                                 <tr class="fila-asignacion">
                                     <td><strong>{{ fila.camioneta_patente }}</strong></td>
                                     <td>
-                                        <input type="text" name="zona_{{ fila.camioneta_id }}" value="{{ fila.zona or '' }}" placeholder="Ej: C13">
+                                        <select name="zona_{{ fila.camioneta_id }}" class="zona-select">
+                                            <option value="">Sin zona</option>
+                                            {% for z in zonas %}
+                                                <option value="{{ z.nombre }}" {% if z.nombre == fila.zona %}selected{% endif %}>{{ z.nombre }}</option>
+                                            {% endfor %}
+                                            {% if fila.zona and fila.zona not in zonas|map(attribute='nombre')|list %}
+                                                <option value="{{ fila.zona }}" selected>{{ fila.zona }} (fuera de lista)</option>
+                                            {% endif %}
+                                        </select>
                                     </td>
                                     <td>
                                         <select name="tecnico_{{ fila.camioneta_id }}" class="tecnico-select">
@@ -377,20 +388,6 @@
         <!-- ========================================== -->
         <!-- SECCIÓN 8: CONFIGURACIÓN (Próximamente) -->
         <!-- ========================================== -->
-        <div id="seccion-configuracion" class="seccion-content" style="display:none;">
-            <div class="seccion-header">
-                <h1><i class="bi bi-gear"></i> Configuración</h1>
-                <p class="text-muted">Configuración del sistema</p>
-            </div>
-            <div class="card">
-                <div class="card-body text-center py-5">
-                    <i class="bi bi-gear display-1 text-muted"></i>
-                    <h3 class="mt-3">Próximamente</h3>
-                    <p class="text-muted">Configuración del sistema en desarrollo.</p>
-                </div>
-            </div>
-        </div>
-
     </div>
 
     <!-- Elemento oculto para datos de reportes -->
@@ -443,6 +440,53 @@
         }
 
         // ==========================================
+        // PLEGAR / DESPLEGAR ALERTAS DE CONTROL
+        // ==========================================
+        function toggleAlertasControl(btn) {
+            const cuerpo = document.getElementById('alerta-controles-body');
+            const icono = btn.querySelector('i');
+            const oculto = cuerpo.style.display === 'none';
+            cuerpo.style.display = oculto ? '' : 'none';
+            icono.className = oculto ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+            try { localStorage.setItem('alertasPlegadas', oculto ? '0' : '1'); } catch (e) {}
+        }
+
+        // El bloque se refresca solo: un control vence mientras soporte tiene
+        // la pantalla abierta, y tiene que aparecer sin recargar.
+        const REFRESCO_ALERTAS_MS = 120000;  // 2 minutos
+
+        function aplicarPlegadoAlertas() {
+            let plegadas = '0';
+            try { plegadas = localStorage.getItem('alertasPlegadas') || '0'; } catch (e) {}
+            if (plegadas !== '1') return;
+            const cuerpo = document.getElementById('alerta-controles-body');
+            if (!cuerpo) return;
+            cuerpo.style.display = 'none';
+            const icono = document.querySelector('.btn-toggle-alertas i');
+            if (icono) icono.className = 'bi bi-chevron-down';
+        }
+
+        function refrescarAlertasControl() {
+            fetch('/api/controles-pendientes')
+                .then(r => (r.ok ? r.text() : Promise.reject(r.status)))
+                .then(html => {
+                    const contenedor = document.getElementById('contenedor-alertas-control');
+                    if (!contenedor) return;
+                    const antes = contenedor.querySelectorAll('.tabla-alertas tbody tr').length;
+                    contenedor.innerHTML = html;
+                    aplicarPlegadoAlertas();
+                    const ahora = contenedor.querySelectorAll('.tabla-alertas tbody tr').length;
+                    // Si aparece un control vencido nuevo, se despliega para que se vea.
+                    if (ahora > antes) {
+                        const cuerpo = document.getElementById('alerta-controles-body');
+                        if (cuerpo) cuerpo.style.display = '';
+                        try { localStorage.setItem('alertasPlegadas', '0'); } catch (e) {}
+                    }
+                })
+                .catch(() => { /* sin conexión: se reintenta en el próximo ciclo */ });
+        }
+
+        // ==========================================
         // IR A HISTORIAL
         // ==========================================
         function irHistorial() {
@@ -461,7 +505,9 @@
         function cargarRemitos() {
             const contenedor = document.getElementById('contenedor-remitos');
             
-            fetch('/admin/remitos')
+            // parcial=1 devuelve solo la tabla; antes se inyectaba una página
+            // HTML completa (con <html> y <head>) dentro de este div.
+            fetch('/admin/remitos?parcial=1')
                 .then(response => response.text())
                 .then(html => {
                     contenedor.innerHTML = html;
@@ -484,6 +530,10 @@
             
             // Cargar notificaciones al iniciar
             cargarNotificacionesAdmin();
+
+            aplicarPlegadoAlertas();
+            setInterval(refrescarAlertasControl, REFRESCO_ALERTAS_MS);
+            setInterval(cargarNotificacionesAdmin, REFRESCO_ALERTAS_MS);
             
             document.querySelectorAll('.tecnico-select').forEach(select => {
                 select.addEventListener('change', function() {
@@ -547,12 +597,10 @@
                         data.forEach(notif => {
                             const tipoClase = notif.tipo === 'REMITO_FIRMADO' ? 'success' : 'info';
                             const icono = notif.tipo === 'REMITO_FIRMADO' ? 'file-check' : 'bell';
-                            // Extraer el reporte_id del enlace
-                            let reporteId = 0;
-                            if (notif.enlace) {
-                                const partes = notif.enlace.split('/');
-                                reporteId = parseInt(partes[partes.length - 1]) || 0;
-                            }
+                            // El id viene del backend. Antes se intentaba deducir del
+                            // enlace ("/admin/remitos/seguimiento" -> NaN) y el botón
+                            // "Marcar como Revisado" nunca se mostraba.
+                            const reporteId = notif.reporte_id || 0;
                             html += `
                                 <div class="alert alert-${tipoClase} alert-dismissible fade show" id="notif-${notif.id}">
                                     <i class="bi bi-${icono}"></i>
@@ -624,7 +672,8 @@
         const historialData = JSON.parse(contenedorDatos.getAttribute('data-historial') || '{}');
 
         function generarRemito(reporteId) {
-            if (!confirm('¿Generar remito para este elemento?')) return;
+            const motivo = pedirMotivoReposicion();
+            if (!motivo) return;
             
             const btn = document.querySelector(`#reporte-item-${reporteId} .btn-remito`);
             if (btn) {
@@ -636,7 +685,8 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
-                }
+                },
+                body: JSON.stringify({ motivo: motivo })
             })
             .then(response => response.json())
             .then(data => {
@@ -659,6 +709,20 @@
                     btn.textContent = '📄 Generar Remito';
                 }
             });
+        }
+
+        // El remito tiene que decir por qué se repone el elemento.
+        function pedirMotivoReposicion() {
+            const respuesta = prompt(
+                '¿Por qué se repone este elemento?\n\n' +
+                'Escribí 1 para ROTURA\n' +
+                'Escribí 2 para PÉRDIDA');
+            if (respuesta === null) return null;
+            const opcion = respuesta.trim();
+            if (opcion === '1') return 'ROTURA';
+            if (opcion === '2') return 'PERDIDA';
+            alert('⚠️ Opción inválida. Elegí 1 (rotura) o 2 (pérdida).');
+            return null;
         }
 
         function mostrarDetallesPatente() {
@@ -696,10 +760,26 @@
                     } else if (item.descripcion) {
                         descripcionHtml = `<br><span class="descripcion-ok">${item.descripcion}</span>`;
                     }
-                    
+
+                    // Referencia: última vez que este elemento se registró OK.
+                    let ultimaOkHtml = '';
+                    if (item.ultima_ok) {
+                        const fechaOk = item.ultima_ok.slice(0, 16).replace('T', ' ');
+                        const dias = item.dias_sin_ok;
+                        let antiguedad = '';
+                        if (dias === 0) antiguedad = ' (hoy)';
+                        else if (dias === 1) antiguedad = ' (hace 1 día)';
+                        else if (dias > 1) antiguedad = ` (hace ${dias} días)`;
+                        const quien = item.ultima_ok_tecnico ? ` por ${item.ultima_ok_tecnico}` : '';
+                        ultimaOkHtml = `<br><span class="ultima-ok">✔️ Última vez OK: ${fechaOk}${antiguedad}${quien}</span>`;
+                    } else {
+                        ultimaOkHtml = `<br><span class="ultima-ok sin-registro">⚠️ Nunca se registró OK en esta camioneta</span>`;
+                    }
+
                     htmlFaltantes += `<li class="item-reporte" id="reporte-item-${item.id}">
                         <strong>${icono} ${item.elemento}:</strong> ${item.estado}
                         ${descripcionHtml}
+                        ${ultimaOkHtml}
                         <div style="margin-top: 5px;">
                             <button class="btn-resolver" onclick="resolverReporte(${item.id})">✔ Resolver</button>
                             ${botonRemito}

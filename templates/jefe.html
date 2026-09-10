@@ -39,37 +39,19 @@
             </div>
             <div class="col-md-3 col-6">
                 <div class="stat-card danger">
-                    <div class="number">
-                        {% set fallas = 0 %}
-                        {% for patente, info in resumen_flota.items() %}
-                            {% if info.estado_general == 'FALLA' %}{% set fallas = fallas + 1 %}{% endif %}
-                        {% endfor %}
-                        {{ fallas }}
-                    </div>
+                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'FALLA')|list|length }}</div>
                     <div class="label"><i class="bi bi-exclamation-triangle"></i> Con Fallas</div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="stat-card warning">
-                    <div class="number">
-                        {% set alertas = 0 %}
-                        {% for patente, info in resumen_flota.items() %}
-                            {% if info.estado_general == 'ALERTA' %}{% set alertas = alertas + 1 %}{% endif %}
-                        {% endfor %}
-                        {{ alertas }}
-                    </div>
+                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'ALERTA')|list|length }}</div>
                     <div class="label"><i class="bi bi-exclamation-circle"></i> En Alerta</div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="stat-card success">
-                    <div class="number">
-                        {% set ok = 0 %}
-                        {% for patente, info in resumen_flota.items() %}
-                            {% if info.estado_general == 'OK' %}{% set ok = ok + 1 %}{% endif %}
-                        {% endfor %}
-                        {{ ok }}
-                    </div>
+                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'OK')|list|length }}</div>
                     <div class="label"><i class="bi bi-check-circle"></i> En Orden</div>
                 </div>
             </div>
@@ -105,7 +87,7 @@
                         </div>
                         <div class="mt-1 small">
                             {% if info.historial %}
-                                <span class="text-muted">Último: {{ info.historial[-1].elemento }}</span>
+                                <span class="text-muted">Último: {{ info.historial[0].elemento }}</span>
                             {% else %}
                                 <span class="text-muted">Sin registros</span>
                             {% endif %}
@@ -206,7 +188,8 @@
             if (info.historial.length === 0) {
                 html += `<div class="text-center text-muted">Sin registros</div>`;
             } else {
-                info.historial.slice().reverse().forEach(r => {
+                // El historial ya viene del más nuevo al más viejo.
+                info.historial.forEach(r => {
                     const estadoClass = r.estado == 'OK' ? 'estado-ok' : 
                                        r.estado == 'FALTANTE' ? 'estado-faltante' : 
                                        r.estado == 'FALLA' ? 'estado-falla' : 
