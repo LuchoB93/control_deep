@@ -14,6 +14,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image as PILImage
+from zoneinfo import ZoneInfo
 
 # La consola de Windows suele venir en cp1252 y no puede imprimir los emojis
 # que usan los mensajes de este archivo: sin esto, un print de arranque corta
@@ -31,6 +32,16 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('CONTROL_SECRET_KEY') or secrets.token_hex(32)
 
 BASE_DIR = Path(__file__).resolve().parent
+
+# El servidor puede correr en UTC (Docker, Codespaces). Sin esto los horarios se
+# guardaban adelantados respecto de la hora real de la jornada y los controles
+# vencían antes de tiempo.
+TZ_LOCAL = ZoneInfo(os.environ.get('CONTROL_TZ') or 'America/Argentina/Buenos_Aires')
+
+
+def ahora():
+    """Hora local de la operación, sin tzinfo: el resto del código compara naive."""
+    return datetime.now(TZ_LOCAL).replace(tzinfo=None)
 
 # Dónde vive la base de datos. En Docker apunta a un volumen (CONTROL_DATA_DIR),
 # para que reconstruir la imagen no borre el historial de la flota.
@@ -196,14 +207,9 @@ HORARIOS = {
     },
 }
 
-# Margen para reclamar un control no realizado: una hora desde que empieza el
-# turno (retiro) o desde que termina (devolución).
+# Margen para reclamar una devolución no realizada: una hora desde que termina
+# el turno. El retiro no se reclama con este margen: ver vencimiento_retiro().
 MARGEN_CONTROL = timedelta(hours=1)
-
-# La camioneta se considera "en manos del mismo responsable" mientras la
-# siguiente asignación caiga dentro de esta ventana. Cubre el salto de viernes
-# a lunes; más allá de eso se pide devolverla.
-DIAS_CONTINUIDAD = 3
 
 # Zona con la que se identifica a quien está de guardia y se lleva la camioneta.
 ZONA_GUARDIA = 'GUARDIA'
@@ -241,7 +247,7 @@ def jornadas_activas(momento=None):
     Mañana y tarde se solapan entre las 14:30 y las 14:45. En esa franja se
     prioriza la mañana, que es la que está cerrando.
     """
-    momento = momento or datetime.now()
+    momento = momento or ahora()
     activas = []
     for jornada in JORNADAS:
         inicio, fin = inicio_fin_jornada(jornada, momento)
@@ -298,8 +304,13 @@ def crear_carpeta_remitos(patente, fecha):
 
 
 
-def generar_pdf_remito(reporte, admin_nombre, admin_firma, fecha_hora, ruta_pdf, motivo=None):
-    """Genera el PDF del remito usando ReportLab con firma"""
+def generar_pdf_remito(remito, ruta_pdf):
+    """Genera el PDF del remito con los dos bloques de firma.
+
+    Se regenera en cada paso del circuito: al crearlo las dos firmas figuran
+    pendientes, y cada firma vuelve a escribir el archivo para que el PDF
+    final tenga la del técnico que recibió y la de quien entregó el material.
+    """
     doc = SimpleDocTemplate(str(ruta_pdf), pagesize=A4,
                            rightMargin=1.5*cm, leftMargin=1.5*cm,
                            topMargin=1.5*cm, bottomMargin=1.5*cm)
@@ -355,16 +366,18 @@ def generar_pdf_remito(reporte, admin_nombre, admin_firma, fecha_hora, ruta_pdf,
     elements.append(Paragraph("REMITO DE ENTREGA DE MATERIAL", subtitulo_style))
     elements.append(Spacer(1, 0.5*cm))
     
+    fecha_hora = remito['fecha_generacion']
     data = [
-        ['N° REMITO:', f"REM-{fecha_hora.strftime('%Y%m%d')}-{reporte['id']}"],
+        ['N° REMITO:', f"REM-{fecha_hora.strftime('%Y%m%d')}-{remito['id']}"],
         ['FECHA:', fecha_hora.strftime('%d/%m/%Y %H:%M')],
-        ['PATENTE:', reporte['patente']],
-        ['ZONA:', reporte['zona'] or 'No especificada'],
-        ['TÉCNICO RESPONSABLE:', reporte['tecnico_nombre'] or 'No asignado'],
-        ['MATERIAL:', reporte['elemento']],
-        ['ESTADO:', 'FALTANTE'],
-        ['MOTIVO DE REPOSICIÓN:', MOTIVOS_REPOSICION.get(motivo, 'No especificado')],
-        ['DESCRIPCIÓN:', reporte['descripcion'] or 'Sin descripción'],
+        ['CAMIONETA:', remito['patente']],
+        ['ZONA:', remito['zona'] or 'No especificada'],
+        ['TÉCNICO RESPONSABLE:', remito['tecnico_nombre'] or 'No asignado'],
+        ['ELEMENTO FALTANTE:', remito['elemento']],
+        ['MATERIAL ENTREGADO:', remito['material_entregado'] or remito['elemento']],
+        ['MOTIVO DE REPOSICIÓN:', MOTIVOS_REPOSICION.get(remito['motivo'], 'No especificado')],
+        ['CREADO POR:', remito['creador_nombre'] or 'Soporte'],
+        ['DESCRIPCIÓN:', remito['descripcion'] or 'Sin descripción'],
     ]
     
     tabla_data = []
@@ -388,81 +401,53 @@ def generar_pdf_remito(reporte, admin_nombre, admin_firma, fecha_hora, ruta_pdf,
     elements.append(Spacer(1, 0.8*cm))
     
     # ==========================================
-    # SECCIÓN DE FIRMA
+    # FIRMAS: quien recibe el material y quien lo entrega
     # ==========================================
-    elements.append(Paragraph("FIRMA DEL ADMINISTRADOR", firma_style))
-    elements.append(Spacer(1, 0.2*cm))
-    
-    # Si hay firma cargada, mostrarla
-    img_firma = ruta_firma(admin_firma)
-    if img_firma and img_firma.exists():
-        try:
-            img_path = img_firma
-            if img_path.exists():
-                with PILImage.open(img_path) as img:
-                    img_width, img_height = img.size
-                    target_width = 4 * cm
-                    target_height = 2 * cm
-                    scale = min(target_width / img_width, target_height / img_height)
-                    final_width = img_width * scale
-                    final_height = img_height * scale
-                
-                img = Image(str(img_path), width=final_width, height=final_height)
-                img.hAlign = 'CENTER'
-                elements.append(img)
-                elements.append(Spacer(1, 0.2*cm))
-                elements.append(Paragraph(admin_nombre, ParagraphStyle(
-                    'FirmaNombreImg',
-                    parent=styles['Normal'],
-                    alignment=TA_CENTER,
-                    fontSize=10,
-                    textColor=colors.HexColor('#666')
-                )))
-            else:
-                raise Exception("Archivo no encontrado")
-        except Exception as e:
-            print(f"Error al cargar firma: {e}")
-            elements.append(Paragraph(admin_nombre, ParagraphStyle(
-                'FirmaNombreFallback',
-                parent=styles['Normal'],
-                alignment=TA_CENTER,
-                fontSize=12,
-                fontName='Helvetica-Bold',
-                textColor=colors.HexColor('#333')
-            )))
-            elements.append(Paragraph("_________________________", ParagraphStyle(
-                'FirmaLineaFallback',
-                parent=styles['Normal'],
-                alignment=TA_CENTER,
-                fontSize=11
-            )))
-    else:
-        elements.append(Paragraph(admin_nombre, ParagraphStyle(
-            'FirmaNombre',
-            parent=styles['Normal'],
-            alignment=TA_CENTER,
-            fontSize=12,
-            fontName='Helvetica-Bold',
-            textColor=colors.HexColor('#333'),
-            spaceAfter=5
-        )))
-        elements.append(Paragraph("_________________________", ParagraphStyle(
-            'FirmaLinea',
-            parent=styles['Normal'],
-            alignment=TA_CENTER,
-            fontSize=11,
-            spaceAfter=5
-        )))
-    
-    elements.append(Paragraph(f"{admin_nombre} (Administrador)", ParagraphStyle(
-        'FirmaCargo',
-        parent=styles['Normal'],
-        alignment=TA_CENTER,
-        fontSize=9,
-        textColor=colors.HexColor('#666'),
-        spaceAfter=20
-    )))
-    
+    linea_style = ParagraphStyle(
+        'FirmaLinea', parent=styles['Normal'], alignment=TA_CENTER, fontSize=11)
+
+    pie_firma_style = ParagraphStyle(
+        'FirmaPie', parent=styles['Normal'], alignment=TA_CENTER, fontSize=9,
+        textColor=colors.HexColor('#666'))
+
+    pendiente_style = ParagraphStyle(
+        'FirmaPendiente', parent=styles['Normal'], alignment=TA_CENTER, fontSize=9,
+        fontName='Helvetica-Bold', textColor=colors.HexColor('#b00020'))
+
+    def bloque_firma(titulo, nombre, archivo_firma, fecha_firma, cargo):
+        elements.append(Paragraph(titulo, firma_style))
+
+        imagen = ruta_firma(archivo_firma) if fecha_firma else None
+        dibujada = False
+        if imagen and imagen.exists():
+            try:
+                with PILImage.open(imagen) as img:
+                    ancho, alto = img.size
+                escala = min(4 * cm / ancho, 2 * cm / alto)
+                grafico = Image(str(imagen), width=ancho * escala, height=alto * escala)
+                grafico.hAlign = 'CENTER'
+                elements.append(grafico)
+                dibujada = True
+            except Exception as e:
+                print(f"Error al cargar firma: {e}")
+        if not dibujada:
+            elements.append(Paragraph("_________________________", linea_style))
+
+        elements.append(Paragraph(f"{nombre or 'Pendiente'} ({cargo})", pie_firma_style))
+        if fecha_firma:
+            elements.append(Paragraph(
+                f"Firmado el {fecha_firma.strftime('%d/%m/%Y %H:%M')}", pie_firma_style))
+        else:
+            elements.append(Paragraph("PENDIENTE DE FIRMA", pendiente_style))
+        elements.append(Spacer(1, 0.7 * cm))
+
+    bloque_firma('RECIBE EL MATERIAL',
+                 remito['tecnico_firma_nombre'], remito['tecnico_firma_archivo'],
+                 remito['tecnico_fecha_firma'], 'Técnico')
+    bloque_firma('ENTREGA EL MATERIAL',
+                 remito['soporte_firma_nombre'], remito['soporte_firma_archivo'],
+                 remito['soporte_fecha_firma'], 'Soporte')
+
     # Pie de página
     pie_style = ParagraphStyle(
         'Pie',
@@ -494,7 +479,7 @@ def crear_notificacion(tipo, mensaje, patente=None, elemento=None, destinatario_
     if propia:
         conexion = get_db()
     try:
-        fecha = datetime.now().isoformat()
+        fecha = ahora().isoformat()
         conexion.execute('''
             INSERT INTO notificaciones
                 (tipo, mensaje, patente, elemento, fecha, destinatario_rol, enlace, reporte_id)
@@ -512,87 +497,126 @@ def crear_notificacion(tipo, mensaje, patente=None, elemento=None, destinatario_
         if propia:
             conexion.close()
 
-def crear_seguimiento_remito(reporte_id, patente, elemento, ruta_pdf, conexion=None):
-    """Crea un seguimiento para un remito generado."""
-    propia = conexion is None
-    if propia:
-        conexion = get_db()
-    try:
-        fecha = datetime.now().isoformat()
-        conexion.execute('''
-            INSERT INTO seguimiento_remitos 
-            (reporte_id, patente, elemento, fecha_generacion, estado, ruta_pdf)
-            VALUES (?, ?, ?, ?, 'PENDIENTE_FIRMA', ?)
-        ''', (reporte_id, patente, elemento, fecha, ruta_pdf))
-        if propia:
-            conexion.commit()
-        return True
-    except Exception as e:
-        print(f"Error al crear seguimiento: {e}")
-        if propia:
-            conexion.rollback()
-        raise
-    finally:
-        if propia:
-            conexion.close()
+def datos_remito(conexion, reporte_id):
+    """Fila con todo lo que necesitan el PDF y las pantallas de firma."""
+    return conexion.execute('''
+        SELECT r.id, r.elemento, r.descripcion, r.motivo_reposicion,
+               r.material_entregado, r.creado_por, r.creado_por_id,
+               r.firmado_por_id, r.ruta_remito,
+               r.remito_firmado, r.remito_revisado,
+               r.firma_tecnico, r.fecha_firma,
+               r.firma_soporte, r.fecha_firma_soporte,
+               c.patente, a.zona, a.camioneta_id,
+               u.nombre AS tecnico_nombre,
+               sr.fecha_generacion, sr.estado AS estado_remito,
+               soporte.firma AS soporte_firma_archivo,
+               firmante.firma AS tecnico_firma_archivo
+        FROM reportes r
+        LEFT JOIN controles co ON r.control_id = co.id
+        LEFT JOIN asignaciones a ON co.asignacion_id = a.id
+        LEFT JOIN camionetas c ON a.camioneta_id = c.id
+        LEFT JOIN usuarios u ON a.tecnico_id = u.id
+        LEFT JOIN usuarios soporte ON r.creado_por_id = soporte.id
+        LEFT JOIN usuarios firmante ON r.firmado_por_id = firmante.id
+        LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = r.id
+        WHERE r.id = ?
+    ''', (reporte_id,)).fetchone()
 
-def firmar_remito(reporte_id, tecnico_nombre, conexion=None):
-    """Marca un remito como firmado por el técnico y avanza su seguimiento."""
-    propia = conexion is None
-    if propia:
-        conexion = get_db()
-    try:
-        fecha = datetime.now().isoformat()
-        conexion.execute('''
-            UPDATE reportes 
-            SET remito_firmado = 1, firma_tecnico = ?, fecha_firma = ?
-            WHERE id = ?
-        ''', (tecnico_nombre, fecha, reporte_id))
-        conexion.execute('''
-            UPDATE seguimiento_remitos
-            SET estado = 'FIRMADO', fecha_firma = ?, tecnico_firma = ?
-            WHERE reporte_id = ?
-        ''', (fecha, tecnico_nombre, reporte_id))
-        if propia:
-            conexion.commit()
-        return True
-    except Exception as e:
-        print(f"Error al firmar remito: {e}")
-        if propia:
-            conexion.rollback()
-        raise
-    finally:
-        if propia:
-            conexion.close()
 
-def revisar_remito(reporte_id, admin_nombre, conexion=None):
-    """Marca un remito como revisado por el administrador y cierra su seguimiento."""
-    propia = conexion is None
-    if propia:
-        conexion = get_db()
+def _a_fecha(valor):
     try:
-        fecha = datetime.now().isoformat()
-        conexion.execute('''
-            UPDATE reportes 
-            SET remito_revisado = 1
-            WHERE id = ?
-        ''', (reporte_id,))
-        conexion.execute('''
-            UPDATE seguimiento_remitos
-            SET estado = 'REVISADO', fecha_revision = ?, admin_revision = ?
-            WHERE reporte_id = ?
-        ''', (fecha, admin_nombre, reporte_id))
-        if propia:
-            conexion.commit()
-        return True
-    except Exception as e:
-        print(f"Error al revisar remito: {e}")
-        if propia:
-            conexion.rollback()
-        raise
-    finally:
-        if propia:
-            conexion.close()
+        return datetime.fromisoformat(valor) if valor else None
+    except (ValueError, TypeError):
+        return None
+
+
+def escribir_pdf_remito(fila, ruta_pdf):
+    """Vuelca la fila de datos_remito() al PDF, con el estado actual de firmas."""
+    generar_pdf_remito({
+        'id': fila['id'],
+        'patente': fila['patente'],
+        'zona': fila['zona'],
+        'tecnico_nombre': fila['tecnico_nombre'],
+        'elemento': fila['elemento'],
+        'material_entregado': fila['material_entregado'],
+        'motivo': fila['motivo_reposicion'],
+        'descripcion': fila['descripcion'],
+        'creador_nombre': fila['creado_por'],
+        'fecha_generacion': _a_fecha(fila['fecha_generacion']) or ahora(),
+        'tecnico_firma_nombre': fila['firma_tecnico'],
+        'tecnico_firma_archivo': fila['tecnico_firma_archivo'],
+        'tecnico_fecha_firma': _a_fecha(fila['fecha_firma']),
+        'soporte_firma_nombre': fila['firma_soporte'],
+        'soporte_firma_archivo': fila['soporte_firma_archivo'],
+        'soporte_fecha_firma': _a_fecha(fila['fecha_firma_soporte']),
+    }, ruta_pdf)
+
+
+def crear_seguimiento_remito(conexion, reporte_id, patente, elemento, ruta_pdf):
+    """Arranca el circuito del remito: primero lo firma el técnico."""
+    conexion.execute('''
+        INSERT INTO seguimiento_remitos
+        (reporte_id, patente, elemento, fecha_generacion, estado, ruta_pdf)
+        VALUES (?, ?, ?, ?, 'PENDIENTE_FIRMA_TECNICO', ?)
+    ''', (reporte_id, patente, elemento, ahora().isoformat(), str(ruta_pdf)))
+
+
+def firmar_remito_tecnico_db(conexion, reporte_id, tecnico_id, tecnico_nombre):
+    """El técnico que recibe el material firma; queda a la espera de soporte."""
+    fecha = ahora().isoformat()
+    conexion.execute('''
+        UPDATE reportes
+        SET remito_firmado = 1, firma_tecnico = ?, firmado_por_id = ?, fecha_firma = ?
+        WHERE id = ?
+    ''', (tecnico_nombre, tecnico_id, fecha, reporte_id))
+    conexion.execute('''
+        UPDATE seguimiento_remitos
+        SET estado = 'PENDIENTE_FIRMA_SOPORTE', fecha_firma = ?, tecnico_firma = ?
+        WHERE reporte_id = ?
+    ''', (fecha, tecnico_nombre, reporte_id))
+
+
+def firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre):
+    """Firma de quien entregó el material: cierra el remito."""
+    fecha = ahora().isoformat()
+    conexion.execute('''
+        UPDATE reportes
+        SET remito_revisado = 1, firma_soporte = ?, fecha_firma_soporte = ?,
+            estado = 'RESUELTO', fecha_resolucion = ?, resuelto_por = ?
+        WHERE id = ?
+    ''', (soporte_nombre, fecha, fecha, soporte_nombre, reporte_id))
+    conexion.execute('''
+        UPDATE seguimiento_remitos
+        SET estado = 'FINALIZADO', fecha_revision = ?, admin_revision = ?
+        WHERE reporte_id = ?
+    ''', (fecha, soporte_nombre, reporte_id))
+
+
+def desbloquear_elemento(conexion, camioneta_id, elemento):
+    """Libera el elemento de la camioneta una vez cerrado el remito."""
+    if camioneta_id is None:
+        return
+    conexion.execute('''
+        UPDATE elementos_bloqueados
+        SET resuelto = 1, fecha_resolucion = ?
+        WHERE camioneta_id = ? AND elemento = ? AND resuelto = 0
+    ''', (ahora().isoformat(), camioneta_id, elemento))
+
+
+def remitos_pendientes_de(conexion, camioneta_id):
+    """Remitos que el técnico a cargo de esta camioneta todavía tiene que firmar."""
+    return [dict(f) for f in conexion.execute('''
+        SELECT r.id, r.elemento, r.material_entregado, r.motivo_reposicion,
+               r.creado_por, r.descripcion,
+               sr.fecha_generacion, sr.estado, sr.ruta_pdf
+        FROM reportes r
+        JOIN seguimiento_remitos sr ON sr.reporte_id = r.id
+        JOIN controles co ON r.control_id = co.id
+        JOIN asignaciones a ON co.asignacion_id = a.id
+        WHERE a.camioneta_id = ? AND sr.estado = 'PENDIENTE_FIRMA_TECNICO'
+        ORDER BY sr.fecha_generacion
+    ''', (camioneta_id,))]
+
 
 def obtener_notificaciones(rol=None):
     """Obtiene notificaciones para un rol específico"""
@@ -621,7 +645,7 @@ def marcar_notificacion_leida(notificacion_id):
     """Marca una notificación como leída"""
     conexion = get_db()
     try:
-        fecha = datetime.now().isoformat()
+        fecha = ahora().isoformat()
         conexion.execute('''
             UPDATE notificaciones 
             SET leido = 1, fecha_lectura = ?
@@ -644,7 +668,7 @@ def marcar_notificacion_leida(notificacion_id):
 @app.template_filter('timestamp_to_datetime')
 def timestamp_to_datetime(timestamp):
     if timestamp:
-        return datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y %H:%M')
+        return datetime.fromtimestamp(timestamp, TZ_LOCAL).strftime('%d/%m/%Y %H:%M')
     return '-'
 
 @app.template_filter('nombre_firma')
@@ -667,6 +691,21 @@ def limpiar_redirecciones():
             return redirect(url_for('jefe'))
         if rol == 'tecnico' and request.path in ['/admin', '/jefe']:
             return redirect(url_for('tecnico'))
+
+
+@app.after_request
+def no_guardar_en_cache(respuesta):
+    """Evita que el botón "atrás" muestre una pantalla de una sesión cerrada.
+
+    Sin esto el navegador reusaba la copia en caché y el usuario volvía a ver
+    (y operar sobre) el panel después de hacer logout.
+    """
+    if request.endpoint != 'static':
+        respuesta.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        respuesta.headers['Pragma'] = 'no-cache'
+        respuesta.headers['Expires'] = '0'
+    return respuesta
+
 
 def conectar_db():
     # timeout: si otro proceso está escribiendo, espera en vez de fallar al instante.
@@ -697,7 +736,8 @@ def crear_base_de_datos():
         fecha_generacion TEXT NOT NULL,
         fecha_firma TEXT,
         fecha_revision TEXT,
-        estado TEXT DEFAULT 'PENDIENTE_FIRMA',  -- 'PENDIENTE_FIRMA', 'FIRMADO', 'REVISADO', 'CERRADO'
+        estado TEXT DEFAULT 'PENDIENTE_FIRMA_TECNICO',
+        -- PENDIENTE_FIRMA_TECNICO -> PENDIENTE_FIRMA_SOPORTE -> FINALIZADO
         tecnico_firma TEXT,
         admin_revision TEXT,
         observaciones TEXT,
@@ -890,11 +930,17 @@ def crear_base_de_datos():
         recibido_por TEXT,
         fecha_entrega TEXT,
         motivo_reposicion TEXT,
+        material_entregado TEXT,
+        creado_por TEXT,
+        creado_por_id INTEGER,
+        firmado_por_id INTEGER,
         ruta_remito TEXT,
         remito_firmado INTEGER DEFAULT 0,
         remito_revisado INTEGER DEFAULT 0,
         firma_tecnico TEXT,
         fecha_firma TEXT,
+        firma_soporte TEXT,
+        fecha_firma_soporte TEXT,
         FOREIGN KEY (control_id) REFERENCES controles(id)
     )
 ''')
@@ -930,11 +976,17 @@ def aplicar_migraciones(conexion):
         ],
         'reportes': [
             ('motivo_reposicion', 'TEXT'),
+            ('material_entregado', 'TEXT'),
+            ('creado_por', 'TEXT'),
+            ('creado_por_id', 'INTEGER'),
+            ('firmado_por_id', 'INTEGER'),
             ('ruta_remito', 'TEXT'),
             ('remito_firmado', 'INTEGER DEFAULT 0'),
             ('remito_revisado', 'INTEGER DEFAULT 0'),
             ('firma_tecnico', 'TEXT'),
             ('fecha_firma', 'TEXT'),
+            ('firma_soporte', 'TEXT'),
+            ('fecha_firma_soporte', 'TEXT'),
             ('entregado_por', 'TEXT'),
             ('recibido_por', 'TEXT'),
             ('fecha_entrega', 'TEXT'),
@@ -972,6 +1024,17 @@ def aplicar_migraciones(conexion):
     ]
     for nombre, definicion in indices:
         cursor.execute(f'CREATE INDEX IF NOT EXISTS {nombre} ON {definicion}')
+
+    # Estados del seguimiento renombrados al ciclo de doble firma.
+    cursor.execute('''
+        UPDATE seguimiento_remitos SET estado = CASE estado
+            WHEN 'PENDIENTE_FIRMA' THEN 'PENDIENTE_FIRMA_TECNICO'
+            WHEN 'FIRMADO' THEN 'PENDIENTE_FIRMA_SOPORTE'
+            WHEN 'REVISADO' THEN 'FINALIZADO'
+            WHEN 'CERRADO' THEN 'FINALIZADO'
+            ELSE estado END
+        WHERE estado IN ('PENDIENTE_FIRMA', 'FIRMADO', 'REVISADO', 'CERRADO')
+    ''')
 
     # Una asignación por camioneta/fecha/jornada: el código ya lo asume al hacer
     # "buscar y si existe actualizar", pero nada lo garantizaba a nivel base.
@@ -1105,7 +1168,7 @@ def dias_desde(fecha_iso):
     if not fecha_iso:
         return None
     try:
-        return (datetime.now() - datetime.fromisoformat(fecha_iso)).days
+        return (ahora() - datetime.fromisoformat(fecha_iso)).days
     except (ValueError, TypeError):
         return None
 
@@ -1157,7 +1220,7 @@ def admin_firma():
                 try:
                     extension = archivo.filename.rsplit('.', 1)[1].lower()
                     filename = secure_filename(
-                        f"firma_{usuario_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.{extension}")
+                        f"firma_{usuario_id}_{ahora().strftime('%Y%m%d%H%M%S')}.{extension}")
                     ruta_completa = UPLOAD_FOLDER / filename
                     archivo.save(str(ruta_completa))
                     
@@ -1315,40 +1378,49 @@ def jefe_estadisticas():
 # la semana la retira una vez al empezar y la devuelve al final, sin repetir el
 # control en cada cambio de turno.
 
+def _slot_vecino(fecha, jornada, hacia_adelante):
+    """(fecha, jornada) del turno laborable inmediatamente anterior o siguiente."""
+    paso = 1 if hacia_adelante else -1
+    indice = orden_jornada(jornada)
+    dia = fecha
+    for _ in range(30):  # tope de seguridad: cubre feriados largos sin colgarse
+        indice += paso
+        if indice < 0:
+            dia -= timedelta(days=1)
+            indice = len(JORNADAS) - 1
+        elif indice >= len(JORNADAS):
+            dia += timedelta(days=1)
+            indice = 0
+        if jornada_laborable(JORNADAS[indice], dia):
+            return dia, JORNADAS[indice]
+    return None, None
+
+
 def _asignacion_vecina(conexion, asignacion, hacia_adelante):
-    """Asignación anterior o siguiente de la misma camioneta, en orden cronológico.
+    """Asignación de la misma camioneta en el turno laborable contiguo.
 
-    Solo se consideran las que caen dentro de DIAS_CONTINUIDAD: si la camioneta
-    no vuelve a salir hasta dentro de dos semanas, corresponde devolverla.
+    Devuelve None también cuando ese turno existe pero no tiene a nadie
+    asignado. Ese hueco corta la cadena de responsabilidad: nadie garantiza
+    quién usó la camioneta mientras tanto, así que hay que devolverla al
+    terminar y volver a retirarla después.
     """
-    fecha = asignacion['fecha']
-    jornada = asignacion['jornada']
-    orden = orden_jornada(jornada)
-
     try:
-        fecha_dt = datetime.strptime(fecha, '%Y-%m-%d')
+        fecha_dt = datetime.strptime(asignacion['fecha'], '%Y-%m-%d')
     except (ValueError, TypeError):
         return None
 
-    limite = fecha_dt + timedelta(days=DIAS_CONTINUIDAD if hacia_adelante else -DIAS_CONTINUIDAD)
-    comparador = '>' if hacia_adelante else '<'
-    orden_sql = 'ASC' if hacia_adelante else 'DESC'
-    rango = ('a.fecha <= ?', 'a.fecha >= ?')[not hacia_adelante]
+    fecha_vecina, jornada_vecina = _slot_vecino(
+        fecha_dt, asignacion['jornada'], hacia_adelante)
+    if fecha_vecina is None:
+        return None
 
-    return conexion.execute(f'''
+    return conexion.execute('''
         SELECT a.id, a.camioneta_id, a.fecha, a.jornada, a.tecnico_id, a.zona
         FROM asignaciones a
-        WHERE a.camioneta_id = ?
+        WHERE a.camioneta_id = ? AND a.fecha = ? AND a.jornada = ?
           AND a.tecnico_id IS NOT NULL
-          AND {rango}
-          AND (
-                a.fecha {comparador} ?
-                OR (a.fecha = ? AND (CASE a.jornada WHEN 'mañana' THEN 0 ELSE 1 END) {comparador} ?)
-              )
-        ORDER BY a.fecha {orden_sql},
-                 (CASE a.jornada WHEN 'mañana' THEN 0 ELSE 1 END) {orden_sql}
-        LIMIT 1
-    ''', (asignacion['camioneta_id'], limite.strftime('%Y-%m-%d'), fecha, fecha, orden)).fetchone()
+    ''', (asignacion['camioneta_id'], fecha_vecina.strftime('%Y-%m-%d'),
+          jornada_vecina)).fetchone()
 
 
 def requiere_retiro(conexion, asignacion):
@@ -1382,19 +1454,67 @@ def turno_de_retiro(conexion, asignacion):
     return actual
 
 
+def retiro_abierto(conexion, camioneta_id):
+    """Retiro hecho sobre esta camioneta que todavía no tiene su devolución.
+
+    Mientras exista, la camioneta es responsabilidad de ese técnico: nadie más
+    puede retirarla ni devolverla hasta que él la entregue revisada.
+    """
+    retiro = conexion.execute('''
+        SELECT ct.fecha, ct.jornada, a.id AS asignacion_id, a.tecnico_id,
+               u.nombre AS tecnico_nombre
+        FROM controles_tecnicos ct
+        JOIN asignaciones a ON ct.asignacion_id = a.id
+        JOIN usuarios u ON a.tecnico_id = u.id
+        WHERE a.camioneta_id = ? AND ct.tipo_control = 'RETIRO' AND ct.finalizado = 1
+        ORDER BY ct.fecha DESC,
+                 (CASE ct.jornada WHEN 'mañana' THEN 0 ELSE 1 END) DESC
+        LIMIT 1
+    ''', (camioneta_id,)).fetchone()
+
+    if retiro is None:
+        return None
+
+    # La devolución se registra en el último turno de la racha, que no es el
+    # mismo en el que se hizo el retiro: se busca por camioneta desde esa fecha.
+    devuelta = conexion.execute('''
+        SELECT ct.id
+        FROM controles_tecnicos ct
+        JOIN asignaciones a ON ct.asignacion_id = a.id
+        WHERE a.camioneta_id = ? AND ct.tipo_control = 'DEVOLUCION' AND ct.finalizado = 1
+          AND (ct.fecha > ?
+               OR (ct.fecha = ?
+                   AND (CASE ct.jornada WHEN 'mañana' THEN 0 ELSE 1 END) >= ?))
+        LIMIT 1
+    ''', (camioneta_id, retiro['fecha'], retiro['fecha'],
+          orden_jornada(retiro['jornada']))).fetchone()
+
+    return None if devuelta else retiro
+
+
 # ============================================
 # CONTROLES NO REALIZADOS
 # ============================================
 
+def vencimiento_retiro(inicio, fin):
+    """Desde cuándo un retiro sin hacer cuenta como pendiente: media jornada.
+
+    Arrancar el turno sin haber retirado la camioneta es normal (muchas veces
+    el retiro se hace más tarde), así que recién se reclama pasada la mitad
+    del turno.
+    """
+    return inicio + (fin - inicio) / 2
+
+
 def controles_pendientes(conexion, momento=None, dias_atras=2):
     """Asignaciones cuyo control debería estar hecho y no lo está.
 
-    Se reclama el RETIRO una hora después de que arranca el turno, y la
-    DEVOLUCIÓN una hora después de que termina. Solo se listan los controles
-    que realmente corresponden: quien conserva la camioneta entre turnos no
-    tiene que retirarla ni devolverla de nuevo.
+    Se reclama el RETIRO pasada la mitad del turno, y la DEVOLUCIÓN una hora
+    después de que termina. Solo se listan los controles que realmente
+    corresponden: quien conserva la camioneta entre turnos no tiene que
+    retirarla ni devolverla de nuevo.
     """
-    momento = momento or datetime.now()
+    momento = momento or ahora()
     desde = (momento - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
     hasta = momento.strftime('%Y-%m-%d')
 
@@ -1438,12 +1558,13 @@ def controles_pendientes(conexion, momento=None, dias_atras=2):
             'zona': asignacion['zona'] or '',
         }
 
+        vence_retiro = vencimiento_retiro(inicio, fin)
         if (requiere_retiro(conexion, asignacion)
                 and 'RETIRO' not in hechos
-                and momento > inicio + MARGEN_CONTROL):
+                and momento > vence_retiro):
             pendientes.append({**base, 'tipo': 'RETIRO',
-                               'vencido_desde': inicio + MARGEN_CONTROL,
-                               'horas': int((momento - inicio - MARGEN_CONTROL).total_seconds() // 3600)})
+                               'vencido_desde': vence_retiro,
+                               'horas': int((momento - vence_retiro).total_seconds() // 3600)})
 
         if (requiere_devolucion(conexion, asignacion)
                 and 'DEVOLUCION' not in hechos
@@ -1550,9 +1671,9 @@ def admin():
     if 'usuario_id' not in session or session.get('rol') != 'admin':
         return redirect(url_for('login'))
     
-    fecha_seleccionada = request.args.get('fecha', datetime.now().strftime('%Y-%m-%d'))
+    fecha_seleccionada = request.args.get('fecha', ahora().strftime('%Y-%m-%d'))
     jornada_seleccionada = request.args.get('jornada', 'mañana')
-    fecha_actual = datetime.now().strftime('%d/%m/%Y')
+    fecha_actual = ahora().strftime('%d/%m/%Y')
     
     conexion = get_db()
     
@@ -1753,7 +1874,7 @@ def asignacion_semanal():
     jornada = request.args.get('jornada', 'mañana')
     if not jornada_valida(jornada):
         jornada = 'mañana'
-    fecha_inicio = request.args.get('fecha_inicio', datetime.now().strftime('%Y-%m-%d'))
+    fecha_inicio = request.args.get('fecha_inicio', ahora().strftime('%Y-%m-%d'))
     
     dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
     
@@ -1761,7 +1882,7 @@ def asignacion_semanal():
     try:
         fecha_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
     except ValueError:
-        fecha_dt = datetime.now()
+        fecha_dt = ahora()
         fecha_inicio = fecha_dt.strftime('%Y-%m-%d')
     inicio_semana = fecha_dt - timedelta(days=fecha_dt.weekday())
     fechas_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
@@ -1817,7 +1938,7 @@ def guardar_semana():
     
     fechas = request.form.getlist('fechas[]')
     jornada = request.form.get('jornada', 'mañana')
-    fecha_inicio = fechas[0] if fechas else datetime.now().strftime('%Y-%m-%d')
+    fecha_inicio = fechas[0] if fechas else ahora().strftime('%Y-%m-%d')
     
     if not jornada_valida(jornada):
         return redirect(url_for('asignacion_semanal', error='Jornada inválida'))
@@ -1891,8 +2012,8 @@ def tecnico():
         return redirect(url_for('login'))
     
     usuario_id = session['usuario_id']
-    ahora = datetime.now()
-    fecha_actual = ahora.strftime('%Y-%m-%d')
+    momento = ahora()
+    fecha_actual = momento.strftime('%Y-%m-%d')
     
     conexion = get_db()
     
@@ -1900,8 +2021,8 @@ def tecnico():
     # Si el técnico solo tiene una de las dos, se usa esa: en el solapamiento de
     # 14:30 a 14:45 no hay que hacerlo elegir.
     asignacion = None
-    jornada_actual_tecnico = jornada_actual(ahora)
-    candidatas = jornadas_activas(ahora) or [jornada_actual_tecnico]
+    jornada_actual_tecnico = jornada_actual(momento)
+    candidatas = jornadas_activas(momento) or [jornada_actual_tecnico]
     
     for jornada in candidatas:
         asignacion = conexion.execute('''
@@ -1938,7 +2059,13 @@ def tecnico():
     jornada_retiro = jornada_actual_tecnico
     retiro_en_otro_turno = False
     
+    bloqueada_por = None
+
     if asignacion:
+        abierto = retiro_abierto(conexion, asignacion['camioneta_id'])
+        if abierto is not None and abierto['tecnico_id'] != usuario_id:
+            bloqueada_por = abierto['tecnico_nombre']
+
         es_guardia = (asignacion['zona'] or '').strip().upper() == ZONA_GUARDIA
         necesita_retiro = requiere_retiro(conexion, asignacion)
         necesita_devolucion = requiere_devolucion(conexion, asignacion)
@@ -1976,14 +2103,18 @@ def tecnico():
     retiro_pendiente = bool(asignacion) and not retiro_completado
     
     elementos_bloqueados = []
+    remitos_pendientes = []
     if asignacion:
         bloqueados = conexion.execute('''
             SELECT elemento, tipo, motivo, fecha_bloqueo
-            FROM elementos_bloqueados 
+            FROM elementos_bloqueados
             WHERE camioneta_id = ? AND resuelto = 0
             ORDER BY elemento
         ''', (asignacion['camioneta_id'],)).fetchall()
         elementos_bloqueados = [dict(b) for b in bloqueados]
+        # Firma quien está a cargo de la camioneta, no el acompañante.
+        if es_responsable:
+            remitos_pendientes = remitos_pendientes_de(conexion, asignacion['camioneta_id'])
     
     conexion.close()
     
@@ -2003,7 +2134,9 @@ def tecnico():
                          retiro_en_otro_turno=retiro_en_otro_turno,
                          conserva_camioneta=conserva_camioneta,
                          es_guardia=es_guardia,
+                         bloqueada_por=bloqueada_por,
                          elementos_bloqueados=elementos_bloqueados,
+                         remitos_pendientes=remitos_pendientes,
                          fecha_actual=fecha_actual,
                          jornada_actual=jornada_actual_tecnico,
                          mensaje=request.args.get('mensaje', ''),
@@ -2042,7 +2175,7 @@ def iniciar_control():
     if not jornada_valida(jornada):
         return redirect(url_for('tecnico', error='Jornada inválida'))
     
-    fecha_hora = datetime.now().isoformat()
+    fecha_hora = ahora().isoformat()
     
     conexion = get_db()
     
@@ -2079,30 +2212,21 @@ def iniciar_control():
             return redirect(url_for('tecnico',
                 error=f'El control de {tipo_control.lower()} de este turno ya fue realizado.'))
         
+        # Una camioneta retirada queda a nombre de quien la retiró hasta que la
+        # devuelva: ningún otro técnico puede retirarla ni devolverla.
+        abierto = retiro_abierto(conexion, asignacion['camioneta_id'])
+        if abierto is not None and abierto['tecnico_id'] != usuario_id:
+            return redirect(url_for('tecnico',
+                error=f'🔒 {abierto["tecnico_nombre"]} tiene esta camioneta retirada y '
+                      'todavía no la devolvió. Hasta que haga la devolución es su '
+                      'responsabilidad: avisá a soporte técnico.'))
+
         if tipo_control == 'RETIRO':
             if not requiere_retiro(conexion, asignacion):
                 return redirect(url_for('tecnico',
                     error='⚠️ Ya tenés esta camioneta desde el turno anterior. '
                           'No hace falta un nuevo retiro.'))
-            
-            # Hasta que el responsable anterior no devuelva, no se habilita el
-            # retiro del siguiente.
-            anterior = _asignacion_vecina(conexion, asignacion, hacia_adelante=False)
-            if anterior is not None and anterior['tecnico_id'] != usuario_id:
-                devuelta = conexion.execute('''
-                    SELECT id FROM controles_tecnicos
-                    WHERE asignacion_id = ? AND tipo_control = 'DEVOLUCION' AND finalizado = 1
-                ''', (anterior['id'],)).fetchone()
-                
-                if not devuelta:
-                    responsable = conexion.execute(
-                        'SELECT nombre FROM usuarios WHERE id = ?',
-                        (anterior['tecnico_id'],)).fetchone()
-                    nombre = responsable['nombre'] if responsable else 'el turno anterior'
-                    return redirect(url_for('tecnico',
-                        error=f'⚠️ {nombre} todavía no hizo la devolución de esta camioneta. '
-                              'Avisá a soporte técnico antes de retirarla.'))
-        
+
         if tipo_control == 'DEVOLUCION':
             if not requiere_devolucion(conexion, asignacion):
                 return redirect(url_for('tecnico',
@@ -2230,7 +2354,7 @@ def finalizar_control(control_id):
             conexion.close()
             return redirect(url_for('tecnico', error='Este control ya fue finalizado'))
         
-        fecha_hora = datetime.now().isoformat()
+        fecha_hora = ahora().isoformat()
         conexion.execute('''
             UPDATE controles_tecnicos 
             SET finalizado = 1, fecha_hora_fin = ?
@@ -2270,7 +2394,7 @@ def guardar_control_rapido():
     cursor = conexion.cursor()
     
     try:
-        fecha_hora = datetime.now().isoformat()
+        fecha_hora = ahora().isoformat()
         
         info = control_del_tecnico(conexion, control_id, session['usuario_id'])
         
@@ -2430,7 +2554,7 @@ def guardar_control_rapido():
                         JOIN asignaciones a ON c.asignacion_id = a.id
                         WHERE a.camioneta_id = ?
                       )
-            ''', (datetime.now().strftime('%Y-%m-%d %H:%M'),
+            ''', (ahora().strftime('%Y-%m-%d %H:%M'),
                   f'{tecnico_nombre} (técnico)', observacion, elemento, camioneta_id))
 
             crear_notificacion(
@@ -2469,7 +2593,7 @@ def jefe():
     if 'usuario_id' not in session or session.get('rol') != 'jefe':
         return redirect(url_for('login'))
     
-    fecha_actual = datetime.now().strftime('%d/%m/%Y')
+    fecha_actual = ahora().strftime('%d/%m/%Y')
     conexion = get_db()
     
     try:
@@ -2648,75 +2772,6 @@ def historial_camioneta(patente):
 # RUTAS DE REPORTES Y REMITOS
 # ============================================
 
-@app.route('/resolver-reporte/<int:reporte_id>', methods=['POST'])
-def resolver_reporte(reporte_id):
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
-        return jsonify({'success': False, 'error': 'No autorizado'}), 401
-    
-    nombre_admin = session.get('nombre', 'Administrador')
-    
-    data = request.get_json(silent=True) or {}
-    comentario = (data.get('comentario') or '').strip()
-    
-    conexion = get_db()
-    try:
-        ahora = datetime.now().strftime('%Y-%m-%d %H:%M')
-        ahora_iso = datetime.now().isoformat()
-        
-        reporte = conexion.execute('''
-            SELECT r.id, r.elemento, r.control_id, r.tipo, r.estado,
-                   a.camioneta_id
-            FROM reportes r
-            LEFT JOIN controles co ON r.control_id = co.id
-            LEFT JOIN asignaciones a ON co.asignacion_id = a.id
-            WHERE r.id = ?
-        ''', (reporte_id,)).fetchone()
-        
-        if not reporte:
-            return jsonify({'success': False, 'error': 'Reporte no encontrado'}), 404
-        
-        if reporte['estado'] == 'RESUELTO':
-            return jsonify({'success': False, 'error': 'Este reporte ya fue resuelto'}), 400
-        
-        cursor = conexion.cursor()
-        cursor.execute('''
-            UPDATE reportes 
-            SET estado = 'RESUELTO', 
-                fecha_resolucion = ?, 
-                resuelto_por = ?, 
-                comentario_resolucion = ?
-            WHERE id = ?
-        ''', (ahora, nombre_admin, comentario, reporte_id))
-        
-        elemento_bloqueado = None
-        if reporte['camioneta_id'] is not None:
-            elemento_bloqueado = cursor.execute('''
-                SELECT id FROM elementos_bloqueados 
-                WHERE elemento = ? AND camioneta_id = ? AND resuelto = 0
-            ''', (reporte['elemento'], reporte['camioneta_id'])).fetchone()
-        
-        if elemento_bloqueado:
-            cursor.execute('''
-                UPDATE elementos_bloqueados 
-                SET resuelto = 1, fecha_resolucion = ?
-                WHERE id = ?
-            ''', (ahora_iso, elemento_bloqueado['id']))
-        
-        conexion.commit()
-        
-        return jsonify({
-            'success': True, 
-            'fecha_resolucion': ahora,
-            'mensaje': f'✅ Reporte resuelto y elemento "{reporte["elemento"]}" desbloqueado'
-        })
-        
-    except Exception as e:
-        conexion.rollback()
-        print(f"❌ Error al resolver reporte: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        conexion.close()
-
 @app.route('/comentar-reporte/<int:reporte_id>', methods=['POST'])
 def comentar_reporte(reporte_id):
     if 'usuario_id' not in session or session.get('rol') != 'admin':
@@ -2750,95 +2805,99 @@ def comentar_reporte(reporte_id):
 
 @app.route('/generar-remito/<int:reporte_id>', methods=['POST'])
 def generar_remito_pdf(reporte_id):
-    """Genera un remito en PDF con la firma del administrador"""
+    """Soporte crea el remito cuando ya tiene el material en su poder."""
     if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
-    
-    admin_nombre = session.get('nombre', 'Administrador')
-    admin_id = session.get('usuario_id')
+
+    creador_nombre = session.get('nombre', 'Soporte')
+    creador_id = session.get('usuario_id')
 
     datos = request.get_json(silent=True) or {}
     motivo = (datos.get('motivo') or '').strip().upper()
+    material = (datos.get('material_entregado') or '').strip()
+
     if motivo not in MOTIVOS_REPOSICION:
         return jsonify({
             'success': False,
             'error': 'Indicá el motivo de la reposición: rotura o pérdida.'
         }), 400
 
+    if not material:
+        return jsonify({
+            'success': False,
+            'error': 'Indicá qué material se entrega.'
+        }), 400
+
     conexion = get_db()
     try:
         reporte = conexion.execute('''
-            SELECT r.id, r.elemento, r.descripcion, r.estado, r.fecha_hora,
-                   c.patente, u.nombre as tecnico_nombre, a.zona
+            SELECT r.id, c.patente
             FROM reportes r
             LEFT JOIN controles co ON r.control_id = co.id
             LEFT JOIN asignaciones a ON co.asignacion_id = a.id
             LEFT JOIN camionetas c ON a.camioneta_id = c.id
-            LEFT JOIN usuarios u ON a.tecnico_id = u.id
             WHERE r.id = ? AND r.estado = 'FALTANTE'
         ''', (reporte_id,)).fetchone()
-        
+
         if not reporte:
             return jsonify({'success': False, 'error': 'Reporte no encontrado o ya resuelto'}), 404
-        
-        # Verificar si ya tiene seguimiento
-        seguimiento = conexion.execute('''
-            SELECT id FROM seguimiento_remitos WHERE reporte_id = ?
-        ''', (reporte_id,)).fetchone()
-        
-        if seguimiento:
+
+        if conexion.execute('SELECT id FROM seguimiento_remitos WHERE reporte_id = ?',
+                            (reporte_id,)).fetchone():
             return jsonify({'success': False, 'error': 'Este remito ya fue generado'}), 400
-        
-        admin_info = conexion.execute('SELECT nombre, firma FROM usuarios WHERE id = ?', (admin_id,)).fetchone()
-        admin_firma = admin_info['firma'] if admin_info else None
-        
-        fecha_hora = datetime.now()
+
+        fecha_hora = ahora()
         fecha_str = fecha_hora.strftime('%Y-%m-%d')
         hora_str = fecha_hora.strftime('%H-%M-%S')
-        
-        carpeta_destino = crear_carpeta_remitos(reporte['patente'], fecha_str)
-        nombre_archivo = f"{reporte['patente']}_{fecha_str}_{hora_str}_{reporte['elemento'].replace(' ', '_')}.pdf"
+
+        conexion.execute('''
+            UPDATE reportes
+            SET motivo_reposicion = ?, material_entregado = ?,
+                creado_por = ?, creado_por_id = ?
+            WHERE id = ?
+        ''', (motivo, material, creador_nombre, creador_id, reporte_id))
+
+        fila = datos_remito(conexion, reporte_id)
+
+        carpeta_destino = crear_carpeta_remitos(fila['patente'], fecha_str)
+        nombre_archivo = (f"{fila['patente']}_{fecha_str}_{hora_str}_"
+                          f"{fila['elemento'].replace(' ', '_')}.pdf")
         ruta_pdf = carpeta_destino / nombre_archivo
-        
-        generar_pdf_remito(reporte, admin_nombre, admin_firma, fecha_hora, ruta_pdf,
-                           motivo=motivo)
-        
-        cursor = conexion.cursor()
-        cursor.execute('''
-            UPDATE reportes SET ruta_remito = ?, motivo_reposicion = ? WHERE id = ?
-        ''', (str(ruta_pdf), motivo, reporte_id))
-        
+
+        # El seguimiento todavía no existe, así que la fecha del PDF es la de ahora.
+        datos_pdf = dict(fila)
+        datos_pdf['fecha_generacion'] = fecha_hora.isoformat()
+        escribir_pdf_remito(datos_pdf, ruta_pdf)
+
+        conexion.execute('UPDATE reportes SET ruta_remito = ? WHERE id = ?',
+                         (str(ruta_pdf), reporte_id))
+
         # Seguimiento y notificación van sobre la MISMA conexión/transacción.
         # Con una conexión aparte, SQLite devolvía 'database is locked' y ambos
-        # se perdían en silencio: el técnico nunca veía el remito para firmar y
-        # el control de duplicados nunca se activaba.
-        crear_seguimiento_remito(
-            reporte_id, reporte['patente'], reporte['elemento'], str(ruta_pdf),
-            conexion=conexion
-        )
-        
+        # se perdían en silencio: el técnico nunca veía el remito para firmar.
+        crear_seguimiento_remito(conexion, reporte_id, fila['patente'],
+                                 fila['elemento'], ruta_pdf)
+
         crear_notificacion(
             'REMITO_PENDIENTE',
-            f'📄 Remito pendiente de firma para la camioneta {reporte["patente"]} - Elemento: {reporte["elemento"]}',
-            reporte['patente'],
-            reporte['elemento'],
+            f'📄 Material pendiente de recibir: {material} para la camioneta '
+            f'{fila["patente"]} (repone {fila["elemento"]})',
+            fila['patente'],
+            fila['elemento'],
             'tecnico',
-            f'/historial-camioneta/{reporte["patente"]}',
+            '/tecnico',
             reporte_id=reporte_id,
             conexion=conexion
         )
-        
+
         conexion.commit()
-        
-        url_pdf = f"/remitos/{reporte['patente']}/{fecha_str[:7]}/{nombre_archivo}"
-        
+
         return jsonify({
             'success': True,
-            'url': url_pdf,
-            'ruta': str(ruta_pdf),
+            'url': f"/remitos/{fila['patente']}/{fecha_str[:7]}/{nombre_archivo}",
             'mensaje': 'Remito generado. Pendiente de firma del técnico.'
         })
-        
+
     except Exception as e:
         conexion.rollback()
         print(f"❌ Error al generar remito: {e}")
@@ -2890,55 +2949,72 @@ def marcar_notificacion(notificacion_id):
 
 @app.route('/firmar-remito/<int:reporte_id>', methods=['POST'])
 def firmar_remito_tecnico(reporte_id):
-    """El técnico firma el remito desde el panel"""
+    """El técnico a cargo de la camioneta firma la recepción del material."""
     if 'usuario_id' not in session or session.get('rol') != 'tecnico':
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
-    
+
+    tecnico_id = session['usuario_id']
     tecnico_nombre = session.get('nombre', 'Técnico')
-    
+
     conexion = get_db()
     try:
-        reporte = conexion.execute('''
-            SELECT r.id, r.remito_firmado, r.estado, c.patente, r.elemento
-            FROM reportes r
-            JOIN controles co ON r.control_id = co.id
-            JOIN asignaciones a ON co.asignacion_id = a.id
-            JOIN camionetas c ON a.camioneta_id = c.id
-            WHERE r.id = ? AND r.estado = 'FALTANTE'
-        ''', (reporte_id,)).fetchone()
-        
-        if not reporte:
-            return jsonify({'success': False, 'error': 'Reporte no encontrado'}), 404
-        
-        if reporte['remito_firmado'] == 1:
-            return jsonify({'success': False, 'error': 'Este remito ya fue firmado'}), 400
-        
-        firmar_remito(reporte_id, tecnico_nombre, conexion=conexion)
-        
+        fila = datos_remito(conexion, reporte_id)
+
+        if not fila or not fila['estado_remito']:
+            return jsonify({'success': False, 'error': 'Remito no encontrado'}), 404
+
+        if fila['estado_remito'] != 'PENDIENTE_FIRMA_TECNICO':
+            return jsonify({
+                'success': False,
+                'error': 'Este remito ya fue firmado por el técnico'
+            }), 400
+
+        # Solo firma quien tiene la camioneta a cargo en este momento.
+        asignado = conexion.execute('''
+            SELECT a.tecnico_id
+            FROM asignaciones a
+            WHERE a.camioneta_id = ? AND a.tecnico_id = ?
+              AND a.fecha >= ? AND a.estado = 'ASIGNADA'
+            LIMIT 1
+        ''', (fila['camioneta_id'], tecnico_id,
+              (ahora() - timedelta(days=1)).strftime('%Y-%m-%d'))).fetchone()
+
+        if not asignado:
+            return jsonify({
+                'success': False,
+                'error': 'Este remito es de una camioneta que no tenés asignada.'
+            }), 403
+
+        firmar_remito_tecnico_db(conexion, reporte_id, tecnico_id, tecnico_nombre)
+
+        if fila['ruta_remito']:
+            escribir_pdf_remito(datos_remito(conexion, reporte_id), Path(fila['ruta_remito']))
+
         crear_notificacion(
             'REMITO_FIRMADO',
-            f'✍️ Remito firmado para revisión - Patente: {reporte["patente"]} - Elemento: {reporte["elemento"]}',
-            reporte['patente'],
-            reporte['elemento'],
+            f'✍️ {tecnico_nombre} recibió {fila["material_entregado"] or fila["elemento"]} '
+            f'({fila["patente"]}). Falta tu firma para cerrar el remito.',
+            fila['patente'],
+            fila['elemento'],
             'admin',
             '/admin/remitos',
             reporte_id=reporte_id,
             conexion=conexion
         )
-        
+
         # Al firmar, la alerta que veía el técnico deja de tener sentido.
         conexion.execute('''
             UPDATE notificaciones
             SET leido = 1, fecha_lectura = ?
             WHERE reporte_id = ? AND tipo = 'REMITO_PENDIENTE' AND leido = 0
-        ''', (datetime.now().isoformat(), reporte_id))
-        
+        ''', (ahora().isoformat(), reporte_id))
+
         conexion.commit()
         return jsonify({
             'success': True,
-            'mensaje': '✅ Remito firmado correctamente. El administrador lo revisará.'
+            'mensaje': '✅ Remito firmado. Queda pendiente la firma de soporte.'
         })
-            
+
     except Exception as e:
         conexion.rollback()
         print(f"❌ Error al firmar remito: {e}")
@@ -2946,62 +3022,107 @@ def firmar_remito_tecnico(reporte_id):
     finally:
         conexion.close()
 
+
 @app.route('/revisar-remito/<int:reporte_id>', methods=['POST'])
 def revisar_remito_admin(reporte_id):
-    """Administrador revisa y cierra el remito firmado"""
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    """Firma de quien entregó el material: cierra el remito y libera el elemento."""
+    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
-    
-    admin_nombre = session.get('nombre', 'Administrador')
-    
+
+    usuario_id = session['usuario_id']
+    soporte_nombre = session.get('nombre', 'Soporte')
+
     conexion = get_db()
     try:
-        reporte = conexion.execute('''
-            SELECT id, elemento, remito_firmado, remito_revisado
-            FROM reportes WHERE id = ?
-        ''', (reporte_id,)).fetchone()
-        
-        if not reporte:
-            return jsonify({'success': False, 'error': 'Reporte no encontrado'}), 404
-        
-        if not reporte['remito_firmado']:
+        fila = datos_remito(conexion, reporte_id)
+
+        if not fila or not fila['estado_remito']:
+            return jsonify({'success': False, 'error': 'Remito no encontrado'}), 404
+
+        if fila['estado_remito'] == 'PENDIENTE_FIRMA_TECNICO':
             return jsonify({
                 'success': False,
-                'error': 'El técnico todavía no firmó este remito'
+                'error': 'El técnico todavía no firmó la recepción del material'
             }), 400
-        
-        if reporte['remito_revisado']:
-            return jsonify({'success': False, 'error': 'Este remito ya fue revisado'}), 400
-        
-        revisar_remito(reporte_id, admin_nombre, conexion=conexion)
-        
+
+        if fila['estado_remito'] == 'FINALIZADO':
+            return jsonify({'success': False, 'error': 'Este remito ya está finalizado'}), 400
+
+        # Firma el que entregó el material, que es quien creó el remito.
+        if fila['creado_por_id'] and fila['creado_por_id'] != usuario_id:
+            return jsonify({
+                'success': False,
+                'error': f'Este remito lo tiene que firmar {fila["creado_por"]}, '
+                         'que fue quien entregó el material.'
+            }), 403
+
+        firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre)
+        desbloquear_elemento(conexion, fila['camioneta_id'], fila['elemento'])
+
+        if fila['ruta_remito']:
+            escribir_pdf_remito(datos_remito(conexion, reporte_id), Path(fila['ruta_remito']))
+
         crear_notificacion(
-            'REMITO_REVISADO',
-            f'✅ Remito de "{reporte["elemento"]}" revisado y cerrado por {admin_nombre}',
-            None,
-            reporte['elemento'],
+            'REMITO_FINALIZADO',
+            f'✅ Remito de "{fila["elemento"]}" finalizado. '
+            f'El elemento quedó habilitado en {fila["patente"]}.',
+            fila['patente'],
+            fila['elemento'],
             'todos',
             None,
             reporte_id=reporte_id,
             conexion=conexion
         )
-        
+
         # Se cierra la alerta de "firmado" que dio origen a esta revisión.
         conexion.execute('''
             UPDATE notificaciones
             SET leido = 1, fecha_lectura = ?
             WHERE reporte_id = ? AND tipo = 'REMITO_FIRMADO' AND leido = 0
-        ''', (datetime.now().isoformat(), reporte_id))
-        
+        ''', (ahora().isoformat(), reporte_id))
+
         conexion.commit()
-        return jsonify({'success': True, 'mensaje': 'Remito revisado y cerrado'})
-    
+        return jsonify({
+            'success': True,
+            'mensaje': f'✅ Remito finalizado. "{fila["elemento"]}" quedó habilitado.'
+        })
+
     except Exception as e:
         conexion.rollback()
-        print(f"❌ Error al revisar remito: {e}")
+        print(f"❌ Error al finalizar remito: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         conexion.close()
+
+
+@app.route('/remito/<int:reporte_id>')
+def ver_remito(reporte_id):
+    """Abre el PDF de un remito a partir del reporte, sin exponer la ruta."""
+    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe', 'tecnico']:
+        return redirect(url_for('login'))
+
+    conexion = get_db()
+    try:
+        fila = conexion.execute(
+            'SELECT ruta_remito FROM reportes WHERE id = ?', (reporte_id,)).fetchone()
+    finally:
+        conexion.close()
+
+    if not fila or not fila['ruta_remito']:
+        return "Remito no encontrado", 404
+
+    remitos_real = REMITOS_DIR.resolve()
+    try:
+        ruta_real = Path(fila['ruta_remito']).resolve()
+        ruta_real.relative_to(remitos_real)
+    except (ValueError, OSError):
+        return "Acceso denegado", 403
+
+    if not ruta_real.is_file():
+        return "Remito no encontrado", 404
+
+    return send_file(ruta_real, as_attachment=False, mimetype='application/pdf')
+
 
 @app.route('/remitos/<path:filename>')
 def servir_remito(filename):
@@ -3034,7 +3155,7 @@ def admin_remitos():
             SELECT sr.reporte_id, sr.patente, sr.elemento, sr.fecha_generacion,
                    sr.estado, sr.fecha_firma, sr.tecnico_firma,
                    sr.fecha_revision, sr.admin_revision, sr.ruta_pdf,
-                   r.motivo_reposicion
+                   r.motivo_reposicion, r.material_entregado
             FROM seguimiento_remitos sr
             LEFT JOIN reportes r ON sr.reporte_id = r.id
             ORDER BY sr.fecha_generacion DESC
@@ -3067,6 +3188,7 @@ def admin_remitos():
                         'elemento': seguimiento.get('elemento', ''),
                         'estado': seguimiento.get('estado', 'SIN_SEGUIMIENTO'),
                         'motivo': MOTIVOS_REPOSICION.get(seguimiento.get('motivo_reposicion'), ''),
+                        'material_entregado': seguimiento.get('material_entregado'),
                         'tecnico_firma': seguimiento.get('tecnico_firma'),
                         'admin_revision': seguimiento.get('admin_revision'),
                         'reporte_id': seguimiento.get('reporte_id'),

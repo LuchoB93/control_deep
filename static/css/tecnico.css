@@ -252,3 +252,22 @@ body {
     max-width: 90%;
     transition: opacity 0.5s ease;
 }
+/* Remitos de material pendientes de firma */
+.remito-pendiente {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.remito-pendiente:last-of-type {
+    border-bottom: none;
+}
+
+.remito-pendiente-acciones {
+    display: flex;
+    gap: 8px;
+}

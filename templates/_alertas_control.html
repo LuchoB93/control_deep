@@ -8,7 +8,8 @@
             <strong>Controles sin realizar</strong>
             <span class="badge bg-light text-danger">{{ pendientes_control|length }}</span>
         </span>
-        <button type="button" class="btn-toggle-alertas" onclick="toggleAlertasControl(this)">
+        <button type="button" class="btn-toggle-alertas" data-panel="alerta-controles-body"
+                onclick="toggleAlertasControl(this)">
             <i class="bi bi-chevron-up"></i>
         </button>
     </div>

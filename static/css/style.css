@@ -2344,3 +2344,59 @@ section h2 {
         min-width: 0;
     }
 }
+
+/* ==========================================
+   DIÁLOGO DE ALTA DE REMITO
+   ========================================== */
+.dialogo-remito {
+    border: none;
+    border-radius: 10px;
+    padding: 0;
+    max-width: 480px;
+    width: calc(100% - 32px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+.dialogo-remito::backdrop {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.dialogo-remito form {
+    padding: 24px;
+}
+
+.dialogo-remito h3 {
+    margin: 0 0 18px;
+    font-size: 1.15rem;
+    color: #1a1a2e;
+}
+
+.dialogo-remito label {
+    display: block;
+    margin-top: 12px;
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #444;
+}
+
+.dialogo-remito input,
+.dialogo-remito select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 0.95rem;
+}
+
+.dialogo-remito input[readonly] {
+    background: #f2f2f2;
+    color: #666;
+}
+
+.dialogo-remito-acciones {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 22px;
+}

@@ -61,6 +61,16 @@
         {% endif %}
 
         {% if asignacion %}
+            {% if bloqueada_por %}
+                <div class="alert alert-danger">
+                    <i class="bi bi-lock-fill"></i>
+                    <strong>Camioneta bloqueada.</strong>
+                    {{ bloqueada_por }} hizo el retiro y todavía no la devolvió, así que
+                    sigue siendo su responsabilidad. No vas a poder retirarla ni devolverla
+                    hasta que haga la devolución: avisá a soporte técnico.
+                </div>
+            {% endif %}
+
             <!-- Asignación del día -->
             <div class="card mb-4">
                 <div class="card-header bg-primary text-white">
@@ -134,7 +144,17 @@
                             <!-- LÓGICA DE BOTONES SEGÚN ESTADO -->
                             <!-- ========================================== -->
                             
-                            {% if not es_responsable %}
+                            {% if bloqueada_por %}
+                                <!-- Otro técnico la tiene retirada: nadie más opera sobre ella -->
+                                <div class="alert alert-danger mb-0">
+                                    <i class="bi bi-lock-fill"></i>
+                                    <strong>Bloqueada por {{ bloqueada_por }}</strong>
+                                    <br>
+                                    <small>Hasta que haga la devolución no se puede retirar
+                                    ni devolver esta camioneta.</small>
+                                </div>
+
+                            {% elif not es_responsable %}
                                 <!-- Acompañante: ve la asignación, no realiza el control -->
                                 <div class="alert alert-info mb-0">
                                     <i class="bi bi-info-circle"></i>
@@ -219,6 +239,48 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Remitos de material pendientes de firma -->
+            {% if remitos_pendientes %}
+                <div class="card border-warning mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">
+                            <i class="bi bi-box-seam"></i> Remitos de material pendientes
+                            <span class="badge bg-light text-dark">{{ remitos_pendientes|length }}</span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% for r in remitos_pendientes %}
+                            <div class="remito-pendiente" id="remito-{{ r.id }}">
+                                <div>
+                                    <strong>{{ r.material_entregado or r.elemento }}</strong>
+                                    <span class="text-muted">· repone {{ r.elemento }}</span>
+                                    <br>
+                                    <small class="text-muted">
+                                        Entrega: {{ r.creado_por or 'Soporte' }} ·
+                                        Motivo: {% if r.motivo_reposicion == 'ROTURA' %}rotura{% else %}pérdida{% endif %}
+                                    </small>
+                                </div>
+                                <div class="remito-pendiente-acciones">
+                                    <button class="btn btn-sm btn-outline-dark"
+                                            onclick="iniciarRemito({{ r.id }})">
+                                        <i class="bi bi-eye"></i> Iniciar
+                                    </button>
+                                    <button class="btn btn-sm btn-success" disabled
+                                            id="btn-firmar-{{ r.id }}"
+                                            onclick="firmarRemito({{ r.id }})">
+                                        <i class="bi bi-pen"></i> Firmar recepción
+                                    </button>
+                                </div>
+                            </div>
+                        {% endfor %}
+                        <small class="text-muted d-block mt-2">
+                            Abrí el remito con "Iniciar" para poder firmarlo. Tu firma queda
+                            registrada en el PDF y el remito pasa a soporte para el cierre.
+                        </small>
+                    </div>
+                </div>
+            {% endif %}
 
            <!-- Elementos Bloqueados -->
             {% if elementos_bloqueados %}
@@ -334,9 +396,17 @@
             .catch(error => console.error('Error:', error));
         }
 
+        // Firmar recién se habilita después de abrir el remito: el técnico tiene
+        // que ver qué material le entregan antes de dar conformidad.
+        function iniciarRemito(reporteId) {
+            window.open(`/remito/${reporteId}`, '_blank');
+            const boton = document.getElementById(`btn-firmar-${reporteId}`);
+            if (boton) boton.disabled = false;
+        }
+
         function firmarRemito(reporteId) {
-            if (!confirm('¿Confirmás que querés firmar este remito?')) return;
-            
+            if (!confirm('¿Confirmás que recibiste este material? Se registra tu firma en el remito.')) return;
+
             fetch(`/firmar-remito/${reporteId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
@@ -344,7 +414,9 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    mostrarMensaje('✅ Remito firmado correctamente!', 'success');
+                    mostrarMensaje(data.mensaje || '✅ Remito firmado!', 'success');
+                    const fila = document.getElementById(`remito-${reporteId}`);
+                    if (fila) fila.remove();
                     cargarNotificacionesTecnico();
                 } else {
                     alert('❌ Error: ' + (data.error || 'Desconocido'));
