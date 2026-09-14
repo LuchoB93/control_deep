@@ -1,0 +1,19 @@
+{# Visor flotante del remito. "Iniciar" lo abre acá adentro, sin salir de la
+   pantalla, y recién ahí se habilita el botón de firmar. #}
+<dialog id="visor-remito" class="visor-remito">
+    <div class="visor-remito-header">
+        <strong><i class="bi bi-file-earmark-pdf"></i> Remito</strong>
+        <button type="button" class="visor-remito-cerrar"
+                onclick="cerrarVisorRemito()">&times;</button>
+    </div>
+    <iframe id="visor-remito-pdf" title="Remito"></iframe>
+    <div class="visor-remito-acciones">
+        <button type="button" class="btn btn-secondary" onclick="cerrarVisorRemito()">
+            Cerrar
+        </button>
+        <button type="button" class="btn btn-success" id="visor-remito-firmar"
+                onclick="firmarDesdeVisor()">
+            <i class="bi bi-pen"></i> Firmar
+        </button>
+    </div>
+</dialog>

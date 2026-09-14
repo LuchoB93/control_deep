@@ -60,6 +60,8 @@
             </div>
         {% endif %}
 
+        {% include '_visor_remito.html' %}
+
         {% if asignacion %}
             {% if bloqueada_por %}
                 <div class="alert alert-danger">
@@ -240,48 +242,6 @@
                 </div>
             </div>
 
-            <!-- Remitos de material pendientes de firma -->
-            {% if remitos_pendientes %}
-                <div class="card border-warning mb-4">
-                    <div class="card-header bg-warning text-dark">
-                        <h5 class="mb-0">
-                            <i class="bi bi-box-seam"></i> Remitos de material pendientes
-                            <span class="badge bg-light text-dark">{{ remitos_pendientes|length }}</span>
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        {% for r in remitos_pendientes %}
-                            <div class="remito-pendiente" id="remito-{{ r.id }}">
-                                <div>
-                                    <strong>{{ r.material_entregado or r.elemento }}</strong>
-                                    <span class="text-muted">· repone {{ r.elemento }}</span>
-                                    <br>
-                                    <small class="text-muted">
-                                        Entrega: {{ r.creado_por or 'Soporte' }} ·
-                                        Motivo: {% if r.motivo_reposicion == 'ROTURA' %}rotura{% else %}pérdida{% endif %}
-                                    </small>
-                                </div>
-                                <div class="remito-pendiente-acciones">
-                                    <button class="btn btn-sm btn-outline-dark"
-                                            onclick="iniciarRemito({{ r.id }})">
-                                        <i class="bi bi-eye"></i> Iniciar
-                                    </button>
-                                    <button class="btn btn-sm btn-success" disabled
-                                            id="btn-firmar-{{ r.id }}"
-                                            onclick="firmarRemito({{ r.id }})">
-                                        <i class="bi bi-pen"></i> Firmar recepción
-                                    </button>
-                                </div>
-                            </div>
-                        {% endfor %}
-                        <small class="text-muted d-block mt-2">
-                            Abrí el remito con "Iniciar" para poder firmarlo. Tu firma queda
-                            registrada en el PDF y el remito pasa a soporte para el cierre.
-                        </small>
-                    </div>
-                </div>
-            {% endif %}
-
            <!-- Elementos Bloqueados -->
             {% if elementos_bloqueados %}
                 <div class="card border-danger mb-4">
@@ -322,6 +282,9 @@
 
         <!-- Botón Volver al Inicio (adicional) -->
         <div class="text-center mt-4">
+            <a href="{{ url_for('admin_firma') }}" class="btn btn-outline-primary">
+                <i class="bi bi-pen"></i> Mi Firma
+            </a>
             <a href="{{ url_for('logout') }}" class="btn btn-secondary">
                 <i class="bi bi-house-door"></i> Volver al Inicio
             </a>
@@ -339,44 +302,59 @@
                 .then(response => response.json())
                 .then(data => {
                     const contenedor = document.getElementById('contenedor-notificaciones-tecnico');
-                    if (data.length > 0) {
-                        let html = `
-                            <div class="card border-warning mb-4">
-                                <div class="card-header bg-warning text-dark">
-                                    <h5 class="mb-0"><i class="bi bi-bell-fill"></i> Alertas de Remitos</h5>
-                                </div>
-                                <div class="card-body" id="lista-notificaciones-tecnico">
-                        `;
-                        data.forEach(notif => {
-                            const tipoClase = notif.tipo === 'REMITO_PENDIENTE' ? 'warning' : 'info';
-                            const icono = notif.tipo === 'REMITO_PENDIENTE' ? 'file-earmark-pdf' : 'bell';
-                            // El id viene del backend. Antes se intentaba deducir del
-                            // enlace ("/historial-camioneta/AA123BB"), lo que daba NaN
-                            // y el botón de firmar nunca aparecía.
-                            const reporteId = notif.reporte_id || 0;
-                            html += `
-                                <div class="alert alert-${tipoClase} alert-dismissible fade show" id="notif-${notif.id}">
-                                    <i class="bi bi-${icono}"></i>
-                                    ${notif.mensaje}
-                                    ${notif.patente ? `<a href="/historial-camioneta/${notif.patente}" class="btn btn-sm btn-primary ms-2">Ver Detalle</a>` : ''}
-                                    ${notif.tipo === 'REMITO_PENDIENTE' && reporteId > 0 ? `<button class="btn btn-sm btn-success ms-2" onclick="firmarRemito(${reporteId})"><i class="bi bi-pen"></i> Firmar Remito</button>` : ''}
-                                    <button type="button" class="btn-close" onclick="marcarNotificacionLeidaTecnico(${notif.id})"></button>
-                                </div>
-                            `;
-                        });
+                    if (!data.length) {
+                        contenedor.innerHTML = '';
+                        return;
+                    }
+
+                    let html = `
+                        <div class="card border-warning mb-4">
+                            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-bell-fill"></i> Alertas
+                                    <span class="badge bg-light text-dark">${data.length}</span>
+                                </h5>
+                                <button type="button" class="btn-toggle-alertas"
+                                        onclick="togglePanelTecnico(this)">
+                                    <i class="bi bi-chevron-up"></i>
+                                </button>
+                            </div>
+                            <div class="card-body" id="lista-notificaciones-tecnico">
+                    `;
+
+                    data.forEach(notif => {
+                        const pendiente = notif.estado_remito === 'PENDIENTE_FIRMA_TECNICO';
+                        const cerrable = notif.remito_cerrable;
                         html += `
+                            <div class="alert alert-${pendiente ? 'warning' : 'info'} d-flex justify-content-between align-items-center" id="notif-${notif.id}">
+                                <div>
+                                    <i class="bi bi-${notif.reporte_id ? 'file-earmark-pdf' : 'bell'}"></i>
+                                    ${notif.mensaje}
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    ${notif.reporte_id ? `<button class="btn btn-sm btn-outline-dark" onclick="abrirVisorRemito(${notif.reporte_id}, ${pendiente})"><i class="bi bi-eye"></i> ${pendiente ? 'Iniciar' : 'Ver'}</button>` : ''}
+                                    ${cerrable
+                                        ? `<button type="button" class="btn-close" onclick="descartarNotificacion(${notif.id})"></button>`
+                                        : `<span class="alerta-trabada" title="No se puede cerrar hasta que el remito esté finalizado"><i class="bi bi-lock-fill"></i></span>`}
                                 </div>
                             </div>
                         `;
-                        contenedor.innerHTML = html;
-                    } else {
-                        contenedor.innerHTML = '';
-                    }
+                    });
+
+                    html += '</div></div>';
+                    contenedor.innerHTML = html;
                 })
                 .catch(error => console.error('Error al cargar notificaciones:', error));
         }
 
-        function marcarNotificacionLeidaTecnico(notificacionId) {
+        function togglePanelTecnico(btn) {
+            const cuerpo = document.getElementById('lista-notificaciones-tecnico');
+            const oculto = cuerpo.style.display === 'none';
+            cuerpo.style.display = oculto ? '' : 'none';
+            btn.querySelector('i').className = oculto ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+        }
+
+        function descartarNotificacion(notificacionId) {
             fetch(`/api/notificaciones/marcar/${notificacionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
@@ -386,22 +364,40 @@
                 if (data.success) {
                     const elemento = document.getElementById(`notif-${notificacionId}`);
                     if (elemento) elemento.remove();
-                    // Verificar si quedan notificaciones
-                    const restantes = document.querySelectorAll('#lista-notificaciones-tecnico .alert');
-                    if (restantes.length === 0) {
+                    if (!document.querySelectorAll('#lista-notificaciones-tecnico .alert').length) {
                         document.getElementById('contenedor-notificaciones-tecnico').innerHTML = '';
                     }
+                } else {
+                    alert('⚠️ ' + (data.error || 'No se pudo cerrar la alerta'));
                 }
             })
             .catch(error => console.error('Error:', error));
         }
 
-        // Firmar recién se habilita después de abrir el remito: el técnico tiene
-        // que ver qué material le entregan antes de dar conformidad.
-        function iniciarRemito(reporteId) {
-            window.open(`/remito/${reporteId}`, '_blank');
-            const boton = document.getElementById(`btn-firmar-${reporteId}`);
-            if (boton) boton.disabled = false;
+        // ==========================================
+        // VISOR FLOTANTE DE REMITOS
+        // ==========================================
+        // Firmar se habilita recién con el remito abierto: el técnico tiene que
+        // ver qué material le entregan antes de dar conformidad.
+        let remitoEnVisor = null;
+
+        function abrirVisorRemito(reporteId, permiteFirmar) {
+            remitoEnVisor = permiteFirmar ? reporteId : null;
+            document.getElementById('visor-remito-pdf').src = `/remito/${reporteId}`;
+            const btn = document.getElementById('visor-remito-firmar');
+            btn.hidden = !permiteFirmar;
+            btn.disabled = false;
+            document.getElementById('visor-remito').showModal();
+        }
+
+        function cerrarVisorRemito() {
+            document.getElementById('visor-remito').close();
+            document.getElementById('visor-remito-pdf').src = '';
+            remitoEnVisor = null;
+        }
+
+        function firmarDesdeVisor() {
+            if (remitoEnVisor) firmarRemito(remitoEnVisor);
         }
 
         function firmarRemito(reporteId) {
@@ -415,8 +411,7 @@
             .then(data => {
                 if (data.success) {
                     mostrarMensaje(data.mensaje || '✅ Remito firmado!', 'success');
-                    const fila = document.getElementById(`remito-${reporteId}`);
-                    if (fila) fila.remove();
+                    cerrarVisorRemito();
                     cargarNotificacionesTecnico();
                 } else {
                     alert('❌ Error: ' + (data.error || 'Desconocido'));

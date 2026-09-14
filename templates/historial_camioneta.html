@@ -251,6 +251,8 @@
                 {% endif %}
             </div>
 
+            {% include '_visor_remito.html' %}
+
             <!-- TAB 2: Rastrear Elemento -->
             <div class="tab-pane fade" id="elementos" role="tabpanel">
                 <div class="row mb-3">
@@ -268,7 +270,19 @@
 
                 <div id="lista-elementos">
                     {% if historial_por_elemento %}
-                        {% for elemento, registros in historial_por_elemento.items() %}
+                        {% for categoria, elementos in elementos_por_categoria.items() %}
+                        {% if elementos %}
+                        <div class="categoria-colapsable mt-2" data-categoria="{{ categoria }}">
+                            <div class="categoria-header-click" onclick="toggleCategoria(event, this)">
+                                <span>
+                                    <i class="bi bi-chevron-down toggle-cat-icon"></i>
+                                    <strong>{{ etiqueta_categoria[categoria] }}</strong>
+                                    <span class="badge bg-secondary">{{ elementos|length }}</span>
+                                </span>
+                            </div>
+                            <div class="categoria-contenido" style="display: none;">
+                        {% for elemento in elementos %}
+                            {% set registros = historial_por_elemento[elemento] %}
                             <div class="elemento-historial" data-elemento="{{ elemento }}">
                                 <div class="d-flex justify-content-between align-items-center flex-wrap">
                                     <span class="nombre-elemento" onclick="toggleLineaTiempo(this)">
@@ -392,10 +406,44 @@
                                                     </span>
                                                 </div>
                                             {% endif %}
+
+                                            {% if r.ruta_remito %}
+                                                <div class="remito-evento mt-2">
+                                                    <div>
+                                                        <i class="bi bi-file-earmark-pdf"></i>
+                                                        <strong>Repuesto por remito</strong>
+                                                        &middot; {{ r.material_entregado or r.elemento }}
+                                                        {% if r.motivo_reposicion %}
+                                                            &middot; {% if r.motivo_reposicion == 'ROTURA' %}rotura{% else %}pérdida{% endif %}
+                                                        {% endif %}
+                                                        <br>
+                                                        <small class="text-muted">
+                                                            Entregó: {{ r.creado_por or 'Soporte' }}
+                                                            {% if r.firma_tecnico %} &middot; Recibió: {{ r.firma_tecnico }}{% endif %}
+                                                            &middot;
+                                                            {% if r.estado_remito == 'FINALIZADO' %}
+                                                                <span class="text-success">circuito finalizado</span>
+                                                            {% elif r.estado_remito == 'PENDIENTE_FIRMA_SOPORTE' %}
+                                                                <span class="text-warning">falta la firma de soporte</span>
+                                                            {% else %}
+                                                                <span class="text-warning">falta la firma del técnico</span>
+                                                            {% endif %}
+                                                        </small>
+                                                    </div>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary"
+                                                            onclick="abrirVisorRemito({{ r.id }}, false)">
+                                                        <i class="bi bi-eye"></i> Ver remito
+                                                    </button>
+                                                </div>
+                                            {% endif %}
                                         </div>
                                     {% endfor %}
                                 </div>
                             </div>
+                        {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
                         {% endfor %}
                     {% else %}
                         <div class="alert alert-info">
@@ -429,13 +477,11 @@
             
             const contenido = header.nextElementSibling;
             const icon = header.querySelector('.toggle-cat-icon');
-            
-            if (contenido.style.display === 'none' || contenido.style.display === '') {
-                contenido.style.display = 'block';
-                icon.className = 'bi bi-chevron-up toggle-cat-icon';
-            } else {
-                contenido.style.display = 'none';
-                icon.className = 'bi bi-chevron-down toggle-cat-icon';
+            const abrir = !contenido.style.display || contenido.style.display === 'none';
+
+            contenido.style.display = abrir ? 'block' : 'none';
+            if (icon) {
+                icon.className = `bi bi-chevron-${abrir ? 'up' : 'down'} toggle-cat-icon`;
             }
         }
 
@@ -456,18 +502,43 @@
 
         // Filtrar elementos en el tab de rastreo
         function filtrarElementos(texto) {
-            const elementos = document.querySelectorAll('.elemento-historial');
             const busqueda = texto.toLowerCase().trim();
-            
-            elementos.forEach(el => {
+
+            document.querySelectorAll('.elemento-historial').forEach(el => {
                 const nombre = el.getAttribute('data-elemento').toLowerCase();
-                if (busqueda === '' || nombre.includes(busqueda)) {
-                    el.style.display = 'block';
-                } else {
-                    el.style.display = 'none';
+                el.style.display = (!busqueda || nombre.includes(busqueda)) ? 'block' : 'none';
+            });
+
+            // Con una búsqueda activa se abren las categorías que tienen
+            // resultados; sin búsqueda vuelven a quedar plegadas.
+            document.querySelectorAll('#lista-elementos .categoria-colapsable').forEach(cat => {
+                const contenido = cat.querySelector('.categoria-contenido');
+                const icono = cat.querySelector('.toggle-cat-icon');
+                const hayResultados = [...cat.querySelectorAll('.elemento-historial')]
+                    .some(el => el.style.display !== 'none');
+                const abrir = Boolean(busqueda) && hayResultados;
+                contenido.style.display = abrir ? 'block' : 'none';
+                if (icono) {
+                    icono.className = `bi bi-chevron-${abrir ? 'up' : 'down'} toggle-cat-icon`;
                 }
             });
         }
+
+        // ==========================================
+        // VISOR FLOTANTE DE REMITOS
+        // ==========================================
+        function abrirVisorRemito(reporteId) {
+            document.getElementById('visor-remito-pdf').src = `/remito/${reporteId}`;
+            document.getElementById('visor-remito-firmar').hidden = true;
+            document.getElementById('visor-remito').showModal();
+        }
+
+        function cerrarVisorRemito() {
+            document.getElementById('visor-remito').close();
+            document.getElementById('visor-remito-pdf').src = '';
+        }
+
+        function firmarDesdeVisor() { /* acá el remito es solo de consulta */ }
 
         // Inicializar: asegurar que las categorías empiecen colapsadas
         document.addEventListener('DOMContentLoaded', function() {

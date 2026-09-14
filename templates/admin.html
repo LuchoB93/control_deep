@@ -15,7 +15,9 @@
     <div class="admin-sidebar" id="sidebar">
         <div class="sidebar-header">
             <h2>🚐 Control</h2>
-            <span class="sidebar-subtitle">Administrador</span>
+            <span class="sidebar-subtitle">
+                {% if session.rol == 'admin' %}Administrador{% else %}Soporte técnico{% endif %}
+            </span>
         </div>
         <nav class="sidebar-nav">
             <a href="#" class="sidebar-link active" data-section="asignaciones" onclick="cambiarSeccion('asignaciones')">
@@ -48,10 +50,16 @@
                 <span>Técnicos</span>
                 <span class="badge badge-proximamente">Próximamente</span>
             </a>
-            <a href="{{ url_for('admin_configuracion') }}" class="sidebar-link">
-                <i class="bi bi-gear"></i>
-                <span>Configuración</span>
-            </a>
+            {% if session.rol == 'admin' %}
+                <a href="{{ url_for('admin_tiempos') }}" class="sidebar-link">
+                    <i class="bi bi-stopwatch"></i>
+                    <span>Tiempos de control</span>
+                </a>
+                <a href="{{ url_for('admin_configuracion') }}" class="sidebar-link">
+                    <i class="bi bi-gear"></i>
+                    <span>Configuración</span>
+                </a>
+            {% endif %}
         </nav>
         <div class="sidebar-footer">
             <span class="user-name">{{ session.nombre }}</span>
@@ -70,13 +78,11 @@
         </button>
 
         <!-- ========================================== -->
-        <!-- NOTIFICACIONES DE REMITOS - ADMIN -->
+        <!-- ALERTAS (remitos + controles vencidos) -->
         <!-- ========================================== -->
-        <div id="contenedor-notificaciones-admin"></div>
+        <div id="contenedor-alertas"></div>
 
-        <div id="contenedor-alertas-control">
-            {% include '_alertas_control.html' %}
-        </div>
+        {% include '_visor_remito.html' %}
 
         <!-- Alta de remito: se completa antes de generar el PDF -->
         <dialog id="dialogo-remito" class="dialogo-remito">
@@ -86,12 +92,8 @@
                 <label for="remito-camioneta">Camioneta</label>
                 <input type="text" id="remito-camioneta" readonly>
 
-                <label for="remito-elemento">Elemento faltante</label>
-                <input type="text" id="remito-elemento" readonly>
-
                 <label for="remito-material">Material entregado</label>
-                <input type="text" id="remito-material" required
-                       placeholder="Qué se entrega para reponer">
+                <input type="text" id="remito-material" readonly>
 
                 <label for="remito-motivo">Motivo de la falta</label>
                 <select id="remito-motivo" required>
@@ -501,34 +503,81 @@
             if (icono) icono.className = 'bi bi-chevron-down';
         }
 
-        function toggleAlertasControl(btn) {
-            togglePanel(btn, 'alerta-controles-body', 'alertasPlegadas');
-        }
-
-        // El bloque se refresca solo: un control vence mientras soporte tiene
-        // la pantalla abierta, y tiene que aparecer sin recargar.
+        // El panel se refresca solo: un control vence mientras soporte tiene la
+        // pantalla abierta y tiene que aparecer sin recargar.
         const REFRESCO_ALERTAS_MS = 120000;  // 2 minutos
 
-        function aplicarPlegadoAlertas() {
-            aplicarPlegado('alerta-controles-body', 'alertasPlegadas');
+        // Las alertas de control se calculan en cada consulta, así que
+        // descartarlas se recuerda en el navegador de quien las cerró.
+        function controlesDescartados() {
+            try { return JSON.parse(localStorage.getItem('controlesDescartados') || '[]'); }
+            catch (e) { return []; }
         }
 
-        function refrescarAlertasControl() {
-            fetch('/api/controles-pendientes')
+        function descartarControl(boton) {
+            const fila = boton.closest('.alerta-item');
+            if (!fila) return;
+            const clave = fila.dataset.clave;
+            const descartados = controlesDescartados();
+            if (!descartados.includes(clave)) {
+                descartados.push(clave);
+                try { localStorage.setItem('controlesDescartados', JSON.stringify(descartados)); }
+                catch (e) {}
+            }
+            fila.remove();
+            ajustarContadorAlertas();
+        }
+
+        function descartarNotificacion(notificacionId) {
+            fetch(`/api/notificaciones/marcar/${notificacionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const fila = document.getElementById(`alerta-notif-${notificacionId}`);
+                    if (fila) fila.remove();
+                    ajustarContadorAlertas();
+                } else {
+                    alert('⚠️ ' + (data.error || 'No se pudo cerrar la alerta'));
+                }
+            })
+            .catch(() => mostrarMensaje('❌ Error de conexión', 'danger'));
+        }
+
+        function ajustarContadorAlertas() {
+            const contenedor = document.getElementById('contenedor-alertas');
+            const quedan = contenedor.querySelectorAll('.alerta-item').length;
+            if (quedan === 0) {
+                contenedor.innerHTML = '';
+                return;
+            }
+            const badge = contenedor.querySelector('.alerta-controles-header .badge');
+            if (badge) badge.textContent = quedan;
+        }
+
+        // Lleva al remito dentro del panel, sin abrir otra pestaña.
+        function irARemitos(reporteId, permiteFirmar) {
+            cambiarSeccion('remitos');
+            cargarRemitos();
+            abrirVisorRemito(reporteId, permiteFirmar);
+        }
+
+        function cargarAlertas() {
+            fetch('/api/alertas')
                 .then(r => (r.ok ? r.text() : Promise.reject(r.status)))
                 .then(html => {
-                    const contenedor = document.getElementById('contenedor-alertas-control');
+                    const contenedor = document.getElementById('contenedor-alertas');
                     if (!contenedor) return;
-                    const antes = contenedor.querySelectorAll('.tabla-alertas tbody tr').length;
                     contenedor.innerHTML = html;
-                    aplicarPlegadoAlertas();
-                    const ahora = contenedor.querySelectorAll('.tabla-alertas tbody tr').length;
-                    // Si aparece un control vencido nuevo, se despliega para que se vea.
-                    if (ahora > antes) {
-                        const cuerpo = document.getElementById('alerta-controles-body');
-                        if (cuerpo) cuerpo.style.display = '';
-                        try { localStorage.setItem('alertasPlegadas', '0'); } catch (e) {}
-                    }
+                    // Se sacan las de control que este usuario ya descartó.
+                    const descartados = controlesDescartados();
+                    contenedor.querySelectorAll('.alerta-item').forEach(fila => {
+                        if (descartados.includes(fila.dataset.clave)) fila.remove();
+                    });
+                    ajustarContadorAlertas();
+                    aplicarPlegado('alertas-body', 'alertasPlegadas');
                 })
                 .catch(() => { /* sin conexión: se reintenta en el próximo ciclo */ });
         }
@@ -576,11 +625,8 @@
             cambiarSeccion(seccionGuardada);
             
             // Cargar notificaciones al iniciar
-            cargarNotificacionesAdmin();
-
-            aplicarPlegadoAlertas();
-            setInterval(refrescarAlertasControl, REFRESCO_ALERTAS_MS);
-            setInterval(cargarNotificacionesAdmin, REFRESCO_ALERTAS_MS);
+            cargarAlertas();
+            setInterval(cargarAlertas, REFRESCO_ALERTAS_MS);
             
             document.querySelectorAll('.tecnico-select').forEach(select => {
                 select.addEventListener('change', function() {
@@ -625,78 +671,27 @@
         });
 
         // ==========================================
-        // FUNCIONES DE NOTIFICACIONES - ADMIN
+        // VISOR FLOTANTE DE REMITOS
         // ==========================================
+        let remitoEnVisor = null;
 
-        function cargarNotificacionesAdmin() {
-            fetch('/api/notificaciones')
-                .then(response => response.json())
-                .then(data => {
-                    const contenedor = document.getElementById('contenedor-notificaciones-admin');
-                    if (data.length > 0) {
-                        let html = `
-                            <div class="card border-warning mb-4">
-                                <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
-                                    <h5 class="mb-0">
-                                        <i class="bi bi-bell-fill"></i> Alertas de Remitos
-                                        <span class="badge bg-light text-dark">${data.length}</span>
-                                    </h5>
-                                    <button type="button" class="btn-toggle-alertas"
-                                            data-panel="lista-notificaciones-admin"
-                                            onclick="togglePanel(this, 'lista-notificaciones-admin', 'notifAdminPlegadas')">
-                                        <i class="bi bi-chevron-up"></i>
-                                    </button>
-                                </div>
-                                <div class="card-body" id="lista-notificaciones-admin">
-                        `;
-                        data.forEach(notif => {
-                            const tipoClase = notif.tipo === 'REMITO_FIRMADO' ? 'success' : 'info';
-                            const icono = notif.tipo === 'REMITO_FIRMADO' ? 'file-check' : 'bell';
-                            // El id viene del backend. Antes se intentaba deducir del
-                            // enlace ("/admin/remitos/seguimiento" -> NaN) y el botón
-                            // "Marcar como Revisado" nunca se mostraba.
-                            const reporteId = notif.reporte_id || 0;
-                            html += `
-                                <div class="alert alert-${tipoClase} alert-dismissible fade show" id="notif-${notif.id}">
-                                    <i class="bi bi-${icono}"></i>
-                                    ${notif.mensaje}
-                                    ${notif.patente ? `<a href="/admin/remitos" class="btn btn-sm btn-primary ms-2">Ver Remitos</a>` : ''}
-                                    ${notif.tipo === 'REMITO_FIRMADO' && reporteId > 0 ? `<button class="btn btn-sm btn-success ms-2" onclick="revisarRemito(${reporteId})"><i class="bi bi-pen"></i> Firmar entrega</button>` : ''}
-                                    <button type="button" class="btn-close" onclick="marcarNotificacionLeidaAdmin(${notif.id})"></button>
-                                </div>
-                            `;
-                        });
-                        html += `
-                                </div>
-                            </div>
-                        `;
-                        contenedor.innerHTML = html;
-                        aplicarPlegado('lista-notificaciones-admin', 'notifAdminPlegadas');
-                    } else {
-                        contenedor.innerHTML = '';
-                    }
-                })
-                .catch(error => console.error('Error al cargar notificaciones:', error));
+        function abrirVisorRemito(reporteId, permiteFirmar) {
+            remitoEnVisor = permiteFirmar ? reporteId : null;
+            document.getElementById('visor-remito-pdf').src = `/remito/${reporteId}`;
+            const btn = document.getElementById('visor-remito-firmar');
+            btn.hidden = !permiteFirmar;
+            btn.disabled = false;
+            document.getElementById('visor-remito').showModal();
         }
 
-        function marcarNotificacionLeidaAdmin(notificacionId) {
-            fetch(`/api/notificaciones/marcar/${notificacionId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    const elemento = document.getElementById(`notif-${notificacionId}`);
-                    if (elemento) elemento.remove();
-                    // Verificar si quedan notificaciones
-                    const restantes = document.querySelectorAll('#lista-notificaciones-admin .alert');
-                    if (restantes.length === 0) {
-                        document.getElementById('contenedor-notificaciones-admin').innerHTML = '';
-                    }
-                }
-            })
-            .catch(error => console.error('Error:', error));
+        function cerrarVisorRemito() {
+            document.getElementById('visor-remito').close();
+            document.getElementById('visor-remito-pdf').src = '';
+            remitoEnVisor = null;
+        }
+
+        function firmarDesdeVisor() {
+            if (remitoEnVisor) revisarRemito(remitoEnVisor);
         }
 
         function revisarRemito(reporteId) {
@@ -710,8 +705,10 @@
             .then(data => {
                 if (data.success) {
                     mostrarMensaje(data.mensaje || '✅ Remito finalizado.', 'success');
-                    cargarNotificacionesAdmin();
+                    cerrarVisorRemito();
+                    cargarAlertas();
                     cargarRemitos();
+                    refrescarFaltantes();
                 } else {
                     alert('❌ Error: ' + (data.error || 'Desconocido'));
                 }
@@ -725,8 +722,24 @@
         // FUNCIONES DE REPORTES
         // ==========================================
         const contenedorDatos = document.getElementById('datos-reportes');
-        const faltantesData = JSON.parse(contenedorDatos.getAttribute('data-faltantes') || '{}');
-        const historialData = JSON.parse(contenedorDatos.getAttribute('data-historial') || '{}');
+        let faltantesData = JSON.parse(contenedorDatos.getAttribute('data-faltantes') || '{}');
+        let historialData = JSON.parse(contenedorDatos.getAttribute('data-historial') || '{}');
+
+        // Los faltantes se recalculan en el servidor: al cerrar un remito el
+        // elemento deja de faltar y tiene que salir de la lista en el momento,
+        // sin obligar a cerrar sesión.
+        function refrescarFaltantes() {
+            return fetch('/api/reportes')
+                .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+                .then(data => {
+                    faltantesData = data.faltantes || {};
+                    historialData = data.historial || {};
+                    if (document.getElementById('selector-patente').value) {
+                        mostrarDetallesPatente();
+                    }
+                })
+                .catch(() => { /* se reintenta en la próxima acción */ });
+        }
 
         // El remito se completa antes de generarlo: material entregado y motivo.
         // La camioneta y el creador salen del reporte y de la sesión.
@@ -737,7 +750,6 @@
 
             document.getElementById('remito-reporte-id').value = reporteId;
             document.getElementById('remito-camioneta').value = patente;
-            document.getElementById('remito-elemento').value = item.elemento;
             document.getElementById('remito-material').value = item.elemento;
             document.getElementById('remito-motivo').value = '';
             document.getElementById('dialogo-remito').showModal();
@@ -751,11 +763,10 @@
             evento.preventDefault();
 
             const reporteId = document.getElementById('remito-reporte-id').value;
-            const material = document.getElementById('remito-material').value.trim();
             const motivo = document.getElementById('remito-motivo').value;
 
-            if (!material || !motivo) {
-                alert('⚠️ Completá el material entregado y el motivo.');
+            if (!motivo) {
+                alert('⚠️ Elegí el motivo de la falta: rotura o pérdida.');
                 return;
             }
 
@@ -766,16 +777,16 @@
             fetch(`/generar-remito/${reporteId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ motivo: motivo, material_entregado: material })
+                body: JSON.stringify({ motivo: motivo })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
                     cerrarDialogoRemito();
-                    window.open(data.url, '_blank');
                     mostrarMensaje('✅ Remito generado. Espera la firma del técnico.', 'success');
-                    cargarNotificacionesAdmin();
+                    cargarAlertas();
                     cargarRemitos();
+                    refrescarFaltantes().then(() => abrirVisorRemito(reporteId, false));
                 } else {
                     alert('❌ Error al generar remito: ' + (data.error || 'Desconocido'));
                 }
@@ -814,8 +825,12 @@
                 htmlFaltantes += '<ul style="list-style: none; padding: 0; margin: 0;">';
                 faltantes.forEach(item => {
                     let icono = item.estado === 'FALLA' ? '⚠️' : (item.estado === 'FALTANTE' ? '❌' : '📝');
+                    // Con el remito ya generado no se ofrece generarlo de nuevo:
+                    // se pasa a verlo, que es lo único que queda por hacer acá.
                     let botonRemito = '';
-                    if (item.estado === 'FALTANTE') {
+                    if (item.ruta_remito) {
+                        botonRemito = `<button class="btn-remito" onclick="abrirVisorRemito(${item.id}, false)">📄 Ver remito</button>`;
+                    } else if (item.estado === 'FALTANTE') {
                         botonRemito = `<button class="btn-remito" onclick="generarRemito(${item.id})">📄 Generar Remito</button>`;
                     }
                     

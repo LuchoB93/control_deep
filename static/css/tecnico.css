@@ -252,22 +252,134 @@ body {
     max-width: 90%;
     transition: opacity 0.5s ease;
 }
-/* Remitos de material pendientes de firma */
-.remito-pendiente {
+
+/* Plegado del panel de alertas */
+.btn-toggle-alertas {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 1.1rem;
+}
+
+.alerta-trabada {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* ==========================================
+   VISOR FLOTANTE DE REMITOS
+   ========================================== */
+.visor-remito {
+    border: none;
+    border-radius: 10px;
+    padding: 0;
+    width: min(900px, calc(100% - 32px));
+    max-width: 900px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.visor-remito::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.visor-remito-header {
     display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 0;
-    border-bottom: 1px solid #eee;
+    padding: 14px 18px;
+    border-bottom: 1px solid #e3e3e3;
 }
 
-.remito-pendiente:last-of-type {
-    border-bottom: none;
+.visor-remito-cerrar {
+    background: none;
+    border: none;
+    font-size: 1.6rem;
+    line-height: 1;
+    cursor: pointer;
+    color: #666;
 }
 
-.remito-pendiente-acciones {
+.visor-remito iframe {
+    display: block;
+    width: 100%;
+    height: min(70vh, 640px);
+    border: none;
+    background: #f5f5f5;
+}
+
+.visor-remito-acciones {
     display: flex;
-    gap: 8px;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 14px 18px;
+    border-top: 1px solid #e3e3e3;
+}
+
+/* ==========================================
+   CHECKLIST DEL CONTROL (por la positiva)
+   ========================================== */
+.lista-control {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.item-control {
+    padding: 8px 10px;
+    border: 1px solid #e0e0e0;
+    border-left: 4px solid #d0d0d0;
+    border-radius: 8px;
+    background: #fff;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.item-control.marcado-ok {
+    border-left-color: #28a745;
+    background: #f4fbf6;
+}
+
+.item-control.marcado-problema {
+    border-left-color: #dc3545;
+    background: #fdf5f5;
+}
+
+.item-control.item-pendiente-foco {
+    border-color: #ffc107;
+    box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.35);
+}
+
+.item-fila {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.item-nombre {
+    font-size: 0.9rem;
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+}
+
+.item-acciones {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.item-acciones .btn.active {
+    color: #fff;
+}
+
+.item-acciones .btn-ok.active {
+    background: #28a745;
+    border-color: #28a745;
+}
+
+.item-acciones .btn-problema.active {
+    background: #dc3545;
+    border-color: #dc3545;
 }

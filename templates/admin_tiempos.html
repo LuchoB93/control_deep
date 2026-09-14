@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tiempos de control - Control de Camionetas</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="config-container">
+        <div class="seccion-header">
+            <h1><i class="bi bi-stopwatch"></i> Tiempos de control</h1>
+            <p class="text-muted">
+                Cuánto tardó cada control entre que se inició y se finalizó.
+                Este apartado solo lo ve el administrador.
+            </p>
+            <a href="{{ url_for('admin') }}" class="btn btn-secondary btn-sm">
+                <i class="bi bi-arrow-left"></i> Volver al panel
+            </a>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-body">
+                <form method="GET" class="d-flex gap-2 align-items-end flex-wrap">
+                    <div>
+                        <label for="patente" class="form-label small fw-bold">Camioneta</label>
+                        <select name="patente" id="patente" class="form-control">
+                            <option value="">Todas</option>
+                            {% for p in camionetas %}
+                                <option value="{{ p }}" {% if p == patente %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Filtrar</button>
+                    <span class="ms-auto text-muted small">
+                        {{ controles|length }} control(es) ·
+                        promedio <strong>{{ promedio }} min</strong>
+                    </span>
+                </form>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-sm table-striped">
+                <thead>
+                    <tr>
+                        <th>Camioneta</th>
+                        <th>Técnico</th>
+                        <th>Control</th>
+                        <th>Turno</th>
+                        <th>Inicio</th>
+                        <th>Fin</th>
+                        <th>Duración</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in controles %}
+                        <tr>
+                            <td><strong>{{ c.patente }}</strong></td>
+                            <td>{{ c.tecnico }}</td>
+                            <td>
+                                {% if c.tipo == 'RETIRO' %}
+                                    <span class="badge bg-warning text-dark">Retiro</span>
+                                {% else %}
+                                    <span class="badge bg-primary">Devolución</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ c.fecha }} · {{ c.jornada }}</td>
+                            <td>{{ c.inicio }}</td>
+                            <td>{{ c.fin }}</td>
+                            <td>
+                                {# Un control demasiado corto es señal de que se marcó
+                                   todo sin mirar: se resalta para poder revisarlo. #}
+                                {% if c.minutos < 2 %}
+                                    <span class="badge bg-danger">{{ c.duracion }}</span>
+                                {% elif c.minutos < 5 %}
+                                    <span class="badge bg-warning text-dark">{{ c.duracion }}</span>
+                                {% else %}
+                                    <span class="badge bg-success">{{ c.duracion }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted">
+                                Todavía no hay controles finalizados.
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

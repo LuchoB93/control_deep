@@ -1,0 +1,78 @@
+{# Panel único de alertas del soporte: remitos pendientes y controles vencidos.
+   Se refresca solo desde /api/alertas, así que no depende de recargar la página. #}
+{% set total = notificaciones|length + pendientes_control|length %}
+{% if total %}
+<div class="alerta-controles">
+    <div class="alerta-controles-header">
+        <span>
+            <i class="bi bi-bell-fill"></i>
+            <strong>Alertas</strong>
+            <span class="badge bg-light text-danger">{{ total }}</span>
+        </span>
+        <button type="button" class="btn-toggle-alertas" data-panel="alertas-body"
+                onclick="togglePanel(this, 'alertas-body', 'alertasPlegadas')">
+            <i class="bi bi-chevron-up"></i>
+        </button>
+    </div>
+
+    <div class="alerta-controles-body" id="alertas-body">
+
+        {% for n in notificaciones %}
+            <div class="alerta-item" id="alerta-notif-{{ n.id }}"
+                 data-clave="notif-{{ n.id }}">
+                <div class="alerta-item-texto">
+                    <i class="bi bi-{{ 'file-earmark-pdf' if n.reporte_id else 'bell' }}"></i>
+                    {{ n.mensaje }}
+                </div>
+                <div class="alerta-item-acciones">
+                    {% if n.estado_remito and n.estado_remito != 'FINALIZADO' %}
+                        <button type="button" class="btn btn-sm btn-primary"
+                                onclick="irARemitos({{ n.reporte_id }},
+                                    {{ 'true' if n.estado_remito == 'PENDIENTE_FIRMA_SOPORTE' else 'false' }})">
+                            {% if n.estado_remito == 'PENDIENTE_FIRMA_SOPORTE' %}Iniciar{% else %}Ver remito{% endif %}
+                        </button>
+                    {% endif %}
+                    {% if n.remito_cerrable %}
+                        <button type="button" class="alerta-cerrar" title="Descartar alerta"
+                                onclick="descartarNotificacion({{ n.id }})">&times;</button>
+                    {% else %}
+                        <span class="alerta-trabada" title="No se puede cerrar hasta que el remito esté finalizado">
+                            <i class="bi bi-lock-fill"></i>
+                        </span>
+                    {% endif %}
+                </div>
+            </div>
+        {% endfor %}
+
+        {% for p in pendientes_control %}
+            <div class="alerta-item" data-clave="control-{{ p.asignacion_id }}-{{ p.tipo }}">
+                <div class="alerta-item-texto">
+                    <i class="bi bi-exclamation-octagon-fill text-danger"></i>
+                    {% if p.tipo == 'RETIRO' %}
+                        <span class="badge bg-warning text-dark">Retiro</span>
+                    {% else %}
+                        <span class="badge bg-primary">Devolución</span>
+                    {% endif %}
+                    sin realizar &middot; <strong>{{ p.patente }}</strong>
+                    {% if p.zona %}<small class="text-muted">({{ p.zona }})</small>{% endif %}
+                    &middot; {{ p.tecnico }}
+                    &middot; {{ p.fecha }} {{ p.jornada }}
+                    &middot;
+                    {% if p.horas < 1 %}
+                        vencido hace menos de 1 h
+                    {% elif p.horas == 1 %}
+                        vencido hace 1 hora
+                    {% else %}
+                        vencido hace {{ p.horas }} horas
+                    {% endif %}
+                </div>
+                <div class="alerta-item-acciones">
+                    <button type="button" class="alerta-cerrar" title="Descartar alerta"
+                            onclick="descartarControl(this)">&times;</button>
+                </div>
+            </div>
+        {% endfor %}
+
+    </div>
+</div>
+{% endif %}

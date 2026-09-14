@@ -371,9 +371,6 @@ def generar_pdf_remito(remito, ruta_pdf):
         ['N° REMITO:', f"REM-{fecha_hora.strftime('%Y%m%d')}-{remito['id']}"],
         ['FECHA:', fecha_hora.strftime('%d/%m/%Y %H:%M')],
         ['CAMIONETA:', remito['patente']],
-        ['ZONA:', remito['zona'] or 'No especificada'],
-        ['TÉCNICO RESPONSABLE:', remito['tecnico_nombre'] or 'No asignado'],
-        ['ELEMENTO FALTANTE:', remito['elemento']],
         ['MATERIAL ENTREGADO:', remito['material_entregado'] or remito['elemento']],
         ['MOTIVO DE REPOSICIÓN:', MOTIVOS_REPOSICION.get(remito['motivo'], 'No especificado')],
         ['CREADO POR:', remito['creador_nombre'] or 'Soporte'],
@@ -535,8 +532,6 @@ def escribir_pdf_remito(fila, ruta_pdf):
     generar_pdf_remito({
         'id': fila['id'],
         'patente': fila['patente'],
-        'zona': fila['zona'],
-        'tecnico_nombre': fila['tecnico_nombre'],
         'elemento': fila['elemento'],
         'material_entregado': fila['material_entregado'],
         'motivo': fila['motivo_reposicion'],
@@ -603,59 +598,75 @@ def desbloquear_elemento(conexion, camioneta_id, elemento):
     ''', (ahora().isoformat(), camioneta_id, elemento))
 
 
-def remitos_pendientes_de(conexion, camioneta_id):
-    """Remitos que el técnico a cargo de esta camioneta todavía tiene que firmar."""
-    return [dict(f) for f in conexion.execute('''
-        SELECT r.id, r.elemento, r.material_entregado, r.motivo_reposicion,
-               r.creado_por, r.descripcion,
-               sr.fecha_generacion, sr.estado, sr.ruta_pdf
-        FROM reportes r
-        JOIN seguimiento_remitos sr ON sr.reporte_id = r.id
-        JOIN controles co ON r.control_id = co.id
-        JOIN asignaciones a ON co.asignacion_id = a.id
-        WHERE a.camioneta_id = ? AND sr.estado = 'PENDIENTE_FIRMA_TECNICO'
-        ORDER BY sr.fecha_generacion
-    ''', (camioneta_id,))]
+def obtener_notificaciones(rol=None, conexion=None):
+    """Notificaciones sin leer de un rol, con el estado del remito asociado.
 
-
-def obtener_notificaciones(rol=None):
-    """Obtiene notificaciones para un rol específico"""
-    conexion = get_db()
+    `remito_cerrable` dice si la alerta se puede descartar: las de un remito
+    quedan fijas hasta que el remito termina su circuito, para que nadie las
+    haga desaparecer con material todavía sin firmar.
+    """
+    propia = conexion is None
+    if propia:
+        conexion = get_db()
     try:
         if rol:
-            query = '''
-                SELECT * FROM notificaciones 
-                WHERE (destinatario_rol = ? OR destinatario_rol = 'todos') 
-                AND leido = 0
-                ORDER BY fecha DESC
-            '''
-            notificaciones = conexion.execute(query, (rol,)).fetchall()
+            filas = conexion.execute('''
+                SELECT n.*, sr.estado AS estado_remito
+                FROM notificaciones n
+                LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = n.reporte_id
+                WHERE (n.destinatario_rol = ? OR n.destinatario_rol = 'todos')
+                  AND n.leido = 0
+                ORDER BY n.fecha DESC
+            ''', (rol,)).fetchall()
         else:
-            query = '''
-                SELECT * FROM notificaciones 
-                WHERE leido = 0
-                ORDER BY fecha DESC
-            '''
-            notificaciones = conexion.execute(query).fetchall()
-        return [dict(n) for n in notificaciones]
+            filas = conexion.execute('''
+                SELECT n.*, sr.estado AS estado_remito
+                FROM notificaciones n
+                LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = n.reporte_id
+                WHERE n.leido = 0
+                ORDER BY n.fecha DESC
+            ''').fetchall()
+
+        notificaciones = []
+        for f in filas:
+            n = dict(f)
+            n['remito_cerrable'] = (n['estado_remito'] in (None, 'FINALIZADO'))
+            notificaciones.append(n)
+        return notificaciones
     finally:
-        conexion.close()
+        if propia:
+            conexion.close()
 
 def marcar_notificacion_leida(notificacion_id):
-    """Marca una notificación como leída"""
+    """Descarta una notificación. Devuelve (ok, motivo del rechazo)."""
     conexion = get_db()
     try:
-        fecha = ahora().isoformat()
+        fila = conexion.execute('''
+            SELECT n.id, sr.estado AS estado_remito
+            FROM notificaciones n
+            LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = n.reporte_id
+            WHERE n.id = ?
+        ''', (notificacion_id,)).fetchone()
+
+        if fila is None:
+            return False, 'La alerta no existe'
+
+        # Una alerta de remito no se puede sacar de la vista mientras el
+        # circuito siga abierto: es el recordatorio de que falta una firma.
+        if fila['estado_remito'] not in (None, 'FINALIZADO'):
+            return False, 'No se puede cerrar: el remito todavía no está finalizado'
+
         conexion.execute('''
-            UPDATE notificaciones 
+            UPDATE notificaciones
             SET leido = 1, fecha_lectura = ?
             WHERE id = ?
-        ''', (fecha, notificacion_id))
+        ''', (ahora().isoformat(), notificacion_id))
         conexion.commit()
-        return True
+        return True, None
     except Exception as e:
+        conexion.rollback()
         print(f"Error al marcar notificación: {e}")
-        return False
+        return False, str(e)
     finally:
         conexion.close()
 
@@ -683,14 +694,35 @@ def nombre_firma(firma):
 
 @app.before_request
 def limpiar_redirecciones():
-    if 'usuario_id' in session:
-        rol = session.get('rol')
-        if rol == 'admin' and request.path == '/tecnico':
-            return redirect(url_for('admin'))
-        if rol == 'jefe' and request.path in ['/tecnico', '/admin']:
-            return redirect(url_for('jefe'))
-        if rol == 'tecnico' and request.path in ['/admin', '/jefe']:
-            return redirect(url_for('tecnico'))
+    if 'usuario_id' not in session:
+        return
+    rol = session.get('rol')
+    propio = PANEL_POR_ROL.get(rol, 'tecnico')
+    ajenos = {'/tecnico': 'tecnico', '/admin': 'admin', '/jefe': 'jefe'}
+    destino = ajenos.get(request.path)
+    if destino and destino != propio and rol != 'admin':
+        return redirect(url_for(propio))
+
+
+# Panel de inicio de cada rol.
+PANEL_POR_ROL = {
+    'admin': 'admin',
+    'soporte': 'admin',
+    'jefe': 'jefe',
+    'tecnico': 'tecnico',
+}
+
+
+def autorizado(*roles):
+    """True si el usuario logueado tiene alguno de esos roles.
+
+    El admin es superusuario y entra a todo; además es el único que llega a
+    Configuración y a los tiempos de control (se llama sin argumentos).
+    """
+    if 'usuario_id' not in session:
+        return False
+    rol = session.get('rol')
+    return rol == 'admin' or rol in roles
 
 
 @app.after_request
@@ -1025,6 +1057,31 @@ def aplicar_migraciones(conexion):
     for nombre, definicion in indices:
         cursor.execute(f'CREATE INDEX IF NOT EXISTS {nombre} ON {definicion}')
 
+    # El rol admin se dividió en dos: lo operativo (planillas, remitos) quedó
+    # en soporte y admin pasó a ser solo configuración. Los usuarios que ya
+    # existían eran todos operativos.
+    hay_soporte = cursor.execute(
+        "SELECT COUNT(*) FROM usuarios WHERE rol = 'soporte'").fetchone()[0]
+    if not hay_soporte:
+        movidos = cursor.execute(
+            "UPDATE usuarios SET rol = 'soporte' WHERE rol = 'admin'").rowcount
+        if movidos:
+            print(f'🔧 Migración: {movidos} usuario(s) admin pasaron a soporte')
+
+    # Solo sobre bases que ya tenían usuarios: en una instalación nueva los
+    # crea insertar_datos_prueba(), que corre después de esta migración.
+    hay_usuarios = cursor.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+    hay_admin = cursor.execute(
+        "SELECT COUNT(*) FROM usuarios WHERE rol = 'admin'").fetchone()[0]
+    existe_umber = cursor.execute(
+        "SELECT COUNT(*) FROM usuarios WHERE usuario = 'umber'").fetchone()[0]
+    if hay_usuarios and not hay_admin and not existe_umber:
+        cursor.execute('''
+            INSERT INTO usuarios (nombre, usuario, password, rol, activo)
+            VALUES (?, ?, ?, 'admin', 1)
+        ''', ('Umber', 'umber', hashear_password('umber123')))
+        print('🔧 Migración: usuario admin "umber" creado')
+
     # Estados del seguimiento renombrados al ciclo de doble firma.
     cursor.execute('''
         UPDATE seguimiento_remitos SET estado = CASE estado
@@ -1056,15 +1113,20 @@ def insertar_datos_prueba(conexion):
     count = cursor.fetchone()[0]
     
     if count == 0:
-        admins = [
+        cursor.execute('''
+            INSERT INTO usuarios (nombre, usuario, password, rol, activo)
+            VALUES (?, ?, ?, 'admin', 1)
+        ''', ('Umber', 'umber', hashear_password('umber123')))
+
+        soportes = [
             ('Luciano', 'luciano', 'lucho123'),
             ('Juan', 'juan', 'juan123'),
             ('Mateo', 'mateo', 'mateo123')
         ]
-        for nombre, usuario, password in admins:
+        for nombre, usuario, password in soportes:
             cursor.execute('''
                 INSERT INTO usuarios (nombre, usuario, password, rol, activo)
-                VALUES (?, ?, ?, 'admin', 1)
+                VALUES (?, ?, ?, 'soporte', 1)
             ''', (nombre, usuario, hashear_password(password)))
         
         cursor.execute('''
@@ -1197,7 +1259,7 @@ def obtener_camionetas():
 
 @app.route('/admin/firma', methods=['GET', 'POST'])
 def admin_firma():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado('soporte', 'jefe', 'tecnico'):
         return redirect(url_for('login'))
     
     usuario_id = session['usuario_id']
@@ -1246,7 +1308,7 @@ def admin_firma():
 
 @app.route('/admin/firma/eliminar', methods=['POST'])
 def eliminar_firma():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado('soporte', 'jefe', 'tecnico'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     
     usuario_id = session['usuario_id']
@@ -1275,7 +1337,7 @@ def eliminar_firma():
 
 @app.route('/jefe/estadisticas')
 def jefe_estadisticas():
-    if 'usuario_id' not in session or session.get('rol') != 'jefe':
+    if not autorizado('jefe'):
         return redirect(url_for('login'))
     
     conexion = get_db()
@@ -1361,7 +1423,9 @@ def jefe_estadisticas():
                          stats_generales=stats_generales,
                          elementos_mas_faltantes=elementos_mas_faltantes,
                          tecnicos_mas_reportan=tecnicos_mas_reportan,
-                         historial_por_elemento=historial_por_elemento)
+                         historial_por_elemento=historial_por_elemento,
+                         elementos_por_categoria=elementos_por_categoria,
+                         etiqueta_categoria=ETIQUETA_CATEGORIA)
 
 # ============================================
 # CAMBIO DE MANOS DE LA CAMIONETA
@@ -1626,9 +1690,7 @@ def verificar_password(conexion, usuario, password):
 @app.route('/')
 def login():
     if 'usuario_id' in session:
-        if session.get('rol') == 'admin': return redirect(url_for('admin'))
-        if session.get('rol') == 'jefe': return redirect(url_for('jefe'))
-        return redirect(url_for('tecnico'))
+        return redirect(url_for(PANEL_POR_ROL.get(session.get('rol'), 'tecnico')))
     return render_template('login.html')
 
 @app.route('/login', methods=['POST'])
@@ -1655,12 +1717,54 @@ def procesar_login():
     session['nombre'] = user['nombre']
     session['rol'] = user['rol']
     
-    if user['rol'] == 'admin':
-        return redirect(url_for('admin'))
-    elif user['rol'] == 'jefe':
-        return redirect(url_for('jefe'))
-    else:
-        return redirect(url_for('tecnico'))
+    return redirect(url_for(PANEL_POR_ROL.get(user['rol'], 'tecnico')))
+
+def consultar_reportes(conexion):
+    """Todos los reportes con su camioneta y su técnico."""
+    return conexion.execute('''
+        SELECT
+            r.id, r.tipo, r.elemento, r.estado, r.descripcion, r.fecha_hora,
+            r.fecha_resolucion, r.comentario_resolucion, r.resuelto_por,
+            r.ruta_remito, r.material_entregado, r.motivo_reposicion,
+            COALESCE(cam.patente, 'SIN ASIGNAR') as patente,
+            COALESCE(u.nombre, 'TÉCNICO DESCONOCIDO') as tecnico_nombre
+        FROM reportes r
+        LEFT JOIN controles co ON r.control_id = co.id
+        LEFT JOIN asignaciones a ON co.asignacion_id = a.id
+        LEFT JOIN camionetas cam ON a.camioneta_id = cam.id
+        LEFT JOIN usuarios u ON a.tecnico_id = u.id
+        ORDER BY r.fecha_hora DESC
+    ''').fetchall()
+
+
+def agrupar_reportes(conexion, reportes):
+    """Agrupa los reportes por patente y arma la lista de faltantes vigentes.
+
+    Se usa tanto al renderizar el panel como al refrescarlo por API: el
+    faltante tiene que desaparecer de la pantalla apenas se cierra su remito,
+    sin obligar a cerrar sesión.
+    """
+    reportes_por_patente = {}
+    for reporte in reportes:
+        reportes_por_patente.setdefault(reporte['patente'], []).append(dict(reporte))
+
+    # Última vez que cada elemento estuvo OK, para saber desde cuándo falta.
+    ultima_ok = ultima_vez_ok(conexion)
+
+    faltantes_por_patente = {}
+    for patente, registros in reportes_por_patente.items():
+        dedupe = {}
+        for r in registros:
+            if r['estado'] in ('FALLA', 'FALTANTE', 'OBSERVACION') and r['elemento'] not in dedupe:
+                referencia = ultima_ok.get((patente, r['elemento']))
+                r['ultima_ok'] = referencia['fecha'] if referencia else None
+                r['ultima_ok_tecnico'] = referencia['tecnico'] if referencia else None
+                r['dias_sin_ok'] = dias_desde(r['ultima_ok'])
+                dedupe[r['elemento']] = r
+        faltantes_por_patente[patente] = list(dedupe.values())
+
+    return reportes_por_patente, sorted(reportes_por_patente.keys()), faltantes_por_patente
+
 
 # ============================================
 # RUTAS DE ADMINISTRADOR
@@ -1668,7 +1772,7 @@ def procesar_login():
 
 @app.route('/admin')
 def admin():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado('soporte'):
         return redirect(url_for('login'))
     
     fecha_seleccionada = request.args.get('fecha', ahora().strftime('%Y-%m-%d'))
@@ -1700,45 +1804,10 @@ def admin():
             }
         
         try:
-            reportes = conexion.execute('''
-                SELECT 
-                    r.id, r.tipo, r.elemento, r.estado, r.descripcion, r.fecha_hora, 
-                    r.fecha_resolucion, r.comentario_resolucion, r.resuelto_por,
-                    COALESCE(cam.patente, 'SIN ASIGNAR') as patente,
-                    COALESCE(u.nombre, 'TÉCNICO DESCONOCIDO') as tecnico_nombre
-                FROM reportes r
-                LEFT JOIN controles co ON r.control_id = co.id
-                LEFT JOIN asignaciones a ON co.asignacion_id = a.id
-                LEFT JOIN camionetas cam ON a.camioneta_id = cam.id
-                LEFT JOIN usuarios u ON a.tecnico_id = u.id
-                ORDER BY r.fecha_hora DESC
-            ''').fetchall()
+            reportes = consultar_reportes(conexion)
             
-            reportes_por_patente = {}
-            for reporte in reportes:
-                patente = reporte['patente']
-                if patente not in reportes_por_patente:
-                    reportes_por_patente[patente] = []
-                reportes_por_patente[patente].append(dict(reporte))
-                
-            patentes_con_reportes = sorted(reportes_por_patente.keys())
-            
-            # Última vez que cada elemento estuvo OK, para poder comparar desde
-            # cuándo viene faltando.
-            ultima_ok = ultima_vez_ok(conexion)
-            
-            faltantes_por_patente = {}
-            for patente, registros in reportes_por_patente.items():
-                dedupe = {}
-                for r in registros:
-                    if r['estado'] in ['FALLA', 'FALTANTE', 'OBSERVACION']:
-                        if r['elemento'] not in dedupe:
-                            referencia = ultima_ok.get((patente, r['elemento']))
-                            r['ultima_ok'] = referencia['fecha'] if referencia else None
-                            r['ultima_ok_tecnico'] = referencia['tecnico'] if referencia else None
-                            r['dias_sin_ok'] = dias_desde(r['ultima_ok'])
-                            dedupe[r['elemento']] = r
-                faltantes_por_patente[patente] = list(dedupe.values())
+            reportes_por_patente, patentes_con_reportes, faltantes_por_patente = \
+                agrupar_reportes(conexion, reportes)
                 
             # Controles que ya deberían estar hechos y no lo están.
             pendientes_control = controles_pendientes(conexion)
@@ -1794,7 +1863,7 @@ def admin():
 
 @app.route('/guardar-planilla', methods=['POST'])
 def guardar_planilla():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado('soporte'):
         return redirect(url_for('login'))
     
     fecha = request.form.get('fecha')
@@ -1868,7 +1937,7 @@ def guardar_planilla():
 
 @app.route('/admin/semana', methods=['GET', 'POST'])
 def asignacion_semanal():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado('soporte'):
         return redirect(url_for('login'))
     
     jornada = request.args.get('jornada', 'mañana')
@@ -1933,7 +2002,7 @@ def asignacion_semanal():
 
 @app.route('/guardar-semana', methods=['POST'])
 def guardar_semana():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado('soporte'):
         return redirect(url_for('login'))
     
     fechas = request.form.getlist('fechas[]')
@@ -2103,7 +2172,6 @@ def tecnico():
     retiro_pendiente = bool(asignacion) and not retiro_completado
     
     elementos_bloqueados = []
-    remitos_pendientes = []
     if asignacion:
         bloqueados = conexion.execute('''
             SELECT elemento, tipo, motivo, fecha_bloqueo
@@ -2112,9 +2180,6 @@ def tecnico():
             ORDER BY elemento
         ''', (asignacion['camioneta_id'],)).fetchall()
         elementos_bloqueados = [dict(b) for b in bloqueados]
-        # Firma quien está a cargo de la camioneta, no el acompañante.
-        if es_responsable:
-            remitos_pendientes = remitos_pendientes_de(conexion, asignacion['camioneta_id'])
     
     conexion.close()
     
@@ -2136,7 +2201,6 @@ def tecnico():
                          es_guardia=es_guardia,
                          bloqueada_por=bloqueada_por,
                          elementos_bloqueados=elementos_bloqueados,
-                         remitos_pendientes=remitos_pendientes,
                          fecha_actual=fecha_actual,
                          jornada_actual=jornada_actual_tecnico,
                          mensaje=request.args.get('mensaje', ''),
@@ -2381,13 +2445,14 @@ def guardar_control_rapido():
     control_id = data.get('control_id')
     problemas = data.get('problemas', [])
     recuperados = data.get('recuperados', [])
+    revisados = data.get('revisados', [])
 
     try:
         control_id = int(control_id)
     except (TypeError, ValueError):
         return jsonify({'error': 'ID de control inválido'}), 400
 
-    if not isinstance(problemas, list) or not isinstance(recuperados, list):
+    if not all(isinstance(x, list) for x in (problemas, recuperados, revisados)):
         return jsonify({'error': 'Formato de datos inválido'}), 400
     
     conexion = get_db()
@@ -2440,6 +2505,17 @@ def guardar_control_rapido():
                 WHERE camioneta_id = ? AND resuelto = 0
             ''', (camioneta_id,))
         }
+
+        # El control es por la positiva: cada elemento del catálogo tiene que
+        # haber sido marcado, como presente o como problema. Los bloqueados no
+        # se piden porque no están en la camioneta.
+        marcados = {e for e in revisados if e in catalogo} | set(problemas_dict)
+        pendientes = sorted(set(catalogo) - marcados - bloqueados_actuales)
+        if pendientes:
+            return jsonify({
+                'error': 'Faltan revisar: ' + ', '.join(pendientes[:5])
+                         + ('…' if len(pendientes) > 5 else '')
+            }), 400
 
         recuperados_dict = {}
         for recuperado in recuperados:
@@ -2590,7 +2666,7 @@ def guardar_control_rapido():
 
 @app.route('/jefe')
 def jefe():
-    if 'usuario_id' not in session or session.get('rol') != 'jefe':
+    if not autorizado('jefe'):
         return redirect(url_for('login'))
     
     fecha_actual = ahora().strftime('%d/%m/%Y')
@@ -2664,7 +2740,7 @@ def jefe():
 
 @app.route('/historial-camioneta/<string:patente>')
 def historial_camioneta(patente):
-    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
+    if not autorizado('soporte', 'jefe'):
         return redirect(url_for('login'))
     
     conexion = get_db()
@@ -2731,7 +2807,8 @@ def historial_camioneta(patente):
         })
     
     historial_elementos = conexion.execute('''
-        SELECT 
+        SELECT
+            r.id,
             r.elemento,
             r.estado,
             r.descripcion,
@@ -2742,31 +2819,52 @@ def historial_camioneta(patente):
             r.entregado_por,
             r.recibido_por,
             r.fecha_entrega,
+            r.ruta_remito,
+            r.material_entregado,
+            r.motivo_reposicion,
+            r.firma_tecnico,
+            r.firma_soporte,
+            r.creado_por,
             c.patente,
             u.nombre as tecnico_nombre,
-            r.tipo as tipo_control
+            r.tipo as tipo_control,
+            sr.estado as estado_remito,
+            COALESCE(ec.categoria, 'CAMIONETA') as categoria
         FROM reportes r
         JOIN controles co ON r.control_id = co.id
         JOIN asignaciones a ON co.asignacion_id = a.id
         JOIN camionetas c ON a.camioneta_id = c.id
         JOIN usuarios u ON a.tecnico_id = u.id
+        LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = r.id
+        LEFT JOIN elementos_catalogo ec ON ec.nombre = r.elemento
         WHERE c.patente = ?
         ORDER BY r.elemento, r.fecha_hora DESC
     ''', (patente,)).fetchall()
-    
+
+    # Los elementos se agrupan por categoría para mostrarlos en las mismas tres
+    # solapas que la vista por fecha.
     historial_por_elemento = {}
+    categoria_de_elemento = {}
     for item in historial_elementos:
         elemento = item['elemento']
-        if elemento not in historial_por_elemento:
-            historial_por_elemento[elemento] = []
-        historial_por_elemento[elemento].append(dict(item))
+        historial_por_elemento.setdefault(elemento, []).append(dict(item))
+        categoria_de_elemento[elemento] = item['categoria']
+
+    elementos_por_categoria = {c: [] for c in CATEGORIAS}
+    for elemento in historial_por_elemento:
+        elementos_por_categoria.setdefault(
+            categoria_de_elemento[elemento], []).append(elemento)
+    for lista in elementos_por_categoria.values():
+        lista.sort()
     
     conexion.close()
     
     return render_template('historial_camioneta.html',
                          patente=patente,
                          historial_detallado=historial_detallado,
-                         historial_por_elemento=historial_por_elemento)
+                         historial_por_elemento=historial_por_elemento,
+                         elementos_por_categoria=elementos_por_categoria,
+                         etiqueta_categoria=ETIQUETA_CATEGORIA)
 
 # ============================================
 # RUTAS DE REPORTES Y REMITOS
@@ -2774,7 +2872,7 @@ def historial_camioneta(patente):
 
 @app.route('/comentar-reporte/<int:reporte_id>', methods=['POST'])
 def comentar_reporte(reporte_id):
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado('soporte'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     
     data = request.get_json(silent=True) or {}
@@ -2806,7 +2904,7 @@ def comentar_reporte(reporte_id):
 @app.route('/generar-remito/<int:reporte_id>', methods=['POST'])
 def generar_remito_pdf(reporte_id):
     """Soporte crea el remito cuando ya tiene el material en su poder."""
-    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
+    if not autorizado('soporte', 'jefe'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
 
     creador_nombre = session.get('nombre', 'Soporte')
@@ -2814,7 +2912,6 @@ def generar_remito_pdf(reporte_id):
 
     datos = request.get_json(silent=True) or {}
     motivo = (datos.get('motivo') or '').strip().upper()
-    material = (datos.get('material_entregado') or '').strip()
 
     if motivo not in MOTIVOS_REPOSICION:
         return jsonify({
@@ -2822,16 +2919,10 @@ def generar_remito_pdf(reporte_id):
             'error': 'Indicá el motivo de la reposición: rotura o pérdida.'
         }), 400
 
-    if not material:
-        return jsonify({
-            'success': False,
-            'error': 'Indicá qué material se entrega.'
-        }), 400
-
     conexion = get_db()
     try:
         reporte = conexion.execute('''
-            SELECT r.id, c.patente
+            SELECT r.id, r.elemento, c.patente
             FROM reportes r
             LEFT JOIN controles co ON r.control_id = co.id
             LEFT JOIN asignaciones a ON co.asignacion_id = a.id
@@ -2850,6 +2941,8 @@ def generar_remito_pdf(reporte_id):
         fecha_str = fecha_hora.strftime('%Y-%m-%d')
         hora_str = fecha_hora.strftime('%H-%M-%S')
 
+        # El material que se entrega es el elemento que falta: no se escribe a mano.
+        material = reporte['elemento']
         conexion.execute('''
             UPDATE reportes
             SET motivo_reposicion = ?, material_entregado = ?,
@@ -2912,19 +3005,37 @@ def generar_remito_pdf(reporte_id):
 # RUTAS DE SEGUIMIENTO DE REMITOS
 # ============================================
 
-@app.route('/api/controles-pendientes')
-def api_controles_pendientes():
-    """Bloque de controles vencidos, para refrescarlo sin recargar la página."""
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+@app.route('/api/reportes')
+def api_reportes():
+    """Faltantes e historial al día, para refrescar el panel sin volver a entrar."""
+    if not autorizado('soporte'):
+        return jsonify({'error': 'No autorizado'}), 401
+
+    conexion = get_db()
+    try:
+        reportes = consultar_reportes(conexion)
+        historial, patentes, faltantes = agrupar_reportes(conexion, reportes)
+    finally:
+        conexion.close()
+
+    return jsonify({'faltantes': faltantes, 'historial': historial, 'patentes': patentes})
+
+
+@app.route('/api/alertas')
+def api_alertas():
+    """Panel de alertas (remitos + controles vencidos) para refrescarlo solo."""
+    if not autorizado('soporte'):
         return jsonify({'error': 'No autorizado'}), 401
 
     conexion = get_db()
     try:
         pendientes = controles_pendientes(conexion)
+        notificaciones = obtener_notificaciones(session.get('rol'), conexion=conexion)
     finally:
         conexion.close()
 
-    return render_template('_alertas_control.html', pendientes_control=pendientes)
+    return render_template('_alertas.html', pendientes_control=pendientes,
+                           notificaciones=notificaciones)
 
 
 @app.route('/api/notificaciones')
@@ -2943,9 +3054,10 @@ def marcar_notificacion(notificacion_id):
     if 'usuario_id' not in session:
         return jsonify({'error': 'No autorizado'}), 401
     
-    if marcar_notificacion_leida(notificacion_id):
+    ok, motivo = marcar_notificacion_leida(notificacion_id)
+    if ok:
         return jsonify({'success': True})
-    return jsonify({'success': False}), 500
+    return jsonify({'success': False, 'error': motivo}), 400
 
 @app.route('/firmar-remito/<int:reporte_id>', methods=['POST'])
 def firmar_remito_tecnico(reporte_id):
@@ -3026,7 +3138,7 @@ def firmar_remito_tecnico(reporte_id):
 @app.route('/revisar-remito/<int:reporte_id>', methods=['POST'])
 def revisar_remito_admin(reporte_id):
     """Firma de quien entregó el material: cierra el remito y libera el elemento."""
-    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
+    if not autorizado('soporte', 'jefe'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
 
     usuario_id = session['usuario_id']
@@ -3098,7 +3210,7 @@ def revisar_remito_admin(reporte_id):
 @app.route('/remito/<int:reporte_id>')
 def ver_remito(reporte_id):
     """Abre el PDF de un remito a partir del reporte, sin exponer la ruta."""
-    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe', 'tecnico']:
+    if not autorizado('soporte', 'jefe', 'tecnico'):
         return redirect(url_for('login'))
 
     conexion = get_db()
@@ -3127,7 +3239,7 @@ def ver_remito(reporte_id):
 @app.route('/remitos/<path:filename>')
 def servir_remito(filename):
     # El técnico también necesita abrir el remito: es el que lo tiene que firmar.
-    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe', 'tecnico']:
+    if not autorizado('soporte', 'jefe', 'tecnico'):
         return redirect(url_for('login'))
     
     # Se valida la ruta ANTES de tocar el disco, para que un filename con ".."
@@ -3146,7 +3258,7 @@ def servir_remito(filename):
 
 @app.route('/admin/remitos')
 def admin_remitos():
-    if 'usuario_id' not in session or session.get('rol') not in ['admin', 'jefe']:
+    if not autorizado('soporte', 'jefe'):
         return redirect(url_for('login'))
 
     conexion = get_db()
@@ -3207,7 +3319,14 @@ def admin_remitos():
 # CONFIGURACIÓN (solo administrador)
 # ============================================
 
-ROLES = ('admin', 'jefe', 'tecnico')
+ROLES = ('admin', 'soporte', 'jefe', 'tecnico')
+
+ETIQUETA_ROL = {
+    'admin': 'Administrador',
+    'soporte': 'Soporte técnico',
+    'jefe': 'Supervisor técnico',
+    'tecnico': 'Técnico',
+}
 
 
 def _volver_config(seccion, mensaje=None, error=None):
@@ -3215,9 +3334,63 @@ def _volver_config(seccion, mensaje=None, error=None):
                             mensaje=mensaje or '', error=error or ''))
 
 
+@app.route('/admin/tiempos')
+def admin_tiempos():
+    """Cuánto tardó cada control. Solo lo ve el administrador."""
+    if not autorizado():
+        return redirect(url_for('login'))
+
+    patente = (request.args.get('patente') or '').strip()
+
+    conexion = get_db()
+    try:
+        filas = conexion.execute('''
+            SELECT ct.fecha, ct.jornada, ct.tipo_control,
+                   ct.fecha_hora_inicio, ct.fecha_hora_fin,
+                   c.patente, u.nombre AS tecnico
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            JOIN usuarios u ON a.tecnico_id = u.id
+            WHERE ct.finalizado = 1 AND ct.fecha_hora_fin IS NOT NULL
+              AND (? = '' OR c.patente = ?)
+            ORDER BY ct.fecha_hora_inicio DESC
+            LIMIT 300
+        ''', (patente, patente)).fetchall()
+
+        camionetas = [f['patente'] for f in conexion.execute(
+            'SELECT patente FROM camionetas ORDER BY patente')]
+    finally:
+        conexion.close()
+
+    controles = []
+    for f in filas:
+        inicio = _a_fecha(f['fecha_hora_inicio'])
+        fin = _a_fecha(f['fecha_hora_fin'])
+        if not inicio or not fin or fin < inicio:
+            continue
+        segundos = int((fin - inicio).total_seconds())
+        controles.append({
+            'patente': f['patente'],
+            'tecnico': f['tecnico'],
+            'fecha': f['fecha'],
+            'jornada': f['jornada'],
+            'tipo': f['tipo_control'],
+            'inicio': inicio.strftime('%d/%m/%Y %H:%M'),
+            'fin': fin.strftime('%H:%M'),
+            'minutos': segundos // 60,
+            'duracion': f'{segundos // 60} min {segundos % 60:02d} s',
+        })
+
+    promedio = round(sum(c['minutos'] for c in controles) / len(controles), 1) if controles else 0
+
+    return render_template('admin_tiempos.html', controles=controles,
+                           camionetas=camionetas, patente=patente, promedio=promedio)
+
+
 @app.route('/admin/configuracion')
 def admin_configuracion():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado():
         return redirect(url_for('login'))
 
     conexion = get_db()
@@ -3244,6 +3417,7 @@ def admin_configuracion():
                            categorias=CATEGORIAS,
                            etiqueta_categoria=ETIQUETA_CATEGORIA,
                            roles=ROLES,
+                           etiqueta_rol=ETIQUETA_ROL,
                            zonas_en_uso=zonas_en_uso,
                            seccion=request.args.get('seccion', 'zonas'),
                            mensaje=request.args.get('mensaje', ''),
@@ -3254,7 +3428,7 @@ def admin_configuracion():
 
 @app.route('/admin/configuracion/zonas', methods=['POST'])
 def config_zonas():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado():
         return redirect(url_for('login'))
 
     accion = request.form.get('accion')
@@ -3306,7 +3480,7 @@ def config_zonas():
 
 @app.route('/admin/configuracion/camionetas', methods=['POST'])
 def config_camionetas():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado():
         return redirect(url_for('login'))
 
     accion = request.form.get('accion')
@@ -3359,7 +3533,7 @@ def config_camionetas():
 
 @app.route('/admin/configuracion/usuarios', methods=['POST'])
 def config_usuarios():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado():
         return redirect(url_for('login'))
 
     accion = request.form.get('accion')
@@ -3450,7 +3624,7 @@ def config_usuarios():
 
 @app.route('/admin/configuracion/elementos', methods=['POST'])
 def config_elementos():
-    if 'usuario_id' not in session or session.get('rol') != 'admin':
+    if not autorizado():
         return redirect(url_for('login'))
 
     accion = request.form.get('accion')
