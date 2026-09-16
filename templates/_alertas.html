@@ -1,6 +1,7 @@
 {# Panel único de alertas del soporte: remitos pendientes y controles vencidos.
    Se refresca solo desde /api/alertas, así que no depende de recargar la página. #}
-{% set total = notificaciones|length + pendientes_control|length %}
+{% set vencimientos = vencimientos|default([]) %}
+{% set total = notificaciones|length + pendientes_control|length + vencimientos|length %}
 {% if total %}
 <div class="alerta-controles">
     <div class="alerta-controles-header">
@@ -62,13 +63,55 @@
                         vencido hace menos de 1 h
                     {% elif p.horas == 1 %}
                         vencido hace 1 hora
-                    {% else %}
+                    {% elif p.horas < 48 %}
                         vencido hace {{ p.horas }} horas
+                    {% else %}
+                        vencido hace {{ p.horas // 24 }} días
+                    {% endif %}
+                    {% if p.bloqueado_por_deuda %}
+                        <br>
+                        <small class="text-danger">
+                            <i class="bi bi-lock-fill"></i>
+                            No puede retirarla: debe la devolución de {{ p.bloqueado_por_deuda }}.
+                        </small>
                     {% endif %}
                 </div>
                 <div class="alerta-item-acciones">
+                    {% if p.tipo == 'DEVOLUCION' %}
+                        {# La camioneta queda bloqueada para todos hasta que se cierre
+                           la devolución. Si el técnico no aparece, soporte la libera. #}
+                        <button type="button" class="btn btn-sm btn-warning"
+                                onclick="forzarDevolucion({{ p.camioneta_id }}, '{{ p.patente }}', '{{ p.tecnico }}')">
+                            <i class="bi bi-unlock"></i> Liberar
+                        </button>
+                    {% endif %}
                     <button type="button" class="alerta-cerrar" title="Descartar alerta"
                             onclick="descartarControl(this)">&times;</button>
+                </div>
+            </div>
+        {% endfor %}
+
+        {# VTV, matafuego, service y lavado. No se pueden descartar como las
+           otras: no se van hasta que el trabajo se registre en el calendario. #}
+        {% for v in vencimientos %}
+            <div class="alerta-item" data-clave="venc-{{ v.camioneta_id }}-{{ v.tipo }}">
+                <div class="alerta-item-texto">
+                    <i class="bi bi-{{ v.icono }}"
+                       style="color: {{ v.color }};"></i>
+                    {% if v.estado == 'VENCIDO' %}
+                        <span class="badge bg-danger">{{ v.etiqueta }} vencido</span>
+                    {% else %}
+                        <span class="badge bg-warning text-dark">{{ v.etiqueta }} por vencer</span>
+                    {% endif %}
+                    <strong>{{ v.patente }}</strong>
+                    &middot; {{ v.detalle }}
+                    {% if v.fecha_vencimiento %}&middot; {{ v.fecha_vencimiento }}{% endif %}
+                    {% if v.km_vencimiento %}&middot; a los {{ v.km_vencimiento|miles }} km{% endif %}
+                </div>
+                <div class="alerta-item-acciones">
+                    <a href="{{ url_for('calendario') }}" class="btn btn-sm btn-primary">
+                        Ver calendario
+                    </a>
                 </div>
             </div>
         {% endfor %}

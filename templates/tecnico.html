@@ -62,6 +62,64 @@
 
         {% include '_visor_remito.html' %}
 
+        {# Camionetas que este técnico retiró y no devolvió. Va antes que todo
+           y fuera del if de asignación: la deuda puede ser de otro día y de una
+           camioneta que hoy no tiene asignada. #}
+        {% if deudas %}
+            <div class="card border-danger mb-4">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-exclamation-octagon-fill"></i>
+                        Devolución pendiente
+                        <span class="badge bg-light text-danger">{{ deudas|length }}</span>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p>
+                        Retiraste {{ 'estas camionetas' if deudas|length > 1 else 'esta camioneta' }}
+                        y todavía no {{ 'las' if deudas|length > 1 else 'la' }} devolviste.
+                        Mientras tanto {{ 'quedan' if deudas|length > 1 else 'queda' }} a tu nombre,
+                        nadie más {{ 'las' if deudas|length > 1 else 'la' }} puede usar
+                        y <strong>no vas a poder retirar ninguna otra</strong>.
+                    </p>
+
+                    {% for d in deudas %}
+                        <div class="alert {{ 'alert-danger' if d.vencida else 'alert-warning' }}
+                                    d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <div>
+                                <strong><i class="bi bi-truck"></i> {{ d.patente }}</strong>
+                                <br>
+                                <small>
+                                    Retirada el {{ d.retirada_fecha }} ({{ d.retirada_jornada }}){% if d.zona %} · zona {{ d.zona }}{% endif %}.
+                                    {% if d.vencida %}
+                                        {% if d.horas < 1 %}
+                                            Vencida hace menos de 1 hora.
+                                        {% elif d.horas == 1 %}
+                                            Vencida hace 1 hora.
+                                        {% elif d.horas < 48 %}
+                                            Vencida hace {{ d.horas }} horas.
+                                        {% else %}
+                                            Vencida hace {{ (d.horas // 24) }} días.
+                                        {% endif %}
+                                    {% else %}
+                                        Todavía la tenés asignada: devolvela al terminar.
+                                    {% endif %}
+                                </small>
+                            </div>
+                            <form method="POST" action="{{ url_for('iniciar_control') }}" class="mb-0">
+                                <input type="hidden" name="asignacion_id" value="{{ d.asignacion_devolucion_id }}">
+                                <input type="hidden" name="jornada" value="{{ d.jornada_devolucion }}">
+                                <button type="submit" name="tipo_control" value="DEVOLUCION"
+                                        class="btn btn-danger">
+                                    <i class="bi bi-box-arrow-in-left"></i> Hacer la devolución
+                                </button>
+                            </form>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
         {% if asignacion %}
             {% if bloqueada_por %}
                 <div class="alert alert-danger">
@@ -105,11 +163,11 @@
                             </p>
                             
                             <!-- Retiro -->
-                            {% if retiro_completado %}
+                            {% if tiene_camioneta %}
                                 <p><strong><i class="bi bi-box-arrow-right"></i> Retiro:</strong>
                                     <span class="badge bg-success">✅ COMPLETADO</span>
-                                    {% if retiro_en_otro_turno %}
-                                        <small class="text-muted">(en un turno anterior)</small>
+                                    {% if retirada_fecha and retirada_fecha != fecha_actual %}
+                                        <small class="text-muted">(el {{ retirada_fecha }}, {{ retirada_jornada }})</small>
                                     {% endif %}
                                 </p>
                             {% elif control_retiro_activo %}
@@ -123,9 +181,10 @@
                             {% endif %}
 
                             <!-- Devolución -->
-                            {% if not necesita_devolucion %}
+                            {% if tiene_camioneta and not necesita_devolucion %}
                                 <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong>
                                     <span class="badge bg-info">🚚 Seguís con la camioneta</span>
+                                    <br><small class="text-muted">No es obligatoria, pero podés hacerla igual.</small>
                                 </p>
                             {% elif devolucion_completada %}
                                 <p><strong><i class="bi bi-box-arrow-in-left"></i> Devolución:</strong>
@@ -166,6 +225,19 @@
                                     {{ asignacion.tecnico_nombre or 'el técnico responsable' }}.</small>
                                 </div>
 
+                            {% elif deudas %}
+                                <!-- Debe una devolución: no puede hacerse cargo de otra camioneta -->
+                                <div class="alert alert-danger mb-0">
+                                    <i class="bi bi-lock-fill"></i>
+                                    <strong>Retiro bloqueado</strong>
+                                    <br>
+                                    <small>
+                                        Primero devolvé
+                                        {% for d in deudas %}{{ d.patente }}{% if not loop.last %}, {% endif %}{% endfor %}.
+                                        El botón está arriba, en el recuadro rojo.
+                                    </small>
+                                </div>
+
                             {% elif control_retiro_activo %}
                                 <div class="alert alert-warning mb-0">
                                     <i class="bi bi-exclamation-triangle"></i>
@@ -192,49 +264,63 @@
                                     </a>
                                 </div>
 
-                            {% elif retiro_pendiente %}
-                                <!-- El retiro de esta racha todavía no se hizo -->
-                                <form method="POST" action="{{ url_for('iniciar_control') }}" class="mt-2">
-                                    <input type="hidden" name="asignacion_id" value="{{ asignacion_retiro_id }}">
-                                    <input type="hidden" name="jornada" value="{{ jornada_retiro }}">
-                                    <button type="submit" name="tipo_control" value="RETIRO"
-                                            class="btn btn-success btn-lg">
-                                        <i class="bi bi-box-arrow-right"></i> Iniciar Retiro
-                                    </button>
-                                </form>
-                                <small class="text-muted d-block mt-1">⚠️ Revisá la camioneta antes de salir.</small>
-
-                            {% elif not necesita_devolucion %}
-                                <!-- Guardia o turno encadenado: la camioneta no cambia de manos -->
-                                <div class="alert alert-info mb-0">
-                                    <i class="bi bi-truck"></i>
-                                    <strong>{% if es_guardia %}Estás de guardia{% else %}Seguís con la camioneta{% endif %}</strong>
-                                    <br>
-                                    <small>
-                                        No hace falta devolverla: la seguís teniendo en el próximo turno.
-                                        La devolución se hace cuando pasa a otro responsable.
+                            {% elif not tiene_camioneta %}
+                                {# No la tiene en la mano: lo que corresponde es retirarla.
+                                   Puede ser el retiro obligatorio del turno o uno voluntario,
+                                   cuando devolvió la camioneta el día anterior por control propio. #}
+                                {% if devolucion_completada and not necesita_retiro %}
+                                    <div class="alert alert-success mb-0">
+                                        <i class="bi bi-check-circle"></i>
+                                        <strong>¡Jornada completada!</strong>
+                                        <br>
+                                        <small>Retiro y devolución finalizados correctamente.</small>
+                                    </div>
+                                    <form method="POST" action="{{ url_for('iniciar_control') }}" class="mt-2">
+                                        <input type="hidden" name="asignacion_id" value="{{ asignacion.id }}">
+                                        <input type="hidden" name="jornada" value="{{ jornada_actual }}">
+                                        <button type="submit" name="tipo_control" value="RETIRO"
+                                                class="btn btn-outline-success btn-sm">
+                                            <i class="bi bi-box-arrow-right"></i> Volver a retirarla
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <form method="POST" action="{{ url_for('iniciar_control') }}" class="mt-2">
+                                        <input type="hidden" name="asignacion_id" value="{{ asignacion.id }}">
+                                        <input type="hidden" name="jornada" value="{{ jornada_actual }}">
+                                        <button type="submit" name="tipo_control" value="RETIRO"
+                                                class="btn btn-success btn-lg">
+                                            <i class="bi bi-box-arrow-right"></i> Iniciar Retiro
+                                        </button>
+                                    </form>
+                                    <small class="text-muted d-block mt-1">
+                                        {% if necesita_retiro %}
+                                            ⚠️ Revisá la camioneta antes de salir.
+                                        {% else %}
+                                            La devolviste en el turno anterior: volvé a retirarla para usarla.
+                                        {% endif %}
                                     </small>
-                                </div>
-
-                            {% elif devolucion_completada %}
-                                <div class="alert alert-success mb-0">
-                                    <i class="bi bi-check-circle"></i>
-                                    <strong>¡Jornada completada!</strong>
-                                    <br>
-                                    <small>Retiro y devolución finalizados correctamente.</small>
-                                </div>
+                                {% endif %}
 
                             {% else %}
-                                <!-- Corresponde devolver: la camioneta cambia de manos -->
+                                {# La tiene retirada: puede devolverla. Es obligatorio cuando
+                                   pasa a otras manos, y opcional el resto del tiempo. #}
                                 <form method="POST" action="{{ url_for('iniciar_control') }}" class="mt-2">
-                                    <input type="hidden" name="asignacion_id" value="{{ asignacion.id }}">
-                                    <input type="hidden" name="jornada" value="{{ jornada_actual }}">
+                                    <input type="hidden" name="asignacion_id" value="{{ asignacion_devolucion_id }}">
+                                    <input type="hidden" name="jornada" value="{{ jornada_devolucion }}">
                                     <button type="submit" name="tipo_control" value="DEVOLUCION"
-                                            class="btn btn-info btn-lg">
+                                            class="btn {{ 'btn-info' if necesita_devolucion else 'btn-outline-info' }} btn-lg">
                                         <i class="bi bi-box-arrow-in-left"></i> Iniciar Devolución
                                     </button>
                                 </form>
-                                <small class="text-muted d-block mt-1">✅ Retiro completado. Al terminar el turno, hacé la devolución.</small>
+                                <small class="text-muted d-block mt-1">
+                                    {% if necesita_devolucion %}
+                                        ✅ Retiro completado. Al terminar el turno, hacé la devolución.
+                                    {% else %}
+                                        {% if es_guardia %}Estás de guardia.{% else %}Seguís con la camioneta el próximo turno.{% endif %}
+                                        No hace falta devolverla, pero si querés controlarla todos los días
+                                        podés devolverla ahora y retirarla de nuevo mañana.
+                                    {% endif %}
+                                </small>
 
                             {% endif %}
                         </div>

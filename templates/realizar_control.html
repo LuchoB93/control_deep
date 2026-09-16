@@ -50,6 +50,33 @@
             <br>El control se finaliza recién cuando no queda ninguno sin marcar.
         </div>
 
+        <!-- ========================================== -->
+        <!-- KILOMETRAJE (obligatorio) -->
+        <!-- ========================================== -->
+        <div class="categoria-card mb-4" id="card-kilometraje">
+            <div class="categoria-header">
+                <span><i class="bi bi-speedometer2"></i> Kilometraje</span>
+                <span class="badge" id="badge-km">Obligatorio</span>
+            </div>
+            <div style="padding: 12px;">
+                <label for="kilometraje" class="form-label">
+                    ¿Cuántos kilómetros marca el odómetro?
+                </label>
+                <input type="number" class="form-control form-control-lg" id="kilometraje"
+                       inputmode="numeric" min="0" step="1" placeholder="Ej: 148320"
+                       value="" autocomplete="off">
+                <small class="text-muted d-block mt-2" id="ayuda-km">
+                    {% if ultimo_km is not none %}
+                        Último registrado: <strong>{{ ultimo_km|miles }} km</strong>.
+                    {% else %}
+                        Es el primer kilometraje que se carga para esta camioneta.
+                    {% endif %}
+                    De acá sale el aviso del próximo service.
+                </small>
+                <div class="alert alert-danger mt-2 mb-0" id="error-km" style="display:none;"></div>
+            </div>
+        </div>
+
         <!-- Elementos bloqueados -->
         {% if elementos_bloqueados %}
             <div class="alert alert-warning" style="border-radius: 12px; font-size: 0.85rem;">
@@ -229,8 +256,13 @@
                 if (contador) contador.textContent = hechos;
             });
 
-            const porcentaje = items.length
-                ? Math.round((marcados.length / items.length) * 100) : 100;
+            const km = document.getElementById('kilometraje');
+            const kmCargado = km && km.value.trim() !== '' ? 1 : 0;
+            const badge = document.getElementById('badge-km');
+            if (badge) badge.textContent = kmCargado ? '✓ Cargado' : 'Obligatorio';
+
+            const total = items.length + 1;          // +1 por el kilometraje
+            const porcentaje = Math.round(((marcados.length + kmCargado) / total) * 100);
             document.getElementById('contador-progreso').textContent = porcentaje + '%';
 
             const barra = document.getElementById('barra-progreso');
@@ -288,9 +320,47 @@
         // ==========================================
         // FINALIZAR CONTROL RÁPIDO
         // ==========================================
+        const ULTIMO_KM = {{ ultimo_km if ultimo_km is not none else 'null' }};
+
+        // El kilometraje se valida acá y de nuevo en el servidor: esto es para
+        // que el técnico se entere antes de mandar todo el control.
+        function leerKilometraje() {
+            const campo = document.getElementById('kilometraje');
+            const error = document.getElementById('error-km');
+            const mostrar = (texto) => {
+                error.textContent = texto;
+                error.style.display = 'block';
+                campo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                campo.focus();
+                return null;
+            };
+            error.style.display = 'none';
+
+            const crudo = campo.value.trim();
+            if (!crudo) return mostrar('Cargá el kilometraje antes de finalizar el control.');
+
+            const km = parseInt(crudo, 10);
+            if (isNaN(km) || km < 0) return mostrar('El kilometraje tiene que ser un número entero.');
+            if (km > 2000000) return mostrar('Ese número no parece real. Revisá el odómetro.');
+
+            if (ULTIMO_KM !== null) {
+                if (km < ULTIMO_KM)
+                    return mostrar(`El último registrado es ${ULTIMO_KM.toLocaleString('es-AR')} km ` +
+                                   `y el odómetro no vuelve para atrás.`);
+                if (km - ULTIMO_KM > 5000)
+                    return mostrar(`De ${ULTIMO_KM.toLocaleString('es-AR')} a ${km.toLocaleString('es-AR')} km ` +
+                                   `hay ${(km - ULTIMO_KM).toLocaleString('es-AR')} km de diferencia. ` +
+                                   `Revisá que no te haya sobrado un dígito.`);
+            }
+            return km;
+        }
+
         function finalizarControlRapido() {
             const recuperados = recolectarRecuperados();
             if (recuperados === null) return;  // falta una explicación
+
+            const kilometraje = leerKilometraje();
+            if (kilometraje === null) return;
 
             const items = [...document.querySelectorAll('.item-control')];
             const sinMarcar = items.filter(i => !i.dataset.estado);
@@ -338,15 +408,17 @@
                 ? mensaje + '\n¿Confirmar?'
                 : '✅ Revisaste todos los elementos y están en orden. ¿Finalizar control?';
 
+            mensaje = `🚐 Kilometraje: ${kilometraje.toLocaleString('es-AR')} km\n\n` + mensaje;
+
             if (confirm(mensaje)) {
-                guardarControlRapido(problemas, recuperados, revisados);
+                guardarControlRapido(problemas, recuperados, revisados, kilometraje);
             }
         }
 
         // ==========================================
         // GUARDAR CONTROL RÁPIDO
         // ==========================================
-        function guardarControlRapido(problemas, recuperados, revisados) {
+        function guardarControlRapido(problemas, recuperados, revisados, kilometraje) {
             const controlId = document.getElementById('control-id').value;
             
             const btnFinalizar = document.querySelector('.fixed-actions .btn-success');
@@ -358,6 +430,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     control_id: controlId,
+                    kilometraje: kilometraje,
                     problemas: problemas,
                     recuperados: recuperados || [],
                     revisados: revisados || []
@@ -385,6 +458,8 @@
         // INICIALIZACIÓN
         // ==========================================
         document.addEventListener('DOMContentLoaded', function() {
+            const km = document.getElementById('kilometraje');
+            if (km) km.addEventListener('input', actualizarProgreso);
             actualizarProgreso();
         });
     </script>

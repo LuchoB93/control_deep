@@ -32,6 +32,10 @@
                 <i class="bi bi-clock-history"></i>
                 <span>Historial</span>
             </a>
+            <a href="{{ url_for('calendario') }}" class="sidebar-link">
+                <i class="bi bi-calendar3"></i>
+                <span>Calendario</span>
+            </a>
             <a href="#" class="sidebar-link" data-section="remitos" onclick="cambiarSeccion('remitos')">
                 <i class="bi bi-file-pdf"></i>
                 <span>Remitos</span>
@@ -116,6 +120,13 @@
                 </div>
             </form>
         </dialog>
+
+        <!-- Cierre manual de una devolución colgada (solo soporte) -->
+        <form id="form-forzar-devolucion" method="POST"
+              action="{{ url_for('forzar_devolucion') }}" style="display:none;">
+            <input type="hidden" name="camioneta_id" id="forzar-camioneta-id">
+            <input type="hidden" name="motivo" id="forzar-motivo">
+        </form>
 
         <!-- ========================================== -->
         <!-- SECCIÓN 1: ASIGNACIONES -->
@@ -526,6 +537,25 @@
             }
             fila.remove();
             ajustarContadorAlertas();
+        }
+
+        // Cierra a mano una devolución que el técnico dejó colgada. La camioneta
+        // queda bloqueada para todos hasta que alguien la libere, así que este
+        // es el único camino cuando el técnico ya no está disponible.
+        function forzarDevolucion(camionetaId, patente, tecnico) {
+            const motivo = prompt(
+                `Liberar ${patente}\n\n` +
+                `${tecnico} la retiró y nunca hizo la devolución. Si la cerrás a mano, ` +
+                `la camioneta vuelve a estar disponible y queda registrado que el control ` +
+                `no se hizo.\n\n¿Por qué la estás liberando?`);
+            if (motivo === null) return;
+            if (!motivo.trim()) {
+                alert('Hace falta un motivo para poder liberarla.');
+                return;
+            }
+            document.getElementById('forzar-camioneta-id').value = camionetaId;
+            document.getElementById('forzar-motivo').value = motivo.trim();
+            document.getElementById('form-forzar-devolucion').submit();
         }
 
         function descartarNotificacion(notificacionId) {

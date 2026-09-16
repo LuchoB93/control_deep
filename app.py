@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, time
 import os
 import sys
 import secrets
+import calendar as calendario_py
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
@@ -213,6 +214,63 @@ MARGEN_CONTROL = timedelta(hours=1)
 
 # Zona con la que se identifica a quien está de guardia y se lleva la camioneta.
 ZONA_GUARDIA = 'GUARDIA'
+
+# Qué se le controla a cada camioneta por calendario, además del control diario
+# de elementos. Los valores son los que se usan al crear un vencimiento nuevo:
+# después cada camioneta puede tener los suyos (una puede lavarse cada 15 días
+# y otra cada semana).
+#
+# El service es el único que vence por dos caminos a la vez, fecha y kilómetros:
+# manda el que llegue primero, y por eso el kilometraje es obligatorio en cada
+# control.
+TIPOS_VENCIMIENTO = {
+    'VTV': {
+        'etiqueta': 'VTV',
+        'icono': 'clipboard2-check',
+        'color': '#0d6efd',
+        'periodicidad_dias': 365,
+        'periodicidad_km': None,
+        'aviso_dias': 30,
+        'aviso_km': None,
+        'ayuda': 'Verificación técnica vehicular. Vence por fecha.',
+    },
+    'MATAFUEGO': {
+        'etiqueta': 'Matafuego',
+        'icono': 'fire',
+        'color': '#dc3545',
+        'periodicidad_dias': 365,
+        'periodicidad_km': None,
+        'aviso_dias': 30,
+        'aviso_km': None,
+        'ayuda': 'Carga y sellado del matafuego. Vence por fecha.',
+    },
+    'SERVICE': {
+        'etiqueta': 'Service',
+        'icono': 'wrench-adjustable',
+        'color': '#fd7e14',
+        'periodicidad_dias': 365,
+        'periodicidad_km': 10000,
+        'aviso_dias': 30,
+        'aviso_km': 1000,
+        'ayuda': 'Service de aceite y filtros: cada 10.000 km o una vez al año, '
+                 'lo que ocurra primero.',
+    },
+    'LAVADO': {
+        'etiqueta': 'Lavado',
+        'icono': 'droplet',
+        'color': '#0dcaf0',
+        'periodicidad_dias': 15,
+        'periodicidad_km': None,
+        'aviso_dias': 3,
+        'aviso_km': None,
+        'ayuda': 'Lavado de la camioneta. Se programa por fecha.',
+    },
+}
+
+ORDEN_ESTADO = {'VENCIDO': 0, 'POR_VENCER': 1, 'SIN_DATOS': 2, 'AL_DIA': 3}
+
+MESES = ('enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+         'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre')
 
 # Por qué se repone un elemento faltante. Va impreso en el remito.
 MOTIVOS_REPOSICION = {
@@ -682,6 +740,17 @@ def timestamp_to_datetime(timestamp):
         return datetime.fromtimestamp(timestamp, TZ_LOCAL).strftime('%d/%m/%Y %H:%M')
     return '-'
 
+@app.template_filter('miles')
+def filtro_miles(valor):
+    """Separador de miles en las pantallas: 148320 -> 148.320."""
+    if valor in (None, ''):
+        return '—'
+    try:
+        return miles(valor)
+    except (TypeError, ValueError):
+        return valor
+
+
 @app.template_filter('nombre_firma')
 def nombre_firma(firma):
     """Nombre del archivo de firma, sirva lo guardado como ruta o como nombre."""
@@ -977,6 +1046,50 @@ def crear_base_de_datos():
     )
 ''')
     
+    # Vencimientos programados de cada camioneta: VTV, matafuego, service,
+    # lavado. Uno por camioneta y tipo; la fila guarda cuándo vence el próximo
+    # y cada cuánto se repite.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vencimientos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            camioneta_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            fecha_vencimiento TEXT,
+            km_vencimiento INTEGER,
+            periodicidad_dias INTEGER,
+            periodicidad_km INTEGER,
+            aviso_dias INTEGER,
+            aviso_km INTEGER,
+            observacion TEXT,
+            activo INTEGER DEFAULT 1,
+            FOREIGN KEY (camioneta_id) REFERENCES camionetas(id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_vencimiento_unico
+        ON vencimientos (camioneta_id, tipo)
+    ''')
+
+    # Cada vez que algo se hace queda acá. Es el registro de "qué se hizo y
+    # cuándo" que alimenta el calendario hacia atrás.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vencimientos_historial (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            camioneta_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            fecha_realizado TEXT NOT NULL,
+            km_realizado INTEGER,
+            registrado_por TEXT,
+            observacion TEXT,
+            fecha_registro TEXT,
+            FOREIGN KEY (camioneta_id) REFERENCES camionetas(id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_vencimientos_historial
+        ON vencimientos_historial (camioneta_id, tipo, fecha_realizado)
+    ''')
+
     # Tabla Fotos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fotos (
@@ -1030,6 +1143,11 @@ def aplicar_migraciones(conexion):
             ('tecnico2_id', 'INTEGER'),
             ('zona', 'TEXT'),
         ],
+        'controles_tecnicos': [
+            ('kilometraje', 'INTEGER'),
+            ('forzado_por', 'TEXT'),
+            ('observacion', 'TEXT'),
+        ],
     }
 
     for tabla, columnas in columnas_esperadas.items():
@@ -1053,6 +1171,7 @@ def aplicar_migraciones(conexion):
         ('idx_bloqueados_camioneta', 'elementos_bloqueados (camioneta_id, resuelto)'),
         ('idx_seguimiento_reporte', 'seguimiento_remitos (reporte_id)'),
         ('idx_notificaciones_rol', 'notificaciones (destinatario_rol, leido)'),
+        ('idx_controles_kilometraje', 'controles_tecnicos (asignacion_id, kilometraje)'),
     ]
     for nombre, definicion in indices:
         cursor.execute(f'CREATE INDEX IF NOT EXISTS {nombre} ON {definicion}')
@@ -1419,13 +1538,14 @@ def jefe_estadisticas():
     
     conexion.close()
     
+    # elementos_por_categoria y etiqueta_categoria se pasaban acá pero la
+    # plantilla no los usa, y el primero ni siquiera estaba definido: la página
+    # entera respondía 500 por un NameError.
     return render_template('jefe_estadisticas.html',
                          stats_generales=stats_generales,
                          elementos_mas_faltantes=elementos_mas_faltantes,
                          tecnicos_mas_reportan=tecnicos_mas_reportan,
-                         historial_por_elemento=historial_por_elemento,
-                         elementos_por_categoria=elementos_por_categoria,
-                         etiqueta_categoria=ETIQUETA_CATEGORIA)
+                         historial_por_elemento=historial_por_elemento)
 
 # ============================================
 # CAMBIO DE MANOS DE LA CAMIONETA
@@ -1556,6 +1676,117 @@ def retiro_abierto(conexion, camioneta_id):
     return None if devuelta else retiro
 
 
+def turno_de_devolucion(conexion, asignacion, momento=None):
+    """Turno en el que corresponde registrar la devolución de esta racha.
+
+    Simétrica de turno_de_retiro(), pero sin pasarse de los turnos que ya
+    empezaron: la devolución se anota en el turno que se está cursando, no en
+    el último que figure en la planilla. Eso es lo que permite que un técnico
+    que conserva la camioneta toda la semana la devuelva igual al final de
+    cada día si quiere controlarla más seguido, sin que el registro caiga en
+    un turno del viernes que todavía no empezó.
+
+    Con momento=None se recorre la racha completa, que es el turno donde la
+    devolución vence si nadie la adelanta.
+    """
+    actual = asignacion
+    for _ in range(40):  # tope de seguridad
+        siguiente = _asignacion_vecina(conexion, actual, hacia_adelante=True)
+        if siguiente is None or siguiente['tecnico_id'] != asignacion['tecnico_id']:
+            return actual
+        if momento is not None:
+            try:
+                fecha_dt = datetime.strptime(siguiente['fecha'], '%Y-%m-%d')
+            except (ValueError, TypeError):
+                return actual
+            inicio, _ = inicio_fin_jornada(siguiente['jornada'], fecha_dt)
+            if inicio is None or inicio > momento:
+                return actual
+        actual = siguiente
+    return actual
+
+
+def _detalle_custodia(conexion, camioneta, abierto, momento):
+    """Datos de una camioneta retirada y no devuelta: dónde y cuándo cerrarla.
+
+    La devolución no se registra en el turno del retiro sino en el último de la
+    racha, así que hay que resolverlo acá: es el dato que le falta a la pantalla
+    del técnico para poder ofrecerle el botón.
+    """
+    asignacion_retiro = conexion.execute('''
+        SELECT id, camioneta_id, fecha, jornada, tecnico_id, zona
+        FROM asignaciones WHERE id = ?
+    ''', (abierto['asignacion_id'],)).fetchone()
+
+    # Dónde se registra la devolución: el turno en curso de la racha.
+    destino = (turno_de_devolucion(conexion, asignacion_retiro, momento)
+               if asignacion_retiro else None)
+    # Cuándo vence: el final de la racha completa, incluidos los turnos que
+    # todavía no empezaron. Quien tiene la camioneta asignada toda la semana
+    # no está en falta el martes.
+    ultimo = (turno_de_devolucion(conexion, asignacion_retiro)
+              if asignacion_retiro else None)
+
+    vence = None
+    if ultimo:
+        try:
+            fecha_dt = datetime.strptime(ultimo['fecha'], '%Y-%m-%d')
+            _, fin = inicio_fin_jornada(ultimo['jornada'], fecha_dt)
+            if fin:
+                vence = fin + MARGEN_CONTROL
+        except (ValueError, TypeError):
+            pass
+
+    vencida = bool(vence and momento > vence)
+    return {
+        'camioneta_id': camioneta['id'],
+        'patente': camioneta['patente'],
+        'tecnico_id': abierto['tecnico_id'],
+        'tecnico': abierto['tecnico_nombre'],
+        'retirada_fecha': abierto['fecha'],
+        'retirada_jornada': abierto['jornada'],
+        'asignacion_devolucion_id': destino['id'] if destino else abierto['asignacion_id'],
+        'fecha_devolucion': destino['fecha'] if destino else abierto['fecha'],
+        'jornada_devolucion': destino['jornada'] if destino else abierto['jornada'],
+        'zona': (destino['zona'] if destino else '') or '',
+        'vencido_desde': vence,
+        'vencida': vencida,
+        'horas': int((momento - vence).total_seconds() // 3600) if vencida else 0,
+    }
+
+
+def custodias_abiertas(conexion, momento=None, tecnico_id=None):
+    """Camionetas retiradas que todavía nadie devolvió.
+
+    Es el estado real de la flota, independiente de lo que diga la planilla de
+    hoy. Mientras una custodia siga abierta la camioneta está bloqueada para
+    todos, y el único que puede liberarla es el técnico que la retiró.
+    """
+    momento = momento or ahora()
+    custodias = []
+    for camioneta in conexion.execute(
+            'SELECT id, patente FROM camionetas ORDER BY patente').fetchall():
+        abierto = retiro_abierto(conexion, camioneta['id'])
+        if abierto is None:
+            continue
+        if tecnico_id is not None and abierto['tecnico_id'] != tecnico_id:
+            continue
+        custodias.append(_detalle_custodia(conexion, camioneta, abierto, momento))
+    return custodias
+
+
+def custodia_de_camioneta(conexion, camioneta_id, momento=None):
+    """La custodia abierta de una camioneta puntual, o None si está libre."""
+    camioneta = conexion.execute(
+        'SELECT id, patente FROM camionetas WHERE id = ?', (camioneta_id,)).fetchone()
+    if camioneta is None:
+        return None
+    abierto = retiro_abierto(conexion, camioneta_id)
+    if abierto is None:
+        return None
+    return _detalle_custodia(conexion, camioneta, abierto, momento or ahora())
+
+
 # ============================================
 # CONTROLES NO REALIZADOS
 # ============================================
@@ -1571,16 +1802,28 @@ def vencimiento_retiro(inicio, fin):
 
 
 def controles_pendientes(conexion, momento=None, dias_atras=2):
-    """Asignaciones cuyo control debería estar hecho y no lo está.
+    """Controles que deberían estar hechos y no lo están.
 
-    Se reclama el RETIRO pasada la mitad del turno, y la DEVOLUCIÓN una hora
-    después de que termina. Solo se listan los controles que realmente
-    corresponden: quien conserva la camioneta entre turnos no tiene que
-    retirarla ni devolverla de nuevo.
+    Los RETIROS se buscan recorriendo la planilla de los últimos días: se
+    reclaman pasada la mitad del turno.
+
+    Las DEVOLUCIONES no se buscan en la planilla sino en las custodias abiertas
+    (camionetas retiradas que nadie devolvió), y por eso no tienen ventana de
+    días: antes se calculaban con el mismo `dias_atras` que los retiros y la
+    alerta se borraba sola a los tres días, mientras la camioneta seguía
+    bloqueada para siempre sin que nadie se enterara.
     """
     momento = momento or ahora()
     desde = (momento - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
     hasta = momento.strftime('%Y-%m-%d')
+
+    # Quién tiene cada camioneta ahora mismo. Se calcula una sola vez porque
+    # hace falta para cada asignación del recorrido.
+    custodias = custodias_abiertas(conexion, momento)
+    custodia_por_camioneta = {c['camioneta_id']: c for c in custodias}
+    deuda_por_tecnico = {}
+    for custodia in custodias:
+        deuda_por_tecnico.setdefault(custodia['tecnico_id'], []).append(custodia)
 
     asignaciones = conexion.execute('''
         SELECT a.id, a.camioneta_id, a.fecha, a.jornada, a.tecnico_id, a.zona,
@@ -1622,23 +1865,364 @@ def controles_pendientes(conexion, momento=None, dias_atras=2):
             'zona': asignacion['zona'] or '',
         }
 
+        # Si ya la tiene retirada, el retiro está hecho aunque sea de otro turno.
+        custodia = custodia_por_camioneta.get(asignacion['camioneta_id'])
+        ya_la_tiene = custodia is not None and custodia['tecnico_id'] == asignacion['tecnico_id']
+
         vence_retiro = vencimiento_retiro(inicio, fin)
         if (requiere_retiro(conexion, asignacion)
                 and 'RETIRO' not in hechos
+                and not ya_la_tiene
                 and momento > vence_retiro):
+            # Un técnico que debe una devolución tiene el retiro bloqueado: no
+            # es que no quiera hacerlo, es que el sistema no se lo permite.
+            # Soporte necesita ver esa diferencia para saber a qué atender.
+            deudas = [d for d in deuda_por_tecnico.get(asignacion['tecnico_id'], [])
+                      if d['camioneta_id'] != asignacion['camioneta_id']]
             pendientes.append({**base, 'tipo': 'RETIRO',
                                'vencido_desde': vence_retiro,
+                               'bloqueado_por_deuda': ', '.join(d['patente'] for d in deudas),
                                'horas': int((momento - vence_retiro).total_seconds() // 3600)})
 
-        if (requiere_devolucion(conexion, asignacion)
-                and 'DEVOLUCION' not in hechos
-                and momento > fin + MARGEN_CONTROL):
-            pendientes.append({**base, 'tipo': 'DEVOLUCION',
-                               'vencido_desde': fin + MARGEN_CONTROL,
-                               'horas': int((momento - fin - MARGEN_CONTROL).total_seconds() // 3600)})
+    # Las devoluciones salen de las custodias abiertas, no del recorrido de
+    # arriba: así siguen reclamándose por más viejas que sean.
+    for custodia in custodias:
+        if not custodia['vencida']:
+            continue
+        pendientes.append({
+            'asignacion_id': custodia['asignacion_devolucion_id'],
+            'camioneta_id': custodia['camioneta_id'],
+            'patente': custodia['patente'],
+            'tecnico': custodia['tecnico'],
+            'fecha': custodia['fecha_devolucion'],
+            'jornada': custodia['jornada_devolucion'],
+            'zona': custodia['zona'],
+            'tipo': 'DEVOLUCION',
+            'bloqueado_por_deuda': '',
+            'vencido_desde': custodia['vencido_desde'],
+            'horas': custodia['horas'],
+        })
 
     pendientes.sort(key=lambda p: p['vencido_desde'], reverse=True)
     return pendientes
+
+
+# ============================================
+# CALENDARIO DE VENCIMIENTOS
+# ============================================
+
+def _fecha_iso(valor):
+    """'2026-09-16' -> date, o None. Acepta también un datetime ISO completo."""
+    if not valor:
+        return None
+    try:
+        return datetime.strptime(str(valor)[:10], '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return None
+
+
+def estado_vencimiento(vencimiento, km_actual, hoy=None):
+    """Cuánto le falta a un vencimiento y si hay que avisar.
+
+    Un vencimiento puede tener plazo por fecha, por kilómetros o por los dos.
+    Cuando tiene los dos (el service) manda el que llegue primero: si la
+    camioneta hace 10.000 km en seis meses, el service es a los seis meses.
+
+    Devuelve siempre las dos cuentas para poder mostrarlas, más el estado que
+    resulta de la peor de las dos.
+    """
+    hoy = hoy or ahora().date()
+
+    fecha = _fecha_iso(vencimiento['fecha_vencimiento'])
+    dias = (fecha - hoy).days if fecha else None
+
+    km_objetivo = vencimiento['km_vencimiento']
+    km_faltantes = (km_objetivo - km_actual
+                    if km_objetivo is not None and km_actual is not None else None)
+
+    aviso_dias = vencimiento['aviso_dias']
+    aviso_km = vencimiento['aviso_km']
+
+    def clasificar(restante, aviso):
+        if restante is None:
+            return None
+        if restante < 0:
+            return 'VENCIDO'
+        if aviso is not None and restante <= aviso:
+            return 'POR_VENCER'
+        return 'AL_DIA'
+
+    por_fecha = clasificar(dias, aviso_dias)
+    por_km = clasificar(km_faltantes, aviso_km)
+
+    candidatos = [c for c in (por_fecha, por_km) if c]
+    if not candidatos:
+        estado = 'SIN_DATOS'
+        motivo = None
+    else:
+        estado = min(candidatos, key=lambda c: ORDEN_ESTADO[c])
+        motivo = 'fecha' if por_fecha == estado else 'km'
+
+    if estado == 'SIN_DATOS':
+        detalle = 'Sin cargar'
+    elif motivo == 'fecha':
+        if dias < 0:
+            detalle = f'Vencido hace {abs(dias)} día{"s" if abs(dias) != 1 else ""}'
+        elif dias == 0:
+            detalle = 'Vence hoy'
+        else:
+            detalle = f'Faltan {dias} día{"s" if dias != 1 else ""}'
+    else:
+        if km_faltantes < 0:
+            detalle = f'Pasado por {miles(abs(km_faltantes))} km'
+        else:
+            detalle = f'Faltan {miles(km_faltantes)} km'
+
+    return {
+        'estado': estado,
+        'motivo': motivo,
+        'dias': dias,
+        'km_faltantes': km_faltantes,
+        'detalle': detalle,
+    }
+
+
+def estado_flota(conexion, momento=None, camioneta_id=None):
+    """Todos los vencimientos de la flota con su estado, ordenados por urgencia.
+
+    Las camionetas a las que todavía no se les cargó un vencimiento aparecen
+    igual, en SIN_DATOS: si se omitieran, el calendario diría que está todo al
+    día cuando en realidad no se sabe nada.
+    """
+    momento = momento or ahora()
+    hoy = momento.date()
+
+    sql = 'SELECT id, patente FROM camionetas WHERE activa = 1'
+    parametros = []
+    if camioneta_id is not None:
+        sql += ' AND id = ?'
+        parametros.append(camioneta_id)
+    camionetas = conexion.execute(sql + ' ORDER BY patente', parametros).fetchall()
+
+    cargados = {}
+    for fila in conexion.execute('SELECT * FROM vencimientos WHERE activo = 1'):
+        cargados[(fila['camioneta_id'], fila['tipo'])] = fila
+
+    filas = []
+    for camioneta in camionetas:
+        km_actual = ultimo_kilometraje(conexion, camioneta['id'])
+        for tipo, config in TIPOS_VENCIMIENTO.items():
+            guardado = cargados.get((camioneta['id'], tipo))
+            vencimiento = guardado if guardado is not None else {
+                'fecha_vencimiento': None, 'km_vencimiento': None,
+                'aviso_dias': config['aviso_dias'], 'aviso_km': config['aviso_km'],
+            }
+            estado = estado_vencimiento(vencimiento, km_actual, hoy)
+
+            ultimo = conexion.execute('''
+                SELECT fecha_realizado, km_realizado, registrado_por, observacion
+                FROM vencimientos_historial
+                WHERE camioneta_id = ? AND tipo = ?
+                ORDER BY fecha_realizado DESC, id DESC LIMIT 1
+            ''', (camioneta['id'], tipo)).fetchone()
+
+            filas.append({
+                'camioneta_id': camioneta['id'],
+                'patente': camioneta['patente'],
+                'tipo': tipo,
+                'etiqueta': config['etiqueta'],
+                'icono': config['icono'],
+                'color': config['color'],
+                'ayuda': config['ayuda'],
+                'km_actual': km_actual,
+                'fecha_vencimiento': vencimiento['fecha_vencimiento'],
+                'km_vencimiento': vencimiento['km_vencimiento'],
+                'periodicidad_dias': (guardado['periodicidad_dias'] if guardado
+                                      else config['periodicidad_dias']),
+                'periodicidad_km': (guardado['periodicidad_km'] if guardado
+                                    else config['periodicidad_km']),
+                'aviso_dias': vencimiento['aviso_dias'] if guardado else config['aviso_dias'],
+                'aviso_km': vencimiento['aviso_km'] if guardado else config['aviso_km'],
+                'observacion': guardado['observacion'] if guardado else '',
+                'configurado': guardado is not None,
+                'ultimo': dict(ultimo) if ultimo else None,
+                **estado,
+            })
+
+    filas.sort(key=lambda f: (ORDEN_ESTADO[f['estado']],
+                              f['dias'] if f['dias'] is not None else 9999,
+                              f['patente']))
+    return filas
+
+
+def vencimientos_alerta(conexion, momento=None):
+    """Lo que hay que avisar hoy: vencido o a punto de vencer.
+
+    SIN_DATOS queda afuera a propósito: que falte cargar la fecha de la VTV es
+    un pendiente de carga, no una urgencia de la flota, y mezclarlos taparía
+    las alertas reales.
+    """
+    return [f for f in estado_flota(conexion, momento)
+            if f['estado'] in ('VENCIDO', 'POR_VENCER')]
+
+
+def proximo_vencimiento(config_dias, config_km, desde_fecha, desde_km):
+    """(fecha, km) del siguiente vencimiento después de hacer el trabajo."""
+    fecha = None
+    if config_dias:
+        base = _fecha_iso(desde_fecha) or ahora().date()
+        fecha = (base + timedelta(days=int(config_dias))).strftime('%Y-%m-%d')
+
+    km = None
+    if config_km and desde_km is not None:
+        km = int(desde_km) + int(config_km)
+
+    return fecha, km
+
+
+def registrar_realizado(conexion, camioneta_id, tipo, fecha, km, quien, observacion):
+    """Anota el trabajo hecho y corre el vencimiento al próximo período.
+
+    Es un solo movimiento a propósito: si se registrara el lavado sin mover la
+    fecha, la alerta seguiría sonando y alguien terminaría apagándola a mano.
+    """
+    config = TIPOS_VENCIMIENTO[tipo]
+    actual = conexion.execute(
+        'SELECT * FROM vencimientos WHERE camioneta_id = ? AND tipo = ?',
+        (camioneta_id, tipo)).fetchone()
+
+    periodicidad_dias = actual['periodicidad_dias'] if actual else config['periodicidad_dias']
+    periodicidad_km = actual['periodicidad_km'] if actual else config['periodicidad_km']
+    aviso_dias = actual['aviso_dias'] if actual else config['aviso_dias']
+    aviso_km = actual['aviso_km'] if actual else config['aviso_km']
+
+    conexion.execute('''
+        INSERT INTO vencimientos_historial
+            (camioneta_id, tipo, fecha_realizado, km_realizado, registrado_por,
+             observacion, fecha_registro)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (camioneta_id, tipo, fecha, km, quien, observacion, ahora().isoformat()))
+
+    nueva_fecha, nuevo_km = proximo_vencimiento(
+        periodicidad_dias, periodicidad_km, fecha, km)
+
+    if actual:
+        conexion.execute('''
+            UPDATE vencimientos
+            SET fecha_vencimiento = ?, km_vencimiento = ?, activo = 1
+            WHERE id = ?
+        ''', (nueva_fecha, nuevo_km, actual['id']))
+    else:
+        conexion.execute('''
+            INSERT INTO vencimientos
+                (camioneta_id, tipo, fecha_vencimiento, km_vencimiento,
+                 periodicidad_dias, periodicidad_km, aviso_dias, aviso_km, activo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ''', (camioneta_id, tipo, nueva_fecha, nuevo_km, periodicidad_dias,
+              periodicidad_km, aviso_dias, aviso_km))
+
+    return nueva_fecha, nuevo_km
+
+
+def calendario_mes(conexion, anio, mes, momento=None):
+    """Semanas del mes con lo que se hizo y lo que vence cada día.
+
+    Se mezclan tres cosas en la misma grilla, que es lo que hace útil la vista:
+    los trabajos ya hechos (lavado, service...), los vencimientos que caen ese
+    día, y cuántos controles de camioneta se hicieron.
+    """
+    momento = momento or ahora()
+    primero = datetime(anio, mes, 1).date()
+    ultimo_dia = calendario_py.monthrange(anio, mes)[1]
+    ultimo = datetime(anio, mes, ultimo_dia).date()
+    desde, hasta = primero.strftime('%Y-%m-%d'), ultimo.strftime('%Y-%m-%d')
+
+    eventos = {}
+
+    def agregar(dia, evento):
+        eventos.setdefault(dia, []).append(evento)
+
+    for fila in conexion.execute('''
+            SELECT h.tipo, h.fecha_realizado, h.km_realizado, h.registrado_por,
+                   h.observacion, c.patente
+            FROM vencimientos_historial h
+            JOIN camionetas c ON h.camioneta_id = c.id
+            WHERE h.fecha_realizado BETWEEN ? AND ?
+            ORDER BY h.fecha_realizado, c.patente
+        ''', (desde, hasta)):
+        config = TIPOS_VENCIMIENTO.get(fila['tipo'], {})
+        agregar(fila['fecha_realizado'][:10], {
+            'clase': 'hecho',
+            'tipo': fila['tipo'],
+            'etiqueta': config.get('etiqueta', fila['tipo']),
+            'icono': config.get('icono', 'check'),
+            'color': config.get('color', '#6c757d'),
+            'patente': fila['patente'],
+            'detalle': (f"{miles(fila['km_realizado'])} km" if fila['km_realizado'] else ''),
+            'texto': f"{config.get('etiqueta', fila['tipo'])} · {fila['patente']}",
+            'observacion': fila['observacion'] or '',
+            'quien': fila['registrado_por'] or '',
+        })
+
+    for fila in conexion.execute('''
+            SELECT v.tipo, v.fecha_vencimiento, v.km_vencimiento, c.patente
+            FROM vencimientos v
+            JOIN camionetas c ON v.camioneta_id = c.id
+            WHERE v.activo = 1 AND v.fecha_vencimiento BETWEEN ? AND ?
+            ORDER BY v.fecha_vencimiento, c.patente
+        ''', (desde, hasta)):
+        config = TIPOS_VENCIMIENTO.get(fila['tipo'], {})
+        vencido = _fecha_iso(fila['fecha_vencimiento']) < momento.date()
+        agregar(fila['fecha_vencimiento'][:10], {
+            'clase': 'vencido' if vencido else 'vence',
+            'tipo': fila['tipo'],
+            'etiqueta': config.get('etiqueta', fila['tipo']),
+            'icono': config.get('icono', 'calendar'),
+            'color': config.get('color', '#6c757d'),
+            'patente': fila['patente'],
+            'detalle': (f"a los {miles(fila['km_vencimiento'])} km"
+                        if fila['km_vencimiento'] else ''),
+            'texto': f"Vence {config.get('etiqueta', fila['tipo'])} · {fila['patente']}",
+            'observacion': '',
+            'quien': '',
+        })
+
+    # Los controles diarios van agrupados: uno por día, con el total. Listarlos
+    # de a uno taparía los vencimientos, que es lo que se viene a mirar acá.
+    for fila in conexion.execute('''
+            SELECT ct.fecha, COUNT(*) AS total
+            FROM controles_tecnicos ct
+            WHERE ct.finalizado = 1 AND ct.fecha BETWEEN ? AND ?
+            GROUP BY ct.fecha
+        ''', (desde, hasta)):
+        agregar(fila['fecha'][:10], {
+            'clase': 'control',
+            'tipo': 'CONTROL',
+            'etiqueta': 'Controles',
+            'icono': 'clipboard-check',
+            'color': '#198754',
+            'patente': '',
+            'detalle': '',
+            'texto': f"{fila['total']} control{'es' if fila['total'] != 1 else ''} de camioneta",
+            'observacion': '',
+            'quien': '',
+        })
+
+    semanas = []
+    hoy = momento.strftime('%Y-%m-%d')
+    for semana in calendario_py.Calendar(firstweekday=0).monthdatescalendar(anio, mes):
+        dias = []
+        for dia in semana:
+            clave = dia.strftime('%Y-%m-%d')
+            dias.append({
+                'fecha': clave,
+                'numero': dia.day,
+                'del_mes': dia.month == mes,
+                'es_hoy': clave == hoy,
+                'eventos': eventos.get(clave, []),
+            })
+        semanas.append(dias)
+    return semanas
 
 
 # ============================================
@@ -1811,6 +2395,8 @@ def admin():
                 
             # Controles que ya deberían estar hechos y no lo están.
             pendientes_control = controles_pendientes(conexion)
+            # VTV, matafuego, service y lavado vencidos o por vencer.
+            vencimientos = vencimientos_alerta(conexion)
             
         except sqlite3.OperationalError as e:
             # Antes faltaba inicializar `reportes`, y este except terminaba
@@ -1821,6 +2407,7 @@ def admin():
             patentes_con_reportes = []
             faltantes_por_patente = {}
             pendientes_control = []
+            vencimientos = []
         
     finally:
         conexion.close()
@@ -1847,6 +2434,7 @@ def admin():
     
     return render_template('admin.html',
                          pendientes_control=pendientes_control,
+                         vencimientos=vencimientos,
                          zonas=zonas,
                          camionetas=camionetas,
                          tecnicos=tecnicos,
@@ -2115,19 +2703,26 @@ def tecnico():
     
     # El técnico 1 es el responsable del control; el acompañante solo lo ve.
     es_responsable = bool(asignacion) and asignacion['tecnico_id'] == usuario_id
-    
+
+    # Camionetas que este técnico retiró y nunca devolvió. Se calcula siempre,
+    # tenga o no asignación hoy: antes la pantalla solo miraba la asignación
+    # del día, así que una devolución colgada de la semana pasada era invisible
+    # para él mientras la camioneta quedaba bloqueada para todos los demás.
+    custodias = custodias_abiertas(conexion, momento, tecnico_id=usuario_id)
+
     control_retiro_activo = None
     control_devolucion_activo = None
-    retiro_completado = False
+    tiene_camioneta = False
     devolucion_completada = False
     necesita_retiro = True
     necesita_devolucion = True
-    conserva_camioneta = False
     es_guardia = False
-    asignacion_retiro_id = None
-    jornada_retiro = jornada_actual_tecnico
-    retiro_en_otro_turno = False
-    
+    asignacion_devolucion_id = None
+    jornada_devolucion = jornada_actual_tecnico
+    devolucion_en_otro_turno = False
+    retirada_fecha = None
+    retirada_jornada = None
+
     bloqueada_por = None
 
     if asignacion:
@@ -2138,39 +2733,40 @@ def tecnico():
         es_guardia = (asignacion['zona'] or '').strip().upper() == ZONA_GUARDIA
         necesita_retiro = requiere_retiro(conexion, asignacion)
         necesita_devolucion = requiere_devolucion(conexion, asignacion)
-        conserva_camioneta = not necesita_devolucion
-        
-        # Si viene conservando la camioneta de turnos anteriores, el retiro
-        # vigente es el de aquel turno, no el de hoy.
-        asignacion_retiro = asignacion if necesita_retiro else turno_de_retiro(conexion, asignacion)
-        asignacion_retiro_id = asignacion_retiro['id']
-        jornada_retiro = asignacion_retiro['jornada']
-        retiro_en_otro_turno = asignacion_retiro['id'] != asignacion['id']
-        
-        def buscar_control(asignacion_id, fecha, jornada, tipo, finalizado):
+
+        # Lo que decide qué botón va no es la planilla sino la custodia: tener
+        # la camioneta en la mano. Así el técnico que la devolvió de más (por
+        # control propio, al terminar el día) puede volver a retirarla al día
+        # siguiente aunque la planilla diga que es la misma racha.
+        mia = next((c for c in custodias
+                    if c['camioneta_id'] == asignacion['camioneta_id']), None)
+        tiene_camioneta = mia is not None
+
+        if mia:
+            asignacion_devolucion_id = mia['asignacion_devolucion_id']
+            jornada_devolucion = mia['jornada_devolucion']
+            devolucion_en_otro_turno = mia['asignacion_devolucion_id'] != asignacion['id']
+            retirada_fecha = mia['retirada_fecha']
+            retirada_jornada = mia['retirada_jornada']
+        else:
+            asignacion_devolucion_id = asignacion['id']
+
+        def buscar_control(asignacion_id, tipo, finalizado):
             return conexion.execute('''
-                SELECT * FROM controles_tecnicos 
-                WHERE asignacion_id = ? AND fecha = ? AND jornada = ? 
-                AND tipo_control = ? AND finalizado = ?
-            ''', (asignacion_id, fecha, jornada, tipo, finalizado)).fetchone()
-        
-        control_retiro_activo = buscar_control(
-            asignacion_retiro['id'], asignacion_retiro['fecha'],
-            asignacion_retiro['jornada'], 'RETIRO', 0)
-        retiro_completado = buscar_control(
-            asignacion_retiro['id'], asignacion_retiro['fecha'],
-            asignacion_retiro['jornada'], 'RETIRO', 1) is not None
-        
-        control_devolucion_activo = buscar_control(
-            asignacion['id'], fecha_actual, jornada_actual_tecnico, 'DEVOLUCION', 0)
-        devolucion_completada = buscar_control(
-            asignacion['id'], fecha_actual, jornada_actual_tecnico, 'DEVOLUCION', 1) is not None
-    
-    # Lo que importa en pantalla es si el retiro de esta racha está hecho, no si
-    # esta asignación puntual lo exige: quien conserva la camioneta desde el
-    # turno anterior pero nunca la revisó todavía tiene el retiro pendiente.
-    retiro_pendiente = bool(asignacion) and not retiro_completado
-    
+                SELECT * FROM controles_tecnicos
+                WHERE asignacion_id = ? AND tipo_control = ? AND finalizado = ?
+                ORDER BY id DESC LIMIT 1
+            ''', (asignacion_id, tipo, finalizado)).fetchone()
+
+        control_retiro_activo = buscar_control(asignacion['id'], 'RETIRO', 0)
+        control_devolucion_activo = buscar_control(asignacion_devolucion_id, 'DEVOLUCION', 0)
+        devolucion_completada = buscar_control(asignacion['id'], 'DEVOLUCION', 1) is not None
+
+    # Deudas: custodias sobre otras camionetas. Mientras existan, este técnico
+    # no puede retirar nada nuevo.
+    deudas = [c for c in custodias
+              if not asignacion or c['camioneta_id'] != asignacion['camioneta_id']]
+
     elementos_bloqueados = []
     if asignacion:
         bloqueados = conexion.execute('''
@@ -2189,15 +2785,16 @@ def tecnico():
                          es_responsable=es_responsable,
                          control_retiro_activo=control_retiro_activo,
                          control_devolucion_activo=control_devolucion_activo,
-                         retiro_completado=retiro_completado,
+                         tiene_camioneta=tiene_camioneta,
                          devolucion_completada=devolucion_completada,
                          necesita_retiro=necesita_retiro,
                          necesita_devolucion=necesita_devolucion,
-                         retiro_pendiente=retiro_pendiente,
-                         asignacion_retiro_id=asignacion_retiro_id,
-                         jornada_retiro=jornada_retiro,
-                         retiro_en_otro_turno=retiro_en_otro_turno,
-                         conserva_camioneta=conserva_camioneta,
+                         deudas=deudas,
+                         asignacion_devolucion_id=asignacion_devolucion_id,
+                         jornada_devolucion=jornada_devolucion,
+                         devolucion_en_otro_turno=devolucion_en_otro_turno,
+                         retirada_fecha=retirada_fecha,
+                         retirada_jornada=retirada_jornada,
                          es_guardia=es_guardia,
                          bloqueada_por=bloqueada_por,
                          elementos_bloqueados=elementos_bloqueados,
@@ -2205,6 +2802,76 @@ def tecnico():
                          jornada_actual=jornada_actual_tecnico,
                          mensaje=request.args.get('mensaje', ''),
                          error=request.args.get('error', ''))
+
+# Tope de cordura para el odómetro: más que esto es un error de tipeo, no un
+# kilometraje. Y salto máximo razonable entre dos controles seguidos.
+KM_MAXIMO = 2_000_000
+KM_SALTO_MAXIMO = 5_000
+
+
+def ultimo_kilometraje(conexion, camioneta_id, antes_de_control=None):
+    """Último odómetro registrado para esta camioneta, o None si no hay ninguno.
+
+    Sirve para dos cosas: validar que el número nuevo no vaya para atrás y
+    calcular cuánto le falta a la camioneta para el próximo service.
+    """
+    sql = '''
+        SELECT ct.kilometraje, ct.fecha, ct.fecha_hora_fin
+        FROM controles_tecnicos ct
+        JOIN asignaciones a ON ct.asignacion_id = a.id
+        WHERE a.camioneta_id = ? AND ct.kilometraje IS NOT NULL
+    '''
+    parametros = [camioneta_id]
+    if antes_de_control is not None:
+        sql += ' AND ct.id != ?'
+        parametros.append(antes_de_control)
+    sql += ' ORDER BY ct.fecha DESC, ct.id DESC LIMIT 1'
+
+    fila = conexion.execute(sql, parametros).fetchone()
+    return fila['kilometraje'] if fila else None
+
+
+def miles(numero):
+    """12345 -> '12.345'. Los mensajes se leen en la pantalla del técnico."""
+    return f'{int(numero):,}'.replace(',', '.')
+
+
+def validar_kilometraje(valor, ultimo):
+    """(kilometraje, error). El odómetro no vuelve para atrás ni salta de golpe."""
+    if valor in (None, ''):
+        return None, 'Falta cargar el kilometraje de la camioneta.'
+    try:
+        km = int(str(valor).strip().replace('.', '').replace(' ', ''))
+    except (TypeError, ValueError):
+        return None, 'El kilometraje tiene que ser un número entero.'
+
+    if km < 0:
+        return None, 'El kilometraje no puede ser negativo.'
+    if km > KM_MAXIMO:
+        return None, f'{miles(km)} km no parece un valor real. Revisá el odómetro.'
+    if ultimo is not None:
+        if km < ultimo:
+            return None, (f'El último kilometraje registrado es {miles(ultimo)} km y el '
+                          f'odómetro no vuelve para atrás. Si te equivocaste antes, '
+                          f'avisá a soporte.')
+        if km - ultimo > KM_SALTO_MAXIMO:
+            return None, (f'De {miles(ultimo)} a {miles(km)} km hay '
+                          f'{miles(km - ultimo)} km de diferencia. '
+                          f'Revisá que no te haya sobrado un dígito.')
+    return km, None
+
+
+def deuda_que_bloquea(conexion, usuario_id, camioneta_id):
+    """Patentes que este técnico debe devolver y le impiden tocar otra camioneta.
+
+    Se consulta en cada paso del retiro y no solo al iniciarlo: si no, alcanzaba
+    con tener la pantalla del control abierta, o pegar la URL, para saltearse el
+    bloqueo.
+    """
+    deudas = [c for c in custodias_abiertas(conexion, tecnico_id=usuario_id)
+              if c['camioneta_id'] != camioneta_id]
+    return ', '.join(d['patente'] for d in deudas)
+
 
 def control_del_tecnico(conexion, control_id, usuario_id):
     """Devuelve el control solo si el técnico es el responsable de esa asignación.
@@ -2257,6 +2924,40 @@ def iniciar_control():
         fecha_control = asignacion['fecha']
         jornada = asignacion['jornada']
         
+        # Una camioneta retirada queda a nombre de quien la retiró hasta que la
+        # devuelva: ningún otro técnico puede retirarla ni devolverla.
+        abierto = retiro_abierto(conexion, asignacion['camioneta_id'])
+        if abierto is not None and abierto['tecnico_id'] != usuario_id:
+            return redirect(url_for('tecnico',
+                error=f'🔒 {abierto["tecnico_nombre"]} tiene esta camioneta retirada y '
+                      'todavía no la devolvió. Hasta que haga la devolución es su '
+                      'responsabilidad: avisá a soporte técnico.'))
+
+        # Lo que habilita cada control es la custodia, no la planilla. El
+        # técnico puede retirar y devolver todos los días aunque la camioneta
+        # sea suya toda la semana: es un control de más, nunca de menos.
+        if tipo_control == 'RETIRO':
+            if abierto is not None:
+                return redirect(url_for('tecnico',
+                    error='⚠️ Ya tenés esta camioneta retirada. Lo que corresponde '
+                          'ahora es la devolución.'))
+
+            # Deber una devolución bloquea cualquier retiro nuevo: la camioneta
+            # anterior sigue a su nombre y no puede hacerse cargo de otra.
+            deudas = [c for c in custodias_abiertas(conexion, tecnico_id=usuario_id)
+                      if c['camioneta_id'] != asignacion['camioneta_id']]
+            if deudas:
+                patentes = ', '.join(d['patente'] for d in deudas)
+                return redirect(url_for('tecnico',
+                    error=f'🔒 Tenés la devolución de {patentes} sin hacer. Cerrala '
+                          'antes de retirar otra camioneta.'))
+
+        if tipo_control == 'DEVOLUCION':
+            if abierto is None:
+                return redirect(url_for('tecnico',
+                    error='⚠️ No tenés esta camioneta retirada, así que no hay nada '
+                          'que devolver. Primero hacé el retiro.'))
+
         existe = conexion.execute('''
             SELECT id FROM controles_tecnicos 
             WHERE asignacion_id = ? AND fecha = ? AND jornada = ? 
@@ -2276,37 +2977,6 @@ def iniciar_control():
             return redirect(url_for('tecnico',
                 error=f'El control de {tipo_control.lower()} de este turno ya fue realizado.'))
         
-        # Una camioneta retirada queda a nombre de quien la retiró hasta que la
-        # devuelva: ningún otro técnico puede retirarla ni devolverla.
-        abierto = retiro_abierto(conexion, asignacion['camioneta_id'])
-        if abierto is not None and abierto['tecnico_id'] != usuario_id:
-            return redirect(url_for('tecnico',
-                error=f'🔒 {abierto["tecnico_nombre"]} tiene esta camioneta retirada y '
-                      'todavía no la devolvió. Hasta que haga la devolución es su '
-                      'responsabilidad: avisá a soporte técnico.'))
-
-        if tipo_control == 'RETIRO':
-            if not requiere_retiro(conexion, asignacion):
-                return redirect(url_for('tecnico',
-                    error='⚠️ Ya tenés esta camioneta desde el turno anterior. '
-                          'No hace falta un nuevo retiro.'))
-
-        if tipo_control == 'DEVOLUCION':
-            if not requiere_devolucion(conexion, asignacion):
-                return redirect(url_for('tecnico',
-                    error='⚠️ Seguís con esta camioneta en el próximo turno. '
-                          'La devolución se hace cuando cambia de responsable.'))
-            
-            # El retiro pudo hacerse en un turno anterior de la misma racha.
-            asignacion_retiro = turno_de_retiro(conexion, asignacion)
-            retiro_completado = conexion.execute('''
-                SELECT id FROM controles_tecnicos 
-                WHERE asignacion_id = ? AND tipo_control = 'RETIRO' AND finalizado = 1
-            ''', (asignacion_retiro['id'],)).fetchone()
-            
-            if not retiro_completado:
-                return redirect(url_for('tecnico', 
-                    error='⚠️ No podés iniciar una devolución sin haber completado el retiro primero.'))
         
         cursor = conexion.cursor()
         cursor.execute('''
@@ -2342,6 +3012,14 @@ def realizar_control(control_id):
         conexion.close()
         return redirect(url_for('tecnico',
             error='Control no encontrado, ya finalizado, o no te corresponde.'))
+
+    if control['tipo_control'] == 'RETIRO':
+        patentes = deuda_que_bloquea(conexion, session['usuario_id'], control['camioneta_id'])
+        if patentes:
+            conexion.close()
+            return redirect(url_for('tecnico',
+                error=f'🔒 Tenés la devolución de {patentes} sin hacer. Cerrala antes '
+                      'de seguir con este retiro.'))
     
     items_registrados = conexion.execute('''
         SELECT elemento, estado FROM items_control_tecnico 
@@ -2390,11 +3068,15 @@ def realizar_control(control_id):
                 'bloqueado': nombre in elementos_bloqueados_lista,
                 'registrado': nombre in estado_registrado
             })
-    
+
+    ultimo_km = ultimo_kilometraje(conexion, control['camioneta_id'],
+                                   antes_de_control=control_id)
+
     conexion.close()
-    
+
     return render_template('realizar_control.html',
                          control=control,
+                         ultimo_km=ultimo_km,
                          elementos_por_categoria=elementos_por_categoria,
                          elementos_bloqueados=elementos_bloqueados_lista,
                          faltantes_recuperables=faltantes_recuperables)
@@ -2417,6 +3099,16 @@ def finalizar_control(control_id):
         if control['finalizado'] == 1:
             conexion.close()
             return redirect(url_for('tecnico', error='Este control ya fue finalizado'))
+
+        # El kilometraje se carga junto con los ítems, en guardar-control-rapido.
+        # Si acá falta es porque ese guardado falló o porque se llegó directo a
+        # esta URL: en los dos casos el control no está hecho y cerrarlo dejaría
+        # la camioneta sin lectura de odómetro, que es de donde sale el service.
+        if control['kilometraje'] is None:
+            conexion.close()
+            return redirect(url_for('tecnico',
+                error='No se puede cerrar el control sin el kilometraje. '
+                      'Volvé a entrar al control, cargalo y finalizá desde ahí.'))
         
         fecha_hora = ahora().isoformat()
         conexion.execute('''
@@ -2443,6 +3135,7 @@ def guardar_control_rapido():
     
     data = request.get_json(silent=True) or {}
     control_id = data.get('control_id')
+    kilometraje = data.get('kilometraje')
     problemas = data.get('problemas', [])
     recuperados = data.get('recuperados', [])
     revisados = data.get('revisados', [])
@@ -2468,6 +3161,24 @@ def guardar_control_rapido():
         
         if info['finalizado']:
             return jsonify({'error': 'Este control ya fue finalizado'}), 400
+
+        if info['tipo_control'] == 'RETIRO':
+            patentes = deuda_que_bloquea(conexion, session['usuario_id'], info['camioneta_id'])
+            if patentes:
+                return jsonify({'error':
+                    f'Tenés la devolución de {patentes} sin hacer. '
+                    'Cerrala antes de completar este retiro.'}), 400
+
+        # El kilometraje es obligatorio en todo control: de ahí sale el aviso de
+        # service y el seguimiento de uso de cada camioneta.
+        ultimo = ultimo_kilometraje(conexion, info['camioneta_id'],
+                                    antes_de_control=control_id)
+        km, error_km = validar_kilometraje(kilometraje, ultimo)
+        if error_km:
+            return jsonify({'error': error_km}), 400
+
+        conexion.execute('UPDATE controles_tecnicos SET kilometraje = ? WHERE id = ?',
+                         (km, control_id))
         
         # Guardar dos veces el mismo control (doble clic, reintento del navegador)
         # duplicaba los 41 ítems y los 41 reportes. Se corta acá.
@@ -2764,6 +3475,9 @@ def historial_camioneta(patente):
             ct.fecha_hora_inicio,
             ct.fecha_hora_fin,
             ct.finalizado,
+            ct.kilometraje,
+            ct.forzado_por,
+            ct.observacion,
             u.nombre as tecnico_nombre
         FROM controles_tecnicos ct
         JOIN asignaciones a ON ct.asignacion_id = a.id
@@ -2805,6 +3519,19 @@ def historial_camioneta(patente):
             'control': dict(control),
             'elementos': [dict(e) for e in elementos]
         })
+
+    # Kilómetros recorridos entre un control y el anterior. La lista viene del
+    # más nuevo al más viejo, así que el "anterior" es el siguiente de la lista.
+    for indice, item in enumerate(historial_detallado):
+        km = item['control']['kilometraje']
+        item['km_recorridos'] = None
+        if km is None:
+            continue
+        for previo in historial_detallado[indice + 1:]:
+            anterior = previo['control']['kilometraje']
+            if anterior is not None:
+                item['km_recorridos'] = km - anterior
+                break
     
     historial_elementos = conexion.execute('''
         SELECT
@@ -3005,6 +3732,70 @@ def generar_remito_pdf(reporte_id):
 # RUTAS DE SEGUIMIENTO DE REMITOS
 # ============================================
 
+@app.route('/forzar-devolucion', methods=['POST'])
+def forzar_devolucion():
+    """Soporte cierra una devolución que el técnico dejó colgada.
+
+    Sin esto la camioneta quedaba trabada para siempre cuando el técnico no
+    aparecía: nadie más podía retirarla y no había forma de liberarla. Queda
+    registrado quién la forzó y por qué, y el control se marca como forzado
+    para que no se confunda con una revisión real.
+    """
+    if not autorizado('soporte'):
+        return redirect(url_for('login'))
+
+    try:
+        camioneta_id = int(request.form.get('camioneta_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('admin', error='Camioneta inválida'))
+
+    motivo = (request.form.get('motivo') or '').strip()
+    if not motivo:
+        return redirect(url_for('admin',
+            error='Hay que explicar por qué se cierra la devolución a mano.'))
+
+    conexion = get_db()
+    try:
+        custodia = custodia_de_camioneta(conexion, camioneta_id)
+        if custodia is None:
+            return redirect(url_for('admin',
+                error='Esa camioneta no tiene ninguna devolución pendiente.'))
+
+        fecha_hora = ahora().isoformat()
+        destino = conexion.execute(
+            'SELECT id, fecha, jornada FROM asignaciones WHERE id = ?',
+            (custodia['asignacion_devolucion_id'],)).fetchone()
+        if destino is None:
+            return redirect(url_for('admin',
+                error='No se encontró el turno donde registrar la devolución.'))
+
+        conexion.execute('''
+            INSERT INTO controles_tecnicos
+                (asignacion_id, fecha, jornada, tipo_control, finalizado,
+                 fecha_hora_inicio, fecha_hora_fin, forzado_por, observacion)
+            VALUES (?, ?, ?, 'DEVOLUCION', 1, ?, ?, ?, ?)
+        ''', (destino['id'], destino['fecha'], destino['jornada'],
+              fecha_hora, fecha_hora, session.get('nombre'), motivo))
+
+        crear_notificacion(
+            'DEVOLUCION_FORZADA',
+            f'{session.get("nombre")} cerró a mano la devolución de '
+            f'{custodia["patente"]} que {custodia["tecnico"]} dejó pendiente '
+            f'del {custodia["retirada_fecha"]} ({custodia["retirada_jornada"]}). '
+            f'Motivo: {motivo}',
+            patente=custodia['patente'],
+            destinatario_rol='jefe',
+            conexion=conexion)
+
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin',
+        mensaje=f'🔓 {custodia["patente"]} liberada. La devolución quedó '
+                f'registrada como cierre manual de {session.get("nombre")}.'))
+
+
 @app.route('/api/reportes')
 def api_reportes():
     """Faltantes e historial al día, para refrescar el panel sin volver a entrar."""
@@ -3030,11 +3821,13 @@ def api_alertas():
     conexion = get_db()
     try:
         pendientes = controles_pendientes(conexion)
+        vencimientos = vencimientos_alerta(conexion)
         notificaciones = obtener_notificaciones(session.get('rol'), conexion=conexion)
     finally:
         conexion.close()
 
     return render_template('_alertas.html', pendientes_control=pendientes,
+                           vencimientos=vencimientos,
                            notificaciones=notificaciones)
 
 
@@ -3697,6 +4490,221 @@ def config_elementos():
 # ============================================
 # RUTAS DE LOGOUT
 # ============================================
+
+# ============================================
+# CALENDARIO
+# ============================================
+
+@app.route('/calendario')
+def calendario():
+    """Qué se hizo, qué se viene y qué está vencido, por camioneta."""
+    if not autorizado('soporte', 'jefe', 'admin'):
+        return redirect(url_for('login'))
+
+    momento = ahora()
+    try:
+        anio = int(request.args.get('anio') or momento.year)
+        mes = int(request.args.get('mes') or momento.month)
+        if not 1 <= mes <= 12 or not 2000 <= anio <= 2100:
+            raise ValueError
+    except (TypeError, ValueError):
+        anio, mes = momento.year, momento.month
+
+    conexion = get_db()
+    try:
+        filas = estado_flota(conexion, momento)
+        semanas = calendario_mes(conexion, anio, mes, momento)
+        camionetas = obtener_camionetas()
+
+        historial = [dict(f) for f in conexion.execute('''
+            SELECT h.id, h.tipo, h.fecha_realizado, h.km_realizado,
+                   h.registrado_por, h.observacion, c.patente
+            FROM vencimientos_historial h
+            JOIN camionetas c ON h.camioneta_id = c.id
+            ORDER BY h.fecha_realizado DESC, h.id DESC
+            LIMIT 40
+        ''')]
+    finally:
+        conexion.close()
+
+    resumen = {estado: sum(1 for f in filas if f['estado'] == estado)
+               for estado in ORDEN_ESTADO}
+
+    # Navegación entre meses sin hacer cuentas de calendario en la plantilla.
+    anterior = (anio - 1, 12) if mes == 1 else (anio, mes - 1)
+    siguiente = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
+
+    return render_template('calendario.html',
+                           filas=filas,
+                           resumen=resumen,
+                           semanas=semanas,
+                           historial=historial,
+                           camionetas=camionetas,
+                           tipos=TIPOS_VENCIMIENTO,
+                           anio=anio,
+                           mes=mes,
+                           nombre_mes=MESES[mes - 1],
+                           mes_anterior=anterior,
+                           mes_siguiente=siguiente,
+                           hoy=momento.strftime('%Y-%m-%d'),
+                           mensaje=request.args.get('mensaje', ''),
+                           error=request.args.get('error', ''))
+
+
+def _volver_calendario(mensaje=None, error=None):
+    return redirect(url_for('calendario', mensaje=mensaje or '', error=error or ''))
+
+
+def _leer_camioneta_y_tipo(conexion):
+    """(camioneta, tipo, error) a partir del formulario."""
+    try:
+        camioneta_id = int(request.form.get('camioneta_id', ''))
+    except (TypeError, ValueError):
+        return None, None, 'Camioneta inválida.'
+
+    tipo = (request.form.get('tipo') or '').strip().upper()
+    if tipo not in TIPOS_VENCIMIENTO:
+        return None, None, 'Tipo de vencimiento inválido.'
+
+    camioneta = conexion.execute(
+        'SELECT id, patente FROM camionetas WHERE id = ? AND activa = 1',
+        (camioneta_id,)).fetchone()
+    if camioneta is None:
+        return None, None, 'Camioneta no encontrada.'
+
+    return camioneta, tipo, None
+
+
+@app.route('/calendario/registrar', methods=['POST'])
+def calendario_registrar():
+    """Marca un trabajo como hecho y corre el vencimiento al próximo período."""
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    conexion = get_db()
+    try:
+        camioneta, tipo, error = _leer_camioneta_y_tipo(conexion)
+        if error:
+            return _volver_calendario(error=error)
+
+        fecha = (request.form.get('fecha') or '').strip()
+        if _fecha_iso(fecha) is None:
+            return _volver_calendario(error='La fecha en que se hizo el trabajo es obligatoria.')
+        if _fecha_iso(fecha) > ahora().date():
+            return _volver_calendario(error='No se puede registrar un trabajo con fecha futura.')
+
+        # El kilometraje solo se pide donde sirve: el service vence por km, el
+        # lavado no. Igual se guarda si lo cargan, queda como dato del historial.
+        km_texto = (request.form.get('kilometraje') or '').strip()
+        km = None
+        if km_texto:
+            km, error_km = validar_kilometraje(km_texto, None)
+            if error_km:
+                return _volver_calendario(error=error_km)
+        elif TIPOS_VENCIMIENTO[tipo]['periodicidad_km']:
+            km = ultimo_kilometraje(conexion, camioneta['id'])
+            if km is None:
+                return _volver_calendario(
+                    error=f'El {TIPOS_VENCIMIENTO[tipo]["etiqueta"].lower()} vence por '
+                          'kilómetros y esta camioneta todavía no tiene ninguno '
+                          'registrado. Cargá el kilometraje del trabajo.')
+
+        observacion = (request.form.get('observacion') or '').strip()
+        nueva_fecha, nuevo_km = registrar_realizado(
+            conexion, camioneta['id'], tipo, fecha, km,
+            session.get('nombre'), observacion)
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    etiqueta = TIPOS_VENCIMIENTO[tipo]['etiqueta']
+    partes = []
+    if nueva_fecha:
+        partes.append(f'el {nueva_fecha}')
+    if nuevo_km:
+        partes.append(f'a los {miles(nuevo_km)} km')
+    proximo = ' o '.join(partes) if partes else 'sin fecha (configurá la periodicidad)'
+
+    return _volver_calendario(
+        mensaje=f'✅ {etiqueta} de {camioneta["patente"]} registrado. '
+                f'El próximo vence {proximo}.')
+
+
+@app.route('/calendario/configurar', methods=['POST'])
+def calendario_configurar():
+    """Carga o corrige el vencimiento y la periodicidad de una camioneta."""
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    conexion = get_db()
+    try:
+        camioneta, tipo, error = _leer_camioneta_y_tipo(conexion)
+        if error:
+            return _volver_calendario(error=error)
+
+        config = TIPOS_VENCIMIENTO[tipo]
+
+        def entero(campo, por_defecto=None, minimo=0):
+            texto = (request.form.get(campo) or '').strip()
+            if not texto:
+                return por_defecto
+            try:
+                valor = int(texto)
+            except (TypeError, ValueError):
+                raise ValueError(f'"{campo}" tiene que ser un número entero.')
+            if valor < minimo:
+                raise ValueError(f'"{campo}" no puede ser menor que {minimo}.')
+            return valor
+
+        fecha = (request.form.get('fecha_vencimiento') or '').strip() or None
+        if fecha and _fecha_iso(fecha) is None:
+            return _volver_calendario(error='La fecha de vencimiento no es válida.')
+
+        try:
+            km_vencimiento = entero('km_vencimiento')
+            periodicidad_dias = entero('periodicidad_dias', config['periodicidad_dias'], 1)
+            periodicidad_km = entero('periodicidad_km', config['periodicidad_km'], 1)
+            aviso_dias = entero('aviso_dias', config['aviso_dias'], 0)
+            aviso_km = entero('aviso_km', config['aviso_km'], 0)
+        except ValueError as e:
+            return _volver_calendario(error=str(e))
+
+        if not fecha and km_vencimiento is None:
+            return _volver_calendario(
+                error='Cargá al menos una fecha de vencimiento o un kilometraje: '
+                      'sin ninguno de los dos no hay nada que avisar.')
+
+        observacion = (request.form.get('observacion') or '').strip()
+
+        existe = conexion.execute(
+            'SELECT id FROM vencimientos WHERE camioneta_id = ? AND tipo = ?',
+            (camioneta['id'], tipo)).fetchone()
+
+        if existe:
+            conexion.execute('''
+                UPDATE vencimientos
+                SET fecha_vencimiento = ?, km_vencimiento = ?, periodicidad_dias = ?,
+                    periodicidad_km = ?, aviso_dias = ?, aviso_km = ?,
+                    observacion = ?, activo = 1
+                WHERE id = ?
+            ''', (fecha, km_vencimiento, periodicidad_dias, periodicidad_km,
+                  aviso_dias, aviso_km, observacion, existe['id']))
+        else:
+            conexion.execute('''
+                INSERT INTO vencimientos
+                    (camioneta_id, tipo, fecha_vencimiento, km_vencimiento,
+                     periodicidad_dias, periodicidad_km, aviso_dias, aviso_km,
+                     observacion, activo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ''', (camioneta['id'], tipo, fecha, km_vencimiento, periodicidad_dias,
+                  periodicidad_km, aviso_dias, aviso_km, observacion))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_calendario(
+        mensaje=f'✅ {TIPOS_VENCIMIENTO[tipo]["etiqueta"]} de {camioneta["patente"]} actualizado.')
+
 
 @app.route('/logout')
 def logout():
