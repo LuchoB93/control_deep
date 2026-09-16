@@ -109,6 +109,19 @@
                 <label for="remito-creador">Creador del remito</label>
                 <input type="text" id="remito-creador" value="{{ session.nombre }}" readonly>
 
+                <label for="remito-entrega">¿Quién entrega el material?</label>
+                <select id="remito-entrega" required>
+                    {% for e in entregadores %}
+                        <option value="{{ e.id }}"
+                                {% if e.id == session.usuario_id %}selected{% endif %}>
+                            {{ e.nombre }}{% if e.id == session.usuario_id %} (vos){% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+                <small class="text-muted">
+                    Es quien después firma el remito, y puede no ser el mismo que lo carga.
+                </small>
+
                 <input type="hidden" id="remito-reporte-id">
 
                 <div class="dialogo-remito-acciones">
@@ -794,9 +807,14 @@
 
             const reporteId = document.getElementById('remito-reporte-id').value;
             const motivo = document.getElementById('remito-motivo').value;
+            const entregaId = document.getElementById('remito-entrega').value;
 
             if (!motivo) {
                 alert('⚠️ Elegí el motivo de la falta: rotura o pérdida.');
+                return;
+            }
+            if (!entregaId) {
+                alert('⚠️ Elegí quién entrega el material.');
                 return;
             }
 
@@ -807,7 +825,7 @@
             fetch(`/generar-remito/${reporteId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ motivo: motivo })
+                body: JSON.stringify({ motivo: motivo, entrega_id: entregaId })
             })
             .then(response => response.json())
             .then(data => {

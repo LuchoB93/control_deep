@@ -2512,3 +2512,23 @@ section h2 {
     border-radius: 4px;
     font-size: 0.9rem;
 }
+
+
+/* ============================================
+   TIEMPOS DE CONTROL
+   ============================================ */
+
+.leyenda-tiempos {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #e9ecef;
+}
+
+/* Un control resuelto en menos de dos minutos casi nunca es un control:
+   se pinta la fila entera para que salte a la vista en la lista larga. */
+.fila-rapida  { background-color: #fdf2f2 !important; }
+.fila-justa   { background-color: #fffcf3 !important; }

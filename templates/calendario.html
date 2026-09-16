@@ -41,16 +41,56 @@
         .e-SIN_DATOS  { background: #6c757d; }
         .e-AL_DIA     { background: #198754; }
 
-        .fila-venc { border-left: 4px solid #dee2e6; }
-        .fila-venc.s-VENCIDO    { border-left-color: #dc3545; background: #fff8f8; }
-        .fila-venc.s-POR_VENCER { border-left-color: #fd7e14; background: #fffcf6; }
-        .fila-venc.s-SIN_DATOS  { border-left-color: #adb5bd; }
-        .fila-venc.s-AL_DIA     { border-left-color: #198754; }
+        /* Filtros de la leyenda */
+        .filtros { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+                   padding-top: 12px; border-top: 1px solid #e9ecef; }
+        .filtro { font-size: .72rem; border-radius: 20px; padding: 4px 12px;
+                  border: 1px solid #ced4da; background: #fff; color: #495057;
+                  cursor: pointer; transition: all .12s; }
+        .filtro:hover { border-color: #adb5bd; }
+        .filtro.activo { border-color: transparent; background: #343a40; color: #fff;
+                         font-weight: 600; }
+        .filtro.f-hecho.activo   { background: #198754; }
+        .filtro.f-vence.activo   { background: #fd7e14; }
+        .filtro.f-vencido.activo { background: #dc3545; }
+        .filtro.f-control.activo { background: #6c757d; }
+
+        .celda.con-datos { cursor: pointer; }
+        .celda.con-datos:hover { border-color: #2a5298; background: #fbfcfe; }
+
+        /* Acordeón por camioneta */
+        .camioneta-bloque { border-left: 4px solid #dee2e6; border-bottom: 1px solid #edf0f2; }
+        .camioneta-bloque.s-VENCIDO    { border-left-color: #dc3545; }
+        .camioneta-bloque.s-POR_VENCER { border-left-color: #fd7e14; }
+        .camioneta-bloque.s-SIN_DATOS  { border-left-color: #adb5bd; }
+        .camioneta-bloque.s-AL_DIA     { border-left-color: #198754; }
+        .camioneta-cabecera { width: 100%; display: flex; justify-content: space-between;
+                              align-items: center; gap: 12px; padding: 12px 16px;
+                              background: none; border: 0; text-align: left; cursor: pointer; }
+        .camioneta-cabecera:hover { background: #f8f9fb; }
+        .camioneta-cabecera .flecha { transition: transform .15s; color: #6c757d; }
+        .camioneta-cabecera .flecha.abierta { transform: rotate(90deg); }
+        .camioneta-detalle { background: #fbfcfd; padding: 4px 16px 12px 44px; }
+        .venc-fila { display: flex; justify-content: space-between; align-items: center;
+                     gap: 12px; flex-wrap: wrap; padding: 10px 12px; margin-top: 6px;
+                     background: #fff; border: 1px solid #e9ecef; border-radius: 8px;
+                     border-left: 4px solid #dee2e6; }
+        .venc-fila.s-VENCIDO    { border-left-color: #dc3545; background: #fff8f8; }
+        .venc-fila.s-POR_VENCER { border-left-color: #fd7e14; background: #fffcf6; }
+        .venc-fila.s-AL_DIA     { border-left-color: #198754; }
+
+        /* Detalle del día */
+        .dia-evento { display: flex; gap: 10px; padding: 10px 12px; border-radius: 8px;
+                      margin-bottom: 8px; border-left: 4px solid #adb5bd; background: #f8f9fa; }
+        .dia-evento.hecho   { background: #e7f6ec; border-left-color: #198754; }
+        .dia-evento.vence   { background: #fff4e0; border-left-color: #fd7e14; }
+        .dia-evento.vencido { background: #fdeaea; border-left-color: #dc3545; }
         .tipo-icono { width: 34px; height: 34px; border-radius: 8px; display: inline-flex;
                       align-items: center; justify-content: center; color: #fff; }
         @media (max-width: 576px) {
             .cal-header { padding: 14px; }
             .celda { min-height: 76px; }
+            .camioneta-detalle { padding-left: 16px; }
         }
     </style>
 </head>
@@ -130,24 +170,42 @@
 
                     {% for semana in semanas %}
                         {% for dia in semana %}
-                            <div class="celda {{ '' if dia.del_mes else 'fuera' }} {{ 'hoy' if dia.es_hoy }}">
+                            {% set vacio = not dia.eventos and not dia.controles %}
+                            <div class="celda {{ '' if dia.del_mes else 'fuera' }} {{ 'hoy' if dia.es_hoy }} {{ 'con-datos' if not vacio }}"
+                                 data-fecha="{{ dia.fecha }}"
+                                 {% if not vacio %}onclick="abrirDia('{{ dia.fecha }}')"
+                                 title="Ver qué se hizo el {{ dia.etiqueta_larga }}"{% endif %}>
                                 <div class="numero">{{ dia.numero }}</div>
                                 {% for e in dia.eventos %}
-                                    <span class="chip {{ e.clase }}"
-                                          title="{{ e.texto }}{% if e.detalle %} · {{ e.detalle }}{% endif %}{% if e.observacion %} — {{ e.observacion }}{% endif %}{% if e.quien %} (registró {{ e.quien }}){% endif %}">
+                                    <span class="chip {{ e.clase }}" data-clase="{{ e.clase }}">
                                         <i class="bi bi-{{ e.icono }}"></i> {{ e.texto }}
                                     </span>
                                 {% endfor %}
+                                {% if dia.controles %}
+                                    <span class="chip control" data-clase="control">
+                                        <i class="bi bi-clipboard-check"></i>
+                                        {{ dia.controles|length }} control{{ 'es' if dia.controles|length != 1 }} de camioneta
+                                    </span>
+                                {% endif %}
                             </div>
                         {% endfor %}
                     {% endfor %}
                 </div>
             </div>
-            <div class="mt-3 small text-muted d-flex gap-3 flex-wrap">
-                <span><span class="chip hecho d-inline-block px-2">Hecho</span></span>
-                <span><span class="chip vence d-inline-block px-2">Vence</span></span>
-                <span><span class="chip vencido d-inline-block px-2">Vencido</span></span>
-                <span><span class="chip control d-inline-block px-2">Controles del día</span></span>
+            {# La leyenda es también el filtro: se puede elegir más de una y
+               "Todos" vuelve a mostrar la grilla completa. #}
+            <div class="filtros mt-3">
+                <span class="small text-muted me-1">Mostrar:</span>
+                <button type="button" class="filtro activo" data-filtro="todos"
+                        onclick="filtrar('todos')">Todos</button>
+                <button type="button" class="filtro f-hecho" data-filtro="hecho"
+                        onclick="filtrar('hecho')">Hecho</button>
+                <button type="button" class="filtro f-vence" data-filtro="vence"
+                        onclick="filtrar('vence')">Vence</button>
+                <button type="button" class="filtro f-vencido" data-filtro="vencido"
+                        onclick="filtrar('vencido')">Vencido</button>
+                <button type="button" class="filtro f-control" data-filtro="control"
+                        onclick="filtrar('control')">Controles del día</button>
             </div>
         </div>
     </div>
@@ -156,65 +214,106 @@
     <!-- ESTADO POR CAMIONETA -->
     <!-- ========================================== -->
     <div class="card mb-4">
-        <div class="card-header">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
             <strong><i class="bi bi-truck"></i> Estado por camioneta</strong>
-            <small class="text-muted ms-2">Ordenado por urgencia</small>
+            <div class="d-flex align-items-center gap-2">
+                <small class="text-muted">Ordenado por urgencia</small>
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        id="btn-desplegar" onclick="alternarTodas()">
+                    Desplegar todas
+                </button>
+            </div>
         </div>
-        <div class="list-group list-group-flush">
-            {% for f in filas %}
-                <div class="list-group-item fila-venc s-{{ f.estado }}">
-                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                        <div class="d-flex align-items-center gap-3">
-                            <span class="tipo-icono" style="background: {{ f.color }};">
-                                <i class="bi bi-{{ f.icono }}"></i>
-                            </span>
-                            <div>
-                                <strong>{{ f.patente }}</strong>
-                                <span class="text-muted">· {{ f.etiqueta }}</span>
+
+        <div class="list-group list-group-flush" id="lista-camionetas">
+            {% for g in camionetas_estado %}
+                <div class="camioneta-bloque s-{{ g.estado }}" data-camioneta="{{ g.camioneta_id }}">
+                    {# Cabecera: resumen de la camioneta. El detalle de los cuatro
+                       vencimientos se despliega al tocarla. #}
+                    <button type="button" class="camioneta-cabecera"
+                            onclick="alternarCamioneta({{ g.camioneta_id }})">
+                        <span class="d-flex align-items-center gap-3">
+                            <i class="bi bi-chevron-right flecha" id="flecha-{{ g.camioneta_id }}"></i>
+                            <span>
+                                <strong>{{ g.patente }}</strong>
                                 <br>
                                 <small class="text-muted">
-                                    {% if f.estado == 'SIN_DATOS' %}
-                                        Todavía no se cargó cuándo vence.
+                                    {% if g.km_actual is not none %}
+                                        Odómetro {{ g.km_actual|miles }} km
                                     {% else %}
-                                        {{ f.detalle }}
-                                        {% if f.fecha_vencimiento %} · vence el {{ f.fecha_vencimiento }}{% endif %}
-                                        {% if f.km_vencimiento %} · a los {{ f.km_vencimiento|miles }} km{% endif %}
-                                    {% endif %}
-                                    {% if f.km_actual is not none %}
-                                        · odómetro {{ f.km_actual|miles }} km
+                                        Sin kilometraje registrado
                                     {% endif %}
                                 </small>
-                                {% if f.ultimo %}
-                                    <br>
-                                    <small class="text-muted">
-                                        <i class="bi bi-clock-history"></i>
-                                        Último: {{ f.ultimo.fecha_realizado }}
-                                        {% if f.ultimo.km_realizado %}({{ f.ultimo.km_realizado|miles }} km){% endif %}
-                                        {% if f.ultimo.registrado_por %}· {{ f.ultimo.registrado_por }}{% endif %}
-                                    </small>
-                                {% endif %}
-                            </div>
-                        </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="badge
-                                {% if f.estado == 'VENCIDO' %}bg-danger
-                                {% elif f.estado == 'POR_VENCER' %}bg-warning text-dark
-                                {% elif f.estado == 'SIN_DATOS' %}bg-secondary
-                                {% else %}bg-success{% endif %}">
-                                {{ {'VENCIDO':'Vencido','POR_VENCER':'Por vencer',
-                                    'SIN_DATOS':'Sin cargar','AL_DIA':'Al día'}[f.estado] }}
                             </span>
-                            {% if session.rol in ('soporte', 'admin') %}
-                                <button class="btn btn-sm btn-success"
-                                        onclick='abrirRegistrar({{ f.camioneta_id }}, "{{ f.tipo }}", "{{ f.patente }}", "{{ f.etiqueta }}", {{ f.km_actual if f.km_actual is not none else "null" }}, {{ 'true' if f.periodicidad_km else 'false' }})'>
-                                    <i class="bi bi-check2"></i> Registrar
-                                </button>
-                                <button class="btn btn-sm btn-outline-secondary"
-                                        onclick='abrirConfigurar({{ f|tojson }})'>
-                                    <i class="bi bi-gear"></i>
-                                </button>
+                        </span>
+                        <span class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                            {% if g.conteo.VENCIDO %}
+                                <span class="badge bg-danger">{{ g.conteo.VENCIDO }} vencido{{ 's' if g.conteo.VENCIDO != 1 }}</span>
                             {% endif %}
-                        </div>
+                            {% if g.conteo.POR_VENCER %}
+                                <span class="badge bg-warning text-dark">{{ g.conteo.POR_VENCER }} por vencer</span>
+                            {% endif %}
+                            {% if g.conteo.SIN_DATOS %}
+                                <span class="badge bg-secondary">{{ g.conteo.SIN_DATOS }} sin cargar</span>
+                            {% endif %}
+                            {% if g.conteo.AL_DIA %}
+                                <span class="badge bg-success">{{ g.conteo.AL_DIA }} al día</span>
+                            {% endif %}
+                        </span>
+                    </button>
+
+                    <div class="camioneta-detalle" id="detalle-{{ g.camioneta_id }}" hidden>
+                        {% for f in g.vencimientos %}
+                            <div class="venc-fila s-{{ f.estado }}">
+                                <div class="d-flex align-items-center gap-3">
+                                    <span class="tipo-icono" style="background: {{ f.color }};">
+                                        <i class="bi bi-{{ f.icono }}"></i>
+                                    </span>
+                                    <div>
+                                        <strong>{{ f.etiqueta }}</strong>
+                                        <br>
+                                        <small class="text-muted">
+                                            {% if f.estado == 'SIN_DATOS' %}
+                                                Todavía no se cargó cuándo vence.
+                                            {% else %}
+                                                {{ f.detalle }}
+                                                {% if f.fecha_vencimiento %} · vence el {{ f.fecha_vencimiento }}{% endif %}
+                                                {% if f.km_vencimiento %} · a los {{ f.km_vencimiento|miles }} km{% endif %}
+                                            {% endif %}
+                                        </small>
+                                        {% if f.ultimo %}
+                                            <br>
+                                            <small class="text-muted">
+                                                <i class="bi bi-clock-history"></i>
+                                                Último: {{ f.ultimo.fecha_realizado }}
+                                                {% if f.ultimo.km_realizado %}({{ f.ultimo.km_realizado|miles }} km){% endif %}
+                                                {% if f.ultimo.registrado_por %}· {{ f.ultimo.registrado_por }}{% endif %}
+                                            </small>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge
+                                        {% if f.estado == 'VENCIDO' %}bg-danger
+                                        {% elif f.estado == 'POR_VENCER' %}bg-warning text-dark
+                                        {% elif f.estado == 'SIN_DATOS' %}bg-secondary
+                                        {% else %}bg-success{% endif %}">
+                                        {{ {'VENCIDO':'Vencido','POR_VENCER':'Por vencer',
+                                            'SIN_DATOS':'Sin cargar','AL_DIA':'Al día'}[f.estado] }}
+                                    </span>
+                                    {% if session.rol in ('soporte', 'admin') %}
+                                        <button class="btn btn-sm btn-success"
+                                                onclick='abrirRegistrar({{ f.camioneta_id }}, "{{ f.tipo }}", "{{ f.patente }}", "{{ f.etiqueta }}", {{ f.km_actual if f.km_actual is not none else "null" }}, {{ 'true' if f.periodicidad_km else 'false' }})'>
+                                            <i class="bi bi-check2"></i> Registrar
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" title="Configurar"
+                                                onclick='abrirConfigurar({{ f|tojson }})'>
+                                            <i class="bi bi-gear"></i>
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
                     </div>
                 </div>
             {% endfor %}
@@ -358,9 +457,163 @@
 </div>
 {% endif %}
 
+<!-- Detalle de un día del calendario -->
+<div class="modal fade" id="modal-dia" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-calendar-event"></i>
+                    <span id="dia-titulo"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="dia-eventos"></div>
+
+                {# Los controles de camioneta son muchos y todos iguales: se
+                   muestran plegados para que no tapen los vencimientos. #}
+                <div id="dia-controles-bloque" hidden>
+                    <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2"
+                            onclick="alternarControlesDia()">
+                        <i class="bi bi-chevron-right" id="dia-controles-flecha"></i>
+                        <span id="dia-controles-resumen"></span>
+                    </button>
+                    <div id="dia-controles" class="mt-2" hidden></div>
+                </div>
+
+                <p class="text-muted text-center mb-0 py-3" id="dia-vacio" hidden>
+                    Ese día no se registró nada.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     const HOY = "{{ hoy }}";
+    const DIAS = {{ dias_indice|tojson }};
+
+    // ==========================================
+    // FILTROS DE LA GRILLA
+    // ==========================================
+    // "todos" y las clases puntuales son excluyentes: elegir una clase apaga
+    // "todos", y quedarse sin ninguna vuelve a "todos" sola, porque una grilla
+    // completamente vacía no le sirve a nadie.
+    let filtros = new Set(['todos']);
+
+    function filtrar(clase) {
+        if (clase === 'todos') {
+            filtros = new Set(['todos']);
+        } else {
+            filtros.delete('todos');
+            if (filtros.has(clase)) filtros.delete(clase); else filtros.add(clase);
+            if (filtros.size === 0) filtros.add('todos');
+        }
+
+        document.querySelectorAll('.filtro').forEach(b => {
+            b.classList.toggle('activo', filtros.has(b.dataset.filtro));
+        });
+
+        const todo = filtros.has('todos');
+        document.querySelectorAll('.celda .chip').forEach(chip => {
+            chip.hidden = !todo && !filtros.has(chip.dataset.clase);
+        });
+
+        // Una celda sin nada visible deja de ser clickeable mientras dure el filtro.
+        document.querySelectorAll('.celda').forEach(celda => {
+            const visibles = [...celda.querySelectorAll('.chip')].some(c => !c.hidden);
+            celda.classList.toggle('con-datos', visibles);
+        });
+    }
+
+    // ==========================================
+    // DETALLE DE UN DÍA
+    // ==========================================
+    function abrirDia(fecha) {
+        const dia = DIAS[fecha];
+        if (!dia) return;
+
+        document.getElementById('dia-titulo').textContent = dia.etiqueta_larga;
+
+        const cont = document.getElementById('dia-eventos');
+        cont.innerHTML = '';
+        for (const e of dia.eventos) {
+            const partes = [e.detalle, e.observacion, e.quien ? 'Registró ' + e.quien : '']
+                .filter(Boolean).join(' · ');
+            const fila = document.createElement('div');
+            fila.className = 'dia-evento ' + e.clase;
+            fila.innerHTML =
+                `<i class="bi bi-${e.icono}" style="color:${e.color}; font-size:1.2rem;"></i>` +
+                `<div><strong>${e.texto}</strong>` +
+                (partes ? `<br><small class="text-muted">${partes}</small>` : '') +
+                `</div>`;
+            cont.appendChild(fila);
+        }
+
+        const bloque = document.getElementById('dia-controles-bloque');
+        const lista = document.getElementById('dia-controles');
+        bloque.hidden = dia.controles.length === 0;
+        lista.hidden = true;                       // siempre plegado al abrir
+        document.getElementById('dia-controles-flecha').className = 'bi bi-chevron-right';
+
+        if (dia.controles.length) {
+            document.getElementById('dia-controles-resumen').textContent =
+                `Ver los ${dia.controles.length} control${dia.controles.length !== 1 ? 'es' : ''} de camioneta`;
+            lista.innerHTML =
+                '<table class="table table-sm mb-0"><thead class="table-light"><tr>' +
+                '<th>Camioneta</th><th>Técnico</th><th>Control</th><th>Turno</th>' +
+                '<th>Hora</th><th>Km</th></tr></thead><tbody>' +
+                dia.controles.map(c => `<tr>
+                    <td><strong>${c.patente}</strong></td>
+                    <td>${c.tecnico}</td>
+                    <td>${c.tipo === 'RETIRO'
+                        ? '<span class="badge bg-warning text-dark">Retiro</span>'
+                        : '<span class="badge bg-primary">Devolución</span>'}
+                        ${c.forzado_por ? '<span class="badge bg-warning text-dark" title="Cerrado a mano por ' + c.forzado_por + '">manual</span>' : ''}</td>
+                    <td>${c.jornada}</td><td>${c.hora}</td><td>${c.km || '—'}</td>
+                </tr>`).join('') + '</tbody></table>';
+        }
+
+        document.getElementById('dia-vacio').hidden =
+            dia.eventos.length > 0 || dia.controles.length > 0;
+
+        new bootstrap.Modal(document.getElementById('modal-dia')).show();
+    }
+
+    function alternarControlesDia() {
+        const lista = document.getElementById('dia-controles');
+        lista.hidden = !lista.hidden;
+        document.getElementById('dia-controles-flecha').className =
+            lista.hidden ? 'bi bi-chevron-right' : 'bi bi-chevron-down';
+    }
+
+    // ==========================================
+    // ACORDEÓN POR CAMIONETA
+    // ==========================================
+    function alternarCamioneta(id) {
+        const detalle = document.getElementById('detalle-' + id);
+        const flecha = document.getElementById('flecha-' + id);
+        detalle.hidden = !detalle.hidden;
+        flecha.classList.toggle('abierta', !detalle.hidden);
+        actualizarBotonDesplegar();
+    }
+
+    function alternarTodas() {
+        const detalles = [...document.querySelectorAll('.camioneta-detalle')];
+        const abrir = detalles.some(d => d.hidden);
+        detalles.forEach(d => { d.hidden = !abrir; });
+        document.querySelectorAll('.camioneta-cabecera .flecha')
+                .forEach(f => f.classList.toggle('abierta', abrir));
+        actualizarBotonDesplegar();
+    }
+
+    function actualizarBotonDesplegar() {
+        const detalles = [...document.querySelectorAll('.camioneta-detalle')];
+        document.getElementById('btn-desplegar').textContent =
+            detalles.some(d => d.hidden) ? 'Desplegar todas' : 'Plegar todas';
+    }
 
     function abrirRegistrar(camionetaId, tipo, patente, etiqueta, kmActual, venceporKm) {
         document.getElementById('reg-camioneta').value = camionetaId;

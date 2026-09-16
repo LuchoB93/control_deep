@@ -38,6 +38,15 @@
                         promedio <strong>{{ promedio }} min</strong>
                     </span>
                 </form>
+
+                <div class="leyenda-tiempos">
+                    <span class="badge badge-danger">&lt; 2 min</span>
+                    <span class="text-muted small">demasiado rápido, conviene revisarlo</span>
+                    <span class="badge badge-warning">2 a 5 min</span>
+                    <span class="text-muted small">justo</span>
+                    <span class="badge badge-success">5 min o más</span>
+                    <span class="text-muted small">tiempo razonable</span>
+                </div>
             </div>
         </div>
 
@@ -56,14 +65,14 @@
                 </thead>
                 <tbody>
                     {% for c in controles %}
-                        <tr>
+                        <tr class="{% if c.minutos < 2 %}fila-rapida{% elif c.minutos < 5 %}fila-justa{% endif %}">
                             <td><strong>{{ c.patente }}</strong></td>
                             <td>{{ c.tecnico }}</td>
                             <td>
                                 {% if c.tipo == 'RETIRO' %}
-                                    <span class="badge bg-warning text-dark">Retiro</span>
+                                    <span class="badge badge-warning">Retiro</span>
                                 {% else %}
-                                    <span class="badge bg-primary">Devolución</span>
+                                    <span class="badge badge-primary">Devolución</span>
                                 {% endif %}
                             </td>
                             <td>{{ c.fecha }} · {{ c.jornada }}</td>
@@ -73,11 +82,17 @@
                                 {# Un control demasiado corto es señal de que se marcó
                                    todo sin mirar: se resalta para poder revisarlo. #}
                                 {% if c.minutos < 2 %}
-                                    <span class="badge bg-danger">{{ c.duracion }}</span>
+                                    <span class="badge badge-danger" title="Menos de 2 minutos: demasiado rápido para haber revisado todo">
+                                        <i class="bi bi-exclamation-triangle-fill"></i> {{ c.duracion }}
+                                    </span>
                                 {% elif c.minutos < 5 %}
-                                    <span class="badge bg-warning text-dark">{{ c.duracion }}</span>
+                                    <span class="badge badge-warning" title="Entre 2 y 5 minutos: justo">
+                                        {{ c.duracion }}
+                                    </span>
                                 {% else %}
-                                    <span class="badge bg-success">{{ c.duracion }}</span>
+                                    <span class="badge badge-success" title="5 minutos o más: tiempo razonable">
+                                        {{ c.duracion }}
+                                    </span>
                                 {% endif %}
                             </td>
                         </tr>

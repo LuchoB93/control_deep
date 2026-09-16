@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, time
 import os
 import sys
 import secrets
+import shutil
+import re
 import calendar as calendario_py
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -432,6 +434,7 @@ def generar_pdf_remito(remito, ruta_pdf):
         ['MATERIAL ENTREGADO:', remito['material_entregado'] or remito['elemento']],
         ['MOTIVO DE REPOSICIÓN:', MOTIVOS_REPOSICION.get(remito['motivo'], 'No especificado')],
         ['CREADO POR:', remito['creador_nombre'] or 'Soporte'],
+        ['ENTREGA EL MATERIAL:', remito['entrega_nombre'] or remito['creador_nombre'] or 'Soporte'],
         ['DESCRIPCIÓN:', remito['descripcion'] or 'Sin descripción'],
     ]
     
@@ -557,6 +560,7 @@ def datos_remito(conexion, reporte_id):
     return conexion.execute('''
         SELECT r.id, r.elemento, r.descripcion, r.motivo_reposicion,
                r.material_entregado, r.creado_por, r.creado_por_id,
+               r.entregado_por, r.entrega_id,
                r.firmado_por_id, r.ruta_remito,
                r.remito_firmado, r.remito_revisado,
                r.firma_tecnico, r.fecha_firma,
@@ -571,7 +575,7 @@ def datos_remito(conexion, reporte_id):
         LEFT JOIN asignaciones a ON co.asignacion_id = a.id
         LEFT JOIN camionetas c ON a.camioneta_id = c.id
         LEFT JOIN usuarios u ON a.tecnico_id = u.id
-        LEFT JOIN usuarios soporte ON r.creado_por_id = soporte.id
+        LEFT JOIN usuarios soporte ON COALESCE(r.entrega_id, r.creado_por_id) = soporte.id
         LEFT JOIN usuarios firmante ON r.firmado_por_id = firmante.id
         LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = r.id
         WHERE r.id = ?
@@ -595,6 +599,7 @@ def escribir_pdf_remito(fila, ruta_pdf):
         'motivo': fila['motivo_reposicion'],
         'descripcion': fila['descripcion'],
         'creador_nombre': fila['creado_por'],
+        'entrega_nombre': fila['entregado_por'],
         'fecha_generacion': _a_fecha(fila['fecha_generacion']) or ahora(),
         'tecnico_firma_nombre': fila['firma_tecnico'],
         'tecnico_firma_archivo': fila['tecnico_firma_archivo'],
@@ -603,6 +608,90 @@ def escribir_pdf_remito(fila, ruta_pdf):
         'soporte_firma_archivo': fila['soporte_firma_archivo'],
         'soporte_fecha_firma': _a_fecha(fila['fecha_firma_soporte']),
     }, ruta_pdf)
+
+
+def mudar_remitos_de_patente(conexion, camioneta_id, vieja, nueva):
+    """Lleva los remitos ya emitidos a la patente nueva de la camioneta.
+
+    Las carpetas, los nombres de archivo y el texto impreso en cada remito se
+    arman con la patente del momento en que se generan. Si al corregir una
+    patente no se arrastra todo esto, quedan documentos y rutas con un nombre
+    que ya no existe en el sistema.
+
+    El PDF se vuelve a escribir desde la base con el mismo código que usa la
+    firma, así que las firmas y las fechas se conservan tal cual estaban.
+    Devuelve (archivos_movidos, avisos).
+    """
+    avisos = []
+    if not vieja or vieja == nueva:
+        return 0, avisos
+
+    origen = REMITOS_DIR / vieja
+    destino_base = REMITOS_DIR / nueva
+    movidos = {}
+
+    if origen.is_dir():
+        for pdf in sorted(origen.rglob('*.pdf')):
+            relativo = pdf.relative_to(origen)
+            destino = destino_base / relativo.parent / pdf.name.replace(vieja, nueva, 1)
+            try:
+                destino.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(pdf), str(destino))
+                movidos[pdf.name] = str(destino)
+            except OSError as e:
+                avisos.append(f'No se pudo mover {pdf.name}: {e}')
+
+        # Las carpetas vacías se sacan para no dejar el nombre viejo dando vueltas.
+        for resto in sorted(origen.rglob('*'), reverse=True):
+            if resto.is_dir() and not any(resto.iterdir()):
+                resto.rmdir()
+        if origen.is_dir() and not any(origen.iterdir()):
+            origen.rmdir()
+
+    def ruta_nueva(ruta):
+        # Las rutas guardadas pueden venir de otra máquina (hay remitos con
+        # rutas de Windows en bases viejas), así que se cortan por el nombre.
+        if not ruta:
+            return None
+        return movidos.get(re.split(r'[\\/]', ruta)[-1])
+
+    reportes = conexion.execute('''
+        SELECT r.id, r.ruta_remito
+        FROM reportes r
+        JOIN controles co ON r.control_id = co.id
+        JOIN asignaciones a ON co.asignacion_id = a.id
+        WHERE a.camioneta_id = ? AND r.ruta_remito IS NOT NULL AND r.ruta_remito <> ''
+    ''', (camioneta_id,)).fetchall()
+
+    for fila in reportes:
+        nueva_ruta = ruta_nueva(fila['ruta_remito'])
+        if nueva_ruta:
+            conexion.execute('UPDATE reportes SET ruta_remito = ? WHERE id = ?',
+                             (nueva_ruta, fila['id']))
+
+    for fila in conexion.execute(
+            'SELECT id, ruta_pdf FROM seguimiento_remitos WHERE patente = ?', (vieja,)).fetchall():
+        conexion.execute('UPDATE seguimiento_remitos SET patente = ?, ruta_pdf = ? WHERE id = ?',
+                         (nueva, ruta_nueva(fila['ruta_pdf']) or fila['ruta_pdf'], fila['id']))
+
+    conexion.execute('UPDATE notificaciones SET patente = ? WHERE patente = ?', (nueva, vieja))
+    conexion.execute(
+        'UPDATE notificaciones SET mensaje = REPLACE(mensaje, ?, ?) WHERE mensaje LIKE ?',
+        (vieja, nueva, f'%{vieja}%'))
+
+    # Recién ahora se reescriben los PDF: datos_remito() lee la patente por
+    # join, así que necesita el UPDATE de camionetas ya aplicado.
+    for fila in reportes:
+        destino = ruta_nueva(fila['ruta_remito'])
+        if not destino:
+            continue
+        try:
+            escribir_pdf_remito(datos_remito(conexion, fila['id']), destino)
+        except Exception as e:
+            avisos.append(f'El remito {Path(destino).name} se movió pero no se pudo '
+                          f'reescribir con la patente nueva: {e}')
+
+    return len(movidos), avisos
 
 
 def crear_seguimiento_remito(conexion, reporte_id, patente, elemento, ruta_pdf):
@@ -643,6 +732,22 @@ def firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre):
         SET estado = 'FINALIZADO', fecha_revision = ?, admin_revision = ?
         WHERE reporte_id = ?
     ''', (fecha, soporte_nombre, reporte_id))
+
+
+def entregador_valido(conexion, entrega_id, por_defecto_id):
+    """Usuario que entrega el material, o None si el elegido no puede hacerlo.
+
+    Solo soporte y jefatura entregan material. Sin elección explícita queda
+    quien está creando el remito, que es el caso más común.
+    """
+    try:
+        buscado = int(entrega_id) if entrega_id not in (None, '') else por_defecto_id
+    except (TypeError, ValueError):
+        return None
+
+    return conexion.execute(
+        "SELECT id, nombre FROM usuarios WHERE id = ? AND activo = 1 "
+        "AND rol IN ('soporte', 'jefe')", (buscado,)).fetchone()
 
 
 def desbloquear_elemento(conexion, camioneta_id, elemento):
@@ -1034,6 +1139,8 @@ def crear_base_de_datos():
         material_entregado TEXT,
         creado_por TEXT,
         creado_por_id INTEGER,
+        entregado_por TEXT,
+        entrega_id INTEGER,
         firmado_por_id INTEGER,
         ruta_remito TEXT,
         remito_firmado INTEGER DEFAULT 0,
@@ -1133,6 +1240,7 @@ def aplicar_migraciones(conexion):
             ('firma_soporte', 'TEXT'),
             ('fecha_firma_soporte', 'TEXT'),
             ('entregado_por', 'TEXT'),
+            ('entrega_id', 'INTEGER'),
             ('recibido_por', 'TEXT'),
             ('fecha_entrega', 'TEXT'),
         ],
@@ -1362,6 +1470,17 @@ def obtener_tecnicos():
     ''').fetchall()
     conexion.close()
     return tecnicos
+
+def obtener_entregadores():
+    """Quiénes pueden entregar material y firmar el remito."""
+    conexion = get_db()
+    try:
+        return [dict(f) for f in conexion.execute(
+            "SELECT id, nombre FROM usuarios WHERE activo = 1 "
+            "AND rol IN ('soporte', 'jefe') ORDER BY nombre")]
+    finally:
+        conexion.close()
+
 
 def obtener_camionetas():
     conexion = get_db()
@@ -2182,30 +2301,36 @@ def calendario_mes(conexion, anio, mes, momento=None):
             'patente': fila['patente'],
             'detalle': (f"a los {miles(fila['km_vencimiento'])} km"
                         if fila['km_vencimiento'] else ''),
-            'texto': f"Vence {config.get('etiqueta', fila['tipo'])} · {fila['patente']}",
+            'texto': (f"{'Venció' if vencido else 'Vence'} "
+                      f"{config.get('etiqueta', fila['tipo'])} · {fila['patente']}"),
             'observacion': '',
             'quien': '',
         })
 
-    # Los controles diarios van agrupados: uno por día, con el total. Listarlos
-    # de a uno taparía los vencimientos, que es lo que se viene a mirar acá.
+    # Los controles diarios van aparte de los vencimientos: son muchos y de otra
+    # naturaleza. En la grilla se muestran como un solo contador, y el detalle
+    # queda para cuando se abre el día.
+    controles = {}
     for fila in conexion.execute('''
-            SELECT ct.fecha, COUNT(*) AS total
+            SELECT ct.fecha, ct.jornada, ct.tipo_control, ct.kilometraje,
+                   ct.fecha_hora_fin, ct.forzado_por,
+                   c.patente, u.nombre AS tecnico
             FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            JOIN usuarios u ON a.tecnico_id = u.id
             WHERE ct.finalizado = 1 AND ct.fecha BETWEEN ? AND ?
-            GROUP BY ct.fecha
+            ORDER BY ct.fecha, ct.fecha_hora_fin
         ''', (desde, hasta)):
-        agregar(fila['fecha'][:10], {
-            'clase': 'control',
-            'tipo': 'CONTROL',
-            'etiqueta': 'Controles',
-            'icono': 'clipboard-check',
-            'color': '#198754',
-            'patente': '',
-            'detalle': '',
-            'texto': f"{fila['total']} control{'es' if fila['total'] != 1 else ''} de camioneta",
-            'observacion': '',
-            'quien': '',
+        fin = _a_fecha(fila['fecha_hora_fin'])
+        controles.setdefault(fila['fecha'][:10], []).append({
+            'patente': fila['patente'],
+            'tecnico': fila['tecnico'],
+            'tipo': fila['tipo_control'],
+            'jornada': fila['jornada'],
+            'hora': fin.strftime('%H:%M') if fin else '',
+            'km': miles(fila['kilometraje']) if fila['kilometraje'] is not None else '',
+            'forzado_por': fila['forzado_por'] or '',
         })
 
     semanas = []
@@ -2214,12 +2339,17 @@ def calendario_mes(conexion, anio, mes, momento=None):
         dias = []
         for dia in semana:
             clave = dia.strftime('%Y-%m-%d')
+            del_dia = eventos.get(clave, [])
             dias.append({
                 'fecha': clave,
                 'numero': dia.day,
                 'del_mes': dia.month == mes,
                 'es_hoy': clave == hoy,
-                'eventos': eventos.get(clave, []),
+                'etiqueta_larga': f'{dia.day} de {MESES[dia.month - 1]} de {dia.year}',
+                'eventos': del_dia,
+                'controles': controles.get(clave, []),
+                'tiene': sorted({e['clase'] for e in del_dia} |
+                                ({'control'} if controles.get(clave) else set())),
             })
         semanas.append(dias)
     return semanas
@@ -2368,6 +2498,7 @@ def admin():
     try:
         tecnicos = obtener_tecnicos()
         camionetas = obtener_camionetas()
+        entregadores = obtener_entregadores()
         zonas = zonas_activas(conexion)
 
         asignaciones_actuales = conexion.execute('''
@@ -2438,6 +2569,7 @@ def admin():
                          zonas=zonas,
                          camionetas=camionetas,
                          tecnicos=tecnicos,
+                         entregadores=entregadores,
                          planilla=planilla,
                          reportes=reportes, 
                          reportes_por_patente=reportes_por_patente,
@@ -3648,6 +3780,15 @@ def generar_remito_pdf(reporte_id):
 
     conexion = get_db()
     try:
+        # Quien entrega el material no es necesariamente quien carga el remito:
+        # uno puede armarlo desde la oficina y otro entregar la herramienta. El
+        # que firma después es el que entrega, así que se elige acá.
+        entrega = entregador_valido(conexion, datos.get('entrega_id'), creador_id)
+        if entrega is None:
+            return jsonify({
+                'success': False,
+                'error': 'Elegí quién entrega el material.'
+            }), 400
         reporte = conexion.execute('''
             SELECT r.id, r.elemento, c.patente
             FROM reportes r
@@ -3673,9 +3814,11 @@ def generar_remito_pdf(reporte_id):
         conexion.execute('''
             UPDATE reportes
             SET motivo_reposicion = ?, material_entregado = ?,
-                creado_por = ?, creado_por_id = ?
+                creado_por = ?, creado_por_id = ?,
+                entregado_por = ?, entrega_id = ?
             WHERE id = ?
-        ''', (motivo, material, creador_nombre, creador_id, reporte_id))
+        ''', (motivo, material, creador_nombre, creador_id,
+              entrega['nombre'], entrega['id'], reporte_id))
 
         fila = datos_remito(conexion, reporte_id)
 
@@ -3898,10 +4041,11 @@ def firmar_remito_tecnico(reporte_id):
         crear_notificacion(
             'REMITO_FIRMADO',
             f'✍️ {tecnico_nombre} recibió {fila["material_entregado"] or fila["elemento"]} '
-            f'({fila["patente"]}). Falta tu firma para cerrar el remito.',
+            f'({fila["patente"]}). Falta la firma de '
+            f'{fila["entregado_por"] or fila["creado_por"]} para cerrar el remito.',
             fila['patente'],
             fila['elemento'],
-            'admin',
+            'soporte',
             '/admin/remitos',
             reporte_id=reporte_id,
             conexion=conexion
@@ -3953,12 +4097,15 @@ def revisar_remito_admin(reporte_id):
         if fila['estado_remito'] == 'FINALIZADO':
             return jsonify({'success': False, 'error': 'Este remito ya está finalizado'}), 400
 
-        # Firma el que entregó el material, que es quien creó el remito.
-        if fila['creado_por_id'] and fila['creado_por_id'] != usuario_id:
+        # Firma quien entrega el material. En remitos viejos, anteriores a que
+        # se pudiera elegir, el que entrega es el que lo creó.
+        responsable_id = fila['entrega_id'] or fila['creado_por_id']
+        responsable = fila['entregado_por'] or fila['creado_por']
+        if responsable_id and responsable_id != usuario_id:
             return jsonify({
                 'success': False,
-                'error': f'Este remito lo tiene que firmar {fila["creado_por"]}, '
-                         'que fue quien entregó el material.'
+                'error': f'Este remito lo tiene que firmar {responsable}, '
+                         'que es quien entrega el material.'
             }), 403
 
         firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre)
@@ -4303,11 +4450,22 @@ def config_camionetas():
             try:
                 conexion.execute('UPDATE camionetas SET patente = ? WHERE id = ?',
                                  (patente, camioneta_id))
-                conexion.commit()
             except sqlite3.IntegrityError:
                 return _volver_config('camionetas', error=f'La patente {patente} ya está cargada.')
-            return _volver_config('camionetas',
-                                  mensaje=f'Patente corregida: {camioneta["patente"]} → {patente}.')
+
+            # El historial sigue colgado del id, pero los remitos se guardan por
+            # patente: hay que arrastrarlos o quedan bajo un nombre que ya no existe.
+            movidos, avisos = mudar_remitos_de_patente(
+                conexion, camioneta_id, camioneta['patente'], patente)
+            conexion.commit()
+
+            mensaje = f'Patente corregida: {camioneta["patente"]} → {patente}.'
+            if movidos:
+                mensaje += f' Se actualizaron {movidos} remito(s).'
+            if avisos:
+                return _volver_config('camionetas', mensaje=mensaje,
+                                      error=' · '.join(avisos))
+            return _volver_config('camionetas', mensaje=mensaje)
 
         if accion == 'alternar':
             nueva = 0 if camioneta['activa'] else 1
@@ -4514,6 +4672,9 @@ def calendario():
     try:
         filas = estado_flota(conexion, momento)
         semanas = calendario_mes(conexion, anio, mes, momento)
+        # El detalle de cada día se arma en el navegador al hacer clic: se manda
+        # indexado por fecha para no recorrer las semanas del lado del cliente.
+        dias_indice = {d['fecha']: d for semana in semanas for d in semana if d['del_mes']}
         camionetas = obtener_camionetas()
 
         historial = [dict(f) for f in conexion.execute('''
@@ -4530,12 +4691,37 @@ def calendario():
     resumen = {estado: sum(1 for f in filas if f['estado'] == estado)
                for estado in ORDEN_ESTADO}
 
+    # La pantalla muestra una camioneta por fila desplegable, no los cuatro
+    # vencimientos de cada una sueltos: con la flota entera era una lista de
+    # decenas de renglones imposible de leer.
+    por_camioneta = {}
+    for f in filas:
+        grupo = por_camioneta.setdefault(f['camioneta_id'], {
+            'camioneta_id': f['camioneta_id'],
+            'patente': f['patente'],
+            'km_actual': f['km_actual'],
+            'vencimientos': [],
+            'conteo': {e: 0 for e in ORDEN_ESTADO},
+        })
+        grupo['vencimientos'].append(f)
+        grupo['conteo'][f['estado']] += 1
+
+    for grupo in por_camioneta.values():
+        grupo['vencimientos'].sort(key=lambda v: list(TIPOS_VENCIMIENTO).index(v['tipo']))
+        grupo['estado'] = min((v['estado'] for v in grupo['vencimientos']),
+                              key=lambda e: ORDEN_ESTADO[e])
+
+    # Primero las camionetas con algo pendiente, después por patente.
+    camionetas_estado = sorted(por_camioneta.values(),
+                               key=lambda g: (ORDEN_ESTADO[g['estado']], g['patente']))
+
     # Navegación entre meses sin hacer cuentas de calendario en la plantilla.
     anterior = (anio - 1, 12) if mes == 1 else (anio, mes - 1)
     siguiente = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
 
     return render_template('calendario.html',
-                           filas=filas,
+                           camionetas_estado=camionetas_estado,
+                           dias_indice=dias_indice,
                            resumen=resumen,
                            semanas=semanas,
                            historial=historial,
