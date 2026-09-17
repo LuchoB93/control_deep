@@ -4257,80 +4257,103 @@ def admin_tiempos():
         return redirect(url_for('login'))
 
     patente = (request.args.get('patente') or '').strip()
+    try:
+        tecnico_id = int(request.args.get('tecnico') or 0) or None
+    except (TypeError, ValueError):
+        tecnico_id = None
 
     conexion = get_db()
     try:
+        # Se traen todos los controles y el filtrado se hace acá: hace falta el
+        # conjunto completo para poder decir, en cada tarjeta, cuántos controles
+        # quedarían si se la eligiera.
         filas = conexion.execute('''
             SELECT ct.fecha, ct.jornada, ct.tipo_control,
                    ct.fecha_hora_inicio, ct.fecha_hora_fin,
-                   c.patente, u.nombre AS tecnico
+                   c.patente, a.tecnico_id, u.nombre AS tecnico
             FROM controles_tecnicos ct
             JOIN asignaciones a ON ct.asignacion_id = a.id
             JOIN camionetas c ON a.camioneta_id = c.id
             JOIN usuarios u ON a.tecnico_id = u.id
             WHERE ct.finalizado = 1 AND ct.fecha_hora_fin IS NOT NULL
-              AND (? = '' OR c.patente = ?)
             ORDER BY ct.fecha_hora_inicio DESC
-            LIMIT 300
-        ''', (patente, patente)).fetchall()
+        ''').fetchall()
 
         camionetas = [f['patente'] for f in conexion.execute(
             'SELECT patente FROM camionetas WHERE activa = 1 ORDER BY patente')]
-
-        todas = conexion.execute('''
-            SELECT c.patente, ct.fecha_hora_inicio, ct.fecha_hora_fin
-            FROM controles_tecnicos ct
-            JOIN asignaciones a ON ct.asignacion_id = a.id
-            JOIN camionetas c ON a.camioneta_id = c.id
-            WHERE ct.finalizado = 1 AND ct.fecha_hora_fin IS NOT NULL
-        ''').fetchall()
+        tecnicos = [dict(f) for f in conexion.execute(
+            "SELECT id, nombre FROM usuarios WHERE rol = 'tecnico' AND activo = 1 "
+            "ORDER BY nombre")]
     finally:
         conexion.close()
 
-    minutos_por_patente = {}
-    for f in todas:
-        inicio, fin = _a_fecha(f['fecha_hora_inicio']), _a_fecha(f['fecha_hora_fin'])
-        if not inicio or not fin or fin < inicio:
-            continue
-        minutos_por_patente.setdefault(f['patente'], []).append(
-            int((fin - inicio).total_seconds()) // 60)
-
-    # Ojo con el nombre de la variable del bucle: `patente` es la del filtro que
-    # pidió el usuario y la plantilla la necesita para marcar la tarjeta elegida.
-    resumen_camionetas = []
-    for cada in camionetas:
-        minutos = minutos_por_patente.get(cada, [])
-        resumen_camionetas.append({
-            'patente': cada,
-            'controles': len(minutos),
-            'promedio': round(sum(minutos) / len(minutos), 1) if minutos else None,
-        })
-
     controles = []
     for f in filas:
-        inicio = _a_fecha(f['fecha_hora_inicio'])
-        fin = _a_fecha(f['fecha_hora_fin'])
-        if not inicio or not fin or fin < inicio:
+        arranque = _a_fecha(f['fecha_hora_inicio'])
+        cierre = _a_fecha(f['fecha_hora_fin'])
+        if not arranque or not cierre or cierre < arranque:
             continue
-        segundos = int((fin - inicio).total_seconds())
+        segundos = int((cierre - arranque).total_seconds())
         controles.append({
             'patente': f['patente'],
             'tecnico': f['tecnico'],
+            'tecnico_id': f['tecnico_id'],
             'fecha': f['fecha'],
             'jornada': f['jornada'],
             'tipo': f['tipo_control'],
-            'inicio': inicio.strftime('%d/%m/%Y %H:%M'),
-            'fin': fin.strftime('%H:%M'),
+            'inicio': arranque.strftime('%d/%m/%Y %H:%M'),
+            'fin': cierre.strftime('%H:%M'),
             'minutos': segundos // 60,
             'duracion': f'{segundos // 60} min {segundos % 60:02d} s',
         })
 
-    promedio = round(sum(c['minutos'] for c in controles) / len(controles), 1) if controles else 0
+    def promedio_de(lista):
+        return round(sum(c['minutos'] for c in lista) / len(lista), 1) if lista else None
 
-    return render_template('admin_tiempos.html', controles=controles,
-                           camionetas=camionetas, patente=patente, promedio=promedio,
+    # Cada dimensión se cuenta con el OTRO filtro puesto: con una camioneta
+    # elegida, las tarjetas de técnico muestran quiénes la controlaron y cuánto
+    # tardaron en ella, no su promedio general.
+    por_tecnico = [c for c in controles if not tecnico_id or c['tecnico_id'] == tecnico_id]
+    por_patente = [c for c in controles if not patente or c['patente'] == patente]
+
+    resumen_camionetas = []
+    for cada in camionetas:
+        propios = [c for c in por_tecnico if c['patente'] == cada]
+        resumen_camionetas.append({
+            'patente': cada,
+            'controles': len(propios),
+            'promedio': promedio_de(propios),
+        })
+
+    resumen_tecnicos = []
+    for tec in tecnicos:
+        propios = [c for c in por_patente if c['tecnico_id'] == tec['id']]
+        resumen_tecnicos.append({
+            'id': tec['id'],
+            'nombre': tec['nombre'],
+            'controles': len(propios),
+            'promedio': promedio_de(propios),
+        })
+
+    filtrados = [c for c in controles
+                 if (not patente or c['patente'] == patente)
+                 and (not tecnico_id or c['tecnico_id'] == tecnico_id)]
+
+    nombre_tecnico = next((t['nombre'] for t in tecnicos if t['id'] == tecnico_id), '')
+
+    return render_template('admin_tiempos.html',
+                           controles=filtrados[:300],
+                           recortado=len(filtrados) > 300,
+                           total_filtrados=len(filtrados),
+                           camionetas=camionetas,
+                           patente=patente,
+                           tecnico_id=tecnico_id,
+                           nombre_tecnico=nombre_tecnico,
+                           promedio=promedio_de(filtrados) or 0,
                            resumen_camionetas=resumen_camionetas,
-                           total_controles=sum(len(m) for m in minutos_por_patente.values()))
+                           resumen_tecnicos=resumen_tecnicos,
+                           total_controles=len(por_tecnico),
+                           total_tecnicos=len(por_patente))
 
 
 @app.route('/admin/configuracion')

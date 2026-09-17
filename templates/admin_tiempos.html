@@ -25,9 +25,24 @@
                 {# Tarjetas en vez de desplegable: cada camioneta muestra cuántos
                    controles tiene y su promedio, así se ve dónde mirar sin ir
                    filtrando de a una. Son enlaces, no JS: el filtro es un GET. #}
+                {# Cada tarjeta lleva puesto el otro filtro, así elegir técnico
+                   y camioneta se combina en vez de pisarse. #}
+                {% macro resumen(controles, promedio) %}
+                    <span class="tp-estado">
+                        {% if controles %}
+                            {{ controles }} control{{ 'es' if controles != 1 }} ·
+                            <strong class="{% if promedio < 2 %}t-rapido{% elif promedio < 5 %}t-justo{% else %}t-ok{% endif %}">
+                                {{ promedio }} min
+                            </strong>
+                        {% else %}
+                            Sin controles
+                        {% endif %}
+                    </span>
+                {% endmacro %}
+
                 <label class="form-label small fw-bold">Camioneta</label>
                 <div class="tarjetas-patentes">
-                    <a href="{{ url_for('admin_tiempos') }}"
+                    <a href="{{ url_for('admin_tiempos', tecnico=tecnico_id) }}"
                        class="tarjeta-patente {{ 'activa' if not patente }}">
                         <span class="tp-patente"><i class="bi bi-grid-3x3-gap"></i> Todas</span>
                         <span class="tp-estado">
@@ -36,27 +51,47 @@
                     </a>
 
                     {% for c in resumen_camionetas %}
-                        <a href="{{ url_for('admin_tiempos', patente=c.patente) }}"
+                        <a href="{{ url_for('admin_tiempos', patente=c.patente, tecnico=tecnico_id) }}"
                            class="tarjeta-patente
                                   {{ 'activa' if c.patente == patente }}
                                   {{ 'sin-datos' if not c.controles }}">
                             <span class="tp-patente"><i class="bi bi-truck"></i> {{ c.patente }}</span>
-                            <span class="tp-estado">
-                                {% if c.controles %}
-                                    {{ c.controles }} control{{ 'es' if c.controles != 1 }} ·
-                                    <strong class="{% if c.promedio < 2 %}t-rapido{% elif c.promedio < 5 %}t-justo{% else %}t-ok{% endif %}">
-                                        {{ c.promedio }} min
-                                    </strong>
-                                {% else %}
-                                    Sin controles
-                                {% endif %}
-                            </span>
+                            {{ resumen(c.controles, c.promedio) }}
                         </a>
                     {% endfor %}
                 </div>
 
+                <label class="form-label small fw-bold">Técnico</label>
+                <div class="tarjetas-patentes">
+                    <a href="{{ url_for('admin_tiempos', patente=patente or none) }}"
+                       class="tarjeta-patente {{ 'activa' if not tecnico_id }}">
+                        <span class="tp-patente"><i class="bi bi-people"></i> Todos</span>
+                        <span class="tp-estado">
+                            {{ total_tecnicos }} control{{ 'es' if total_tecnicos != 1 }}
+                        </span>
+                    </a>
+
+                    {% for t in resumen_tecnicos %}
+                        <a href="{{ url_for('admin_tiempos', patente=patente or none, tecnico=t.id) }}"
+                           class="tarjeta-patente
+                                  {{ 'activa' if t.id == tecnico_id }}
+                                  {{ 'sin-datos' if not t.controles }}">
+                            <span class="tp-patente"><i class="bi bi-person"></i> {{ t.nombre }}</span>
+                            {{ resumen(t.controles, t.promedio) }}
+                        </a>
+                    {% endfor %}
+                </div>
+
+                {% if patente or tecnico_id %}
+                    <a href="{{ url_for('admin_tiempos') }}" class="btn btn-secondary btn-sm mb-2">
+                        <i class="bi bi-x-lg"></i> Limpiar filtros
+                    </a>
+                {% endif %}
+
                 <div class="text-muted small">
-                    Mostrando <strong>{{ controles|length }}</strong> control(es){% if patente %} de {{ patente }}{% endif %} ·
+                    Mostrando <strong>{{ controles|length }}</strong> control(es){% if recortado %}
+                        de {{ total_filtrados }}{% endif %}{% if patente %} de {{ patente }}{% endif %}{% if nombre_tecnico %}
+                        hechos por {{ nombre_tecnico }}{% endif %} ·
                     promedio <strong>{{ promedio }} min</strong>
                 </div>
 
