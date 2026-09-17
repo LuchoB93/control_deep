@@ -91,6 +91,9 @@
                                 <br>
                                 <small>
                                     Retirada el {{ d.retirada_fecha }} ({{ d.retirada_jornada }}){% if d.zona %} · zona {{ d.zona }}{% endif %}.
+                                    {% if d.control_activo_id %}
+                                        <strong>La empezaste y quedó sin terminar.</strong>
+                                    {% endif %}
                                     {% if d.vencida %}
                                         {% if d.horas < 1 %}
                                             Vencida hace menos de 1 hora.
@@ -106,14 +109,23 @@
                                     {% endif %}
                                 </small>
                             </div>
-                            <form method="POST" action="{{ url_for('iniciar_control') }}" class="mb-0">
-                                <input type="hidden" name="asignacion_id" value="{{ d.asignacion_devolucion_id }}">
-                                <input type="hidden" name="jornada" value="{{ d.jornada_devolucion }}">
-                                <button type="submit" name="tipo_control" value="DEVOLUCION"
-                                        class="btn btn-danger">
-                                    <i class="bi bi-box-arrow-in-left"></i> Hacer la devolución
-                                </button>
-                            </form>
+                            {% if d.control_activo_id %}
+                                {# Ya la empezó y se volvió: lo que corresponde es retomarla,
+                                   no arrancar una nueva. #}
+                                <a href="{{ url_for('realizar_control', control_id=d.control_activo_id) }}"
+                                   class="btn btn-danger">
+                                    <i class="bi bi-arrow-right"></i> Continuar la devolución
+                                </a>
+                            {% else %}
+                                <form method="POST" action="{{ url_for('iniciar_control') }}" class="mb-0">
+                                    <input type="hidden" name="asignacion_id" value="{{ d.asignacion_devolucion_id }}">
+                                    <input type="hidden" name="jornada" value="{{ d.jornada_devolucion }}">
+                                    <button type="submit" name="tipo_control" value="DEVOLUCION"
+                                            class="btn btn-danger">
+                                        <i class="bi bi-box-arrow-in-left"></i> Hacer la devolución
+                                    </button>
+                                </form>
+                            {% endif %}
                         </div>
                     {% endfor %}
                 </div>

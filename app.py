@@ -434,7 +434,7 @@ def generar_pdf_remito(remito, ruta_pdf):
         ['MATERIAL ENTREGADO:', remito['material_entregado'] or remito['elemento']],
         ['MOTIVO DE REPOSICIÓN:', MOTIVOS_REPOSICION.get(remito['motivo'], 'No especificado')],
         ['CREADO POR:', remito['creador_nombre'] or 'Soporte'],
-        ['ENTREGA EL MATERIAL:', remito['entrega_nombre'] or remito['creador_nombre'] or 'Soporte'],
+        ['ENTREGA EL MATERIAL:', remito['entrega_nombre'] or 'Pendiente de firma'],
         ['DESCRIPCIÓN:', remito['descripcion'] or 'Sin descripción'],
     ]
     
@@ -718,36 +718,27 @@ def firmar_remito_tecnico_db(conexion, reporte_id, tecnico_id, tecnico_nombre):
     ''', (fecha, tecnico_nombre, reporte_id))
 
 
-def firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre):
-    """Firma de quien entregó el material: cierra el remito."""
+def firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre, soporte_id=None):
+    """Firma de quien entregó el material: cierra el remito.
+
+    Quien entrega se registra recién acá, al firmar. No se elige al crear el
+    remito porque en ese momento todavía no se sabe quién va a bajar a entregar
+    la herramienta: firma el que efectivamente la entregó, y eso lo fija.
+    """
     fecha = ahora().isoformat()
     conexion.execute('''
         UPDATE reportes
         SET remito_revisado = 1, firma_soporte = ?, fecha_firma_soporte = ?,
+            entregado_por = ?, entrega_id = ?,
             estado = 'RESUELTO', fecha_resolucion = ?, resuelto_por = ?
         WHERE id = ?
-    ''', (soporte_nombre, fecha, fecha, soporte_nombre, reporte_id))
+    ''', (soporte_nombre, fecha, soporte_nombre, soporte_id,
+          fecha, soporte_nombre, reporte_id))
     conexion.execute('''
         UPDATE seguimiento_remitos
         SET estado = 'FINALIZADO', fecha_revision = ?, admin_revision = ?
         WHERE reporte_id = ?
     ''', (fecha, soporte_nombre, reporte_id))
-
-
-def entregador_valido(conexion, entrega_id, por_defecto_id):
-    """Usuario que entrega el material, o None si el elegido no puede hacerlo.
-
-    Solo soporte y jefatura entregan material. Sin elección explícita queda
-    quien está creando el remito, que es el caso más común.
-    """
-    try:
-        buscado = int(entrega_id) if entrega_id not in (None, '') else por_defecto_id
-    except (TypeError, ValueError):
-        return None
-
-    return conexion.execute(
-        "SELECT id, nombre FROM usuarios WHERE id = ? AND activo = 1 "
-        "AND rol IN ('soporte', 'jefe')", (buscado,)).fetchone()
 
 
 def desbloquear_elemento(conexion, camioneta_id, elemento):
@@ -1471,17 +1462,6 @@ def obtener_tecnicos():
     conexion.close()
     return tecnicos
 
-def obtener_entregadores():
-    """Quiénes pueden entregar material y firmar el remito."""
-    conexion = get_db()
-    try:
-        return [dict(f) for f in conexion.execute(
-            "SELECT id, nombre FROM usuarios WHERE activo = 1 "
-            "AND rol IN ('soporte', 'jefe') ORDER BY nombre")]
-    finally:
-        conexion.close()
-
-
 def obtener_camionetas():
     conexion = get_db()
     camionetas = conexion.execute('''
@@ -1856,8 +1836,23 @@ def _detalle_custodia(conexion, camioneta, abierto, momento):
         except (ValueError, TypeError):
             pass
 
+    # Una devolución empezada y no terminada: el técnico tiene que poder volver
+    # a ella. Se busca por camioneta y técnico en vez de por la asignación que
+    # calculamos arriba, porque el control pudo abrirse otro día de la racha y
+    # entonces cuelga de otra asignación.
+    activo = conexion.execute('''
+        SELECT ct.id
+        FROM controles_tecnicos ct
+        JOIN asignaciones a ON ct.asignacion_id = a.id
+        WHERE a.camioneta_id = ? AND a.tecnico_id = ?
+          AND ct.tipo_control = 'DEVOLUCION' AND ct.finalizado = 0
+          AND ct.fecha >= ?
+        ORDER BY ct.id DESC LIMIT 1
+    ''', (camioneta['id'], abierto['tecnico_id'], abierto['fecha'])).fetchone()
+
     vencida = bool(vence and momento > vence)
     return {
+        'control_activo_id': activo['id'] if activo else None,
         'camioneta_id': camioneta['id'],
         'patente': camioneta['patente'],
         'tecnico_id': abierto['tecnico_id'],
@@ -2498,7 +2493,6 @@ def admin():
     try:
         tecnicos = obtener_tecnicos()
         camionetas = obtener_camionetas()
-        entregadores = obtener_entregadores()
         zonas = zonas_activas(conexion)
 
         asignaciones_actuales = conexion.execute('''
@@ -2569,7 +2563,6 @@ def admin():
                          zonas=zonas,
                          camionetas=camionetas,
                          tecnicos=tecnicos,
-                         entregadores=entregadores,
                          planilla=planilla,
                          reportes=reportes, 
                          reportes_por_patente=reportes_por_patente,
@@ -3097,7 +3090,10 @@ def iniciar_control():
         ''', (asignacion['id'], fecha_control, jornada, tipo_control)).fetchone()
         
         if existe:
-            return redirect(url_for('tecnico', error=f'Ya hay un control de {tipo_control} activo'))
+            # Antes esto era un error sin salida: quien empezaba un control y
+            # volvía atrás no tenía forma de retomarlo desde el panel. Volver a
+            # pedirlo es justamente querer continuarlo.
+            return redirect(url_for('realizar_control', control_id=existe['id']))
         
         ya_hecho = conexion.execute('''
             SELECT id FROM controles_tecnicos 
@@ -3780,15 +3776,6 @@ def generar_remito_pdf(reporte_id):
 
     conexion = get_db()
     try:
-        # Quien entrega el material no es necesariamente quien carga el remito:
-        # uno puede armarlo desde la oficina y otro entregar la herramienta. El
-        # que firma después es el que entrega, así que se elige acá.
-        entrega = entregador_valido(conexion, datos.get('entrega_id'), creador_id)
-        if entrega is None:
-            return jsonify({
-                'success': False,
-                'error': 'Elegí quién entrega el material.'
-            }), 400
         reporte = conexion.execute('''
             SELECT r.id, r.elemento, c.patente
             FROM reportes r
@@ -3814,11 +3801,9 @@ def generar_remito_pdf(reporte_id):
         conexion.execute('''
             UPDATE reportes
             SET motivo_reposicion = ?, material_entregado = ?,
-                creado_por = ?, creado_por_id = ?,
-                entregado_por = ?, entrega_id = ?
+                creado_por = ?, creado_por_id = ?
             WHERE id = ?
-        ''', (motivo, material, creador_nombre, creador_id,
-              entrega['nombre'], entrega['id'], reporte_id))
+        ''', (motivo, material, creador_nombre, creador_id, reporte_id))
 
         fila = datos_remito(conexion, reporte_id)
 
@@ -4041,8 +4026,7 @@ def firmar_remito_tecnico(reporte_id):
         crear_notificacion(
             'REMITO_FIRMADO',
             f'✍️ {tecnico_nombre} recibió {fila["material_entregado"] or fila["elemento"]} '
-            f'({fila["patente"]}). Falta la firma de '
-            f'{fila["entregado_por"] or fila["creado_por"]} para cerrar el remito.',
+            f'({fila["patente"]}). Falta que firme quien entregó el material.',
             fila['patente'],
             fila['elemento'],
             'soporte',
@@ -4097,18 +4081,10 @@ def revisar_remito_admin(reporte_id):
         if fila['estado_remito'] == 'FINALIZADO':
             return jsonify({'success': False, 'error': 'Este remito ya está finalizado'}), 400
 
-        # Firma quien entrega el material. En remitos viejos, anteriores a que
-        # se pudiera elegir, el que entrega es el que lo creó.
-        responsable_id = fila['entrega_id'] or fila['creado_por_id']
-        responsable = fila['entregado_por'] or fila['creado_por']
-        if responsable_id and responsable_id != usuario_id:
-            return jsonify({
-                'success': False,
-                'error': f'Este remito lo tiene que firmar {responsable}, '
-                         'que es quien entrega el material.'
-            }), 403
-
-        firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre)
+        # Firma el que entregó el material, y con eso queda registrado que fue
+        # él. Cualquiera de soporte puede hacerlo: el sistema no sabe de antemano
+        # quién va a bajar a entregar la herramienta, y el que firma lo declara.
+        firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre, usuario_id)
         desbloquear_elemento(conexion, fila['camioneta_id'], fila['elemento'])
 
         if fila['ruta_remito']:

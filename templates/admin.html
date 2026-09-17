@@ -109,17 +109,9 @@
                 <label for="remito-creador">Creador del remito</label>
                 <input type="text" id="remito-creador" value="{{ session.nombre }}" readonly>
 
-                <label for="remito-entrega">¿Quién entrega el material?</label>
-                <select id="remito-entrega" required>
-                    {% for e in entregadores %}
-                        <option value="{{ e.id }}"
-                                {% if e.id == session.usuario_id %}selected{% endif %}>
-                            {{ e.nombre }}{% if e.id == session.usuario_id %} (vos){% endif %}
-                        </option>
-                    {% endfor %}
-                </select>
                 <small class="text-muted">
-                    Es quien después firma el remito, y puede no ser el mismo que lo carga.
+                    El remito queda a tu nombre como creador. Después lo firma
+                    quien entregue el material, que puede ser cualquiera de soporte.
                 </small>
 
                 <input type="hidden" id="remito-reporte-id">
@@ -273,14 +265,31 @@
             <div class="reportes-section">
                 <h2>📊 Reportes de Camionetas</h2>
                 
-                <label for="selector-patente">🚚 Seleccionar Camioneta (Patente):</label>
-                <br>
-                <select id="selector-patente" class="patente-selector" onchange="mostrarDetallesPatente()">
-                    <option value="">-- Seleccione una patente --</option>
-                    {% for patente in patentes_con_reportes %}
-                        <option value="{{ patente }}">{{ patente }}</option>
+                <label>🚚 Elegí la camioneta:</label>
+
+                {# Todas las camionetas a la vista: buscar de a una en un
+                   desplegable obligaba a acordarse de la patente para saber
+                   si tenía faltantes. El select sigue existiendo, oculto,
+                   porque es de donde el resto de la pantalla lee la elección. #}
+                <select id="selector-patente" hidden onchange="mostrarDetallesPatente()">
+                    <option value=""></option>
+                    {% for c in camionetas %}
+                        <option value="{{ c.patente }}">{{ c.patente }}</option>
                     {% endfor %}
                 </select>
+
+                <div class="tarjetas-patentes" id="tarjetas-patentes">
+                    {% for c in camionetas %}
+                        <button type="button" class="tarjeta-patente"
+                                data-patente="{{ c.patente }}"
+                                onclick="elegirPatente('{{ c.patente }}')">
+                            <span class="tp-patente">
+                                <i class="bi bi-truck"></i> {{ c.patente }}
+                            </span>
+                            <span class="tp-estado" data-rol="estado"></span>
+                        </button>
+                    {% endfor %}
+                </div>
 
                 <div class="mt-2 mb-3">
                     <a href="{{ url_for('historial_camioneta', patente='') }}" 
@@ -295,7 +304,7 @@
                 </div>
 
                 <div id="contenedor-faltantes" class="alerta-ok">
-                    👈 Seleccione una patente para ver sus faltantes actuales.
+                    👆 Tocá una camioneta para ver sus faltantes.
                 </div>
 
                 <div id="contenedor-historial" class="oculto">
@@ -670,6 +679,10 @@
             // Cargar notificaciones al iniciar
             cargarAlertas();
             setInterval(cargarAlertas, REFRESCO_ALERTAS_MS);
+
+            // Los contadores de las tarjetas se pintan con los datos que ya
+            // vinieron en el render, sin esperar al primer refresco.
+            pintarTarjetas();
             
             document.querySelectorAll('.tecnico-select').forEach(select => {
                 select.addEventListener('change', function() {
@@ -738,7 +751,11 @@
         }
 
         function revisarRemito(reporteId) {
-            if (!confirm('¿Confirmás que entregaste este material? Al firmar, el remito queda finalizado y el elemento se habilita.')) return;
+            // Firmar equivale a declarar que uno entregó el material: el nombre
+            // del que firma es el que queda como responsable de la entrega.
+            if (!confirm('¿Entregaste vos este material?\n\n' +
+                         'Al firmar quedás registrado como quien lo entregó, ' +
+                         'el remito se finaliza y el elemento se habilita.')) return;
             
             fetch(`/revisar-remito/${reporteId}`, {
                 method: 'POST',
@@ -777,6 +794,7 @@
                 .then(data => {
                     faltantesData = data.faltantes || {};
                     historialData = data.historial || {};
+                    pintarTarjetas();
                     if (document.getElementById('selector-patente').value) {
                         mostrarDetallesPatente();
                     }
@@ -807,14 +825,9 @@
 
             const reporteId = document.getElementById('remito-reporte-id').value;
             const motivo = document.getElementById('remito-motivo').value;
-            const entregaId = document.getElementById('remito-entrega').value;
 
             if (!motivo) {
                 alert('⚠️ Elegí el motivo de la falta: rotura o pérdida.');
-                return;
-            }
-            if (!entregaId) {
-                alert('⚠️ Elegí quién entrega el material.');
                 return;
             }
 
@@ -825,7 +838,7 @@
             fetch(`/generar-remito/${reporteId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ motivo: motivo, entrega_id: entregaId })
+                body: JSON.stringify({ motivo: motivo })
             })
             .then(response => response.json())
             .then(data => {
@@ -849,7 +862,34 @@
             });
         }
 
+        // Elegir desde las tarjetas es lo mismo que elegir en el select: se
+        // escribe ahí y se deja que el resto de la pantalla siga igual.
+        function elegirPatente(patente) {
+            const select = document.getElementById('selector-patente');
+            select.value = (select.value === patente) ? '' : patente;
+            mostrarDetallesPatente();
+        }
+
+        // Cada tarjeta muestra cuántos faltantes tiene, así se ve de un vistazo
+        // dónde hay que entrar sin ir probando patente por patente.
+        function pintarTarjetas() {
+            const elegida = document.getElementById('selector-patente').value;
+            document.querySelectorAll('.tarjeta-patente').forEach(tarjeta => {
+                const patente = tarjeta.dataset.patente;
+                const cuantos = (faltantesData[patente] || []).length;
+                const estado = tarjeta.querySelector('[data-rol="estado"]');
+
+                tarjeta.classList.toggle('activa', patente === elegida);
+                tarjeta.classList.toggle('con-faltantes', cuantos > 0);
+
+                estado.textContent = cuantos === 0
+                    ? 'Sin faltantes'
+                    : `${cuantos} faltante${cuantos !== 1 ? 's' : ''}`;
+            });
+        }
+
         function mostrarDetallesPatente() {
+            pintarTarjetas();
             const patente = document.getElementById('selector-patente').value;
             const contFaltantes = document.getElementById('contenedor-faltantes');
             const contHistorial = document.getElementById('contenedor-historial');
@@ -857,7 +897,7 @@
 
             if (!patente) {
                 contFaltantes.className = 'alerta-ok';
-                contFaltantes.innerHTML = '👈 Seleccione una patente para ver sus faltantes actuales.';
+                contFaltantes.innerHTML = '👆 Tocá una camioneta para ver sus faltantes.';
                 contHistorial.classList.add('oculto');
                 return;
             }
@@ -970,7 +1010,7 @@
         function verRegistroActual() {
             const patente = document.getElementById('selector-patente').value;
             if (!patente) {
-                alert('Por favor, selecciona una patente primero.');
+                alert('Elegí una camioneta primero.');
                 return;
             }
             
