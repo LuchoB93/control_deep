@@ -22,22 +22,43 @@
 
         <div class="card mb-3">
             <div class="card-body">
-                <form method="GET" class="d-flex gap-2 align-items-end flex-wrap">
-                    <div>
-                        <label for="patente" class="form-label small fw-bold">Camioneta</label>
-                        <select name="patente" id="patente" class="form-control">
-                            <option value="">Todas</option>
-                            {% for p in camionetas %}
-                                <option value="{{ p }}" {% if p == patente %}selected{% endif %}>{{ p }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Filtrar</button>
-                    <span class="ms-auto text-muted small">
-                        {{ controles|length }} control(es) ·
-                        promedio <strong>{{ promedio }} min</strong>
-                    </span>
-                </form>
+                {# Tarjetas en vez de desplegable: cada camioneta muestra cuántos
+                   controles tiene y su promedio, así se ve dónde mirar sin ir
+                   filtrando de a una. Son enlaces, no JS: el filtro es un GET. #}
+                <label class="form-label small fw-bold">Camioneta</label>
+                <div class="tarjetas-patentes">
+                    <a href="{{ url_for('admin_tiempos') }}"
+                       class="tarjeta-patente {{ 'activa' if not patente }}">
+                        <span class="tp-patente"><i class="bi bi-grid-3x3-gap"></i> Todas</span>
+                        <span class="tp-estado">
+                            {{ total_controles }} control{{ 'es' if total_controles != 1 }}
+                        </span>
+                    </a>
+
+                    {% for c in resumen_camionetas %}
+                        <a href="{{ url_for('admin_tiempos', patente=c.patente) }}"
+                           class="tarjeta-patente
+                                  {{ 'activa' if c.patente == patente }}
+                                  {{ 'sin-datos' if not c.controles }}">
+                            <span class="tp-patente"><i class="bi bi-truck"></i> {{ c.patente }}</span>
+                            <span class="tp-estado">
+                                {% if c.controles %}
+                                    {{ c.controles }} control{{ 'es' if c.controles != 1 }} ·
+                                    <strong class="{% if c.promedio < 2 %}t-rapido{% elif c.promedio < 5 %}t-justo{% else %}t-ok{% endif %}">
+                                        {{ c.promedio }} min
+                                    </strong>
+                                {% else %}
+                                    Sin controles
+                                {% endif %}
+                            </span>
+                        </a>
+                    {% endfor %}
+                </div>
+
+                <div class="text-muted small">
+                    Mostrando <strong>{{ controles|length }}</strong> control(es){% if patente %} de {{ patente }}{% endif %} ·
+                    promedio <strong>{{ promedio }} min</strong>
+                </div>
 
                 <div class="leyenda-tiempos">
                     <span class="badge badge-danger">&lt; 2 min</span>

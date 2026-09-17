@@ -2591,3 +2591,15 @@ section h2 {
 @media (max-width: 480px) {
     .tarjetas-patentes { grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); }
 }
+
+/* Las tarjetas de patente también se usan como enlaces (tiempos de control). */
+a.tarjeta-patente { text-decoration: none; }
+a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
+
+/* Una camioneta sin controles todavía no dice nada: se atenúa para que no
+   compita con las que sí tienen números para mirar. */
+.tarjeta-patente.sin-datos { opacity: 0.6; }
+
+.tp-estado .t-rapido { color: #b02a37; }
+.tp-estado .t-justo  { color: #856404; }
+.tp-estado .t-ok     { color: #155724; }

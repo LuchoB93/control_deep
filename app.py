@@ -4275,9 +4275,36 @@ def admin_tiempos():
         ''', (patente, patente)).fetchall()
 
         camionetas = [f['patente'] for f in conexion.execute(
-            'SELECT patente FROM camionetas ORDER BY patente')]
+            'SELECT patente FROM camionetas WHERE activa = 1 ORDER BY patente')]
+
+        todas = conexion.execute('''
+            SELECT c.patente, ct.fecha_hora_inicio, ct.fecha_hora_fin
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            WHERE ct.finalizado = 1 AND ct.fecha_hora_fin IS NOT NULL
+        ''').fetchall()
     finally:
         conexion.close()
+
+    minutos_por_patente = {}
+    for f in todas:
+        inicio, fin = _a_fecha(f['fecha_hora_inicio']), _a_fecha(f['fecha_hora_fin'])
+        if not inicio or not fin or fin < inicio:
+            continue
+        minutos_por_patente.setdefault(f['patente'], []).append(
+            int((fin - inicio).total_seconds()) // 60)
+
+    # Ojo con el nombre de la variable del bucle: `patente` es la del filtro que
+    # pidió el usuario y la plantilla la necesita para marcar la tarjeta elegida.
+    resumen_camionetas = []
+    for cada in camionetas:
+        minutos = minutos_por_patente.get(cada, [])
+        resumen_camionetas.append({
+            'patente': cada,
+            'controles': len(minutos),
+            'promedio': round(sum(minutos) / len(minutos), 1) if minutos else None,
+        })
 
     controles = []
     for f in filas:
@@ -4301,7 +4328,9 @@ def admin_tiempos():
     promedio = round(sum(c['minutos'] for c in controles) / len(controles), 1) if controles else 0
 
     return render_template('admin_tiempos.html', controles=controles,
-                           camionetas=camionetas, patente=patente, promedio=promedio)
+                           camionetas=camionetas, patente=patente, promedio=promedio,
+                           resumen_camionetas=resumen_camionetas,
+                           total_controles=sum(len(m) for m in minutos_por_patente.values()))
 
 
 @app.route('/admin/configuracion')
