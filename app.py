@@ -3175,21 +3175,26 @@ def iniciar_control():
                     error=f'🔒 Tenés la devolución de {patentes} sin hacer. Cerrala '
                           'antes de retirar otra camioneta.'))
 
-            # Un turno anterior que quedó sin control deja a la camioneta sin
-            # constancia de en qué estado está. Hasta que ese hueco se cierre
-            # no se puede retirar: si aparece algo roto, no habría forma de
-            # saber de qué turno viene.
-            huecos = [f for f in controles_faltantes(
-                          conexion, camioneta_id=asignacion['camioneta_id'])
-                      if f['asignacion_id'] != asignacion['id']]
-            if huecos:
-                quienes = ', '.join(sorted({f['tecnico'] for f in huecos}))
-                propios = [f for f in huecos if f['tecnico_id'] == usuario_id]
-                if propios:
-                    return redirect(url_for('tecnico',
-                        error='🔒 Esta camioneta tiene un control tuyo sin terminar '
-                              f'({propios[0]["fecha"]}, {propios[0]["jornada"]}). '
-                              'Completalo antes de retirarla de nuevo.'))
+            # Un control propio sin hacer bloquea cualquier retiro nuevo, sea de
+            # la camioneta que sea: mientras quede un turno sin constancia, el
+            # técnico no puede hacerse cargo de otro vehículo. Es la misma regla
+            # que para las devoluciones.
+            propios = [f for f in controles_faltantes(conexion, tecnico_id=usuario_id)
+                       if f['asignacion_id'] != asignacion['id']]
+            if propios:
+                falta = propios[0]
+                return redirect(url_for('tecnico',
+                    error=f'🔒 Te quedó sin hacer el control de {falta["patente"]} '
+                          f'del {falta["fecha"]} ({falta["jornada"]}). Cerralo antes '
+                          'de retirar otra camioneta.'))
+
+            # Y si el hueco lo dejó otro, la camioneta queda sin constancia de
+            # en qué estado está: si aparece algo roto, no habría forma de saber
+            # de qué turno viene.
+            ajenos = falta_control_de(conexion, asignacion['camioneta_id'],
+                                      excepto_tecnico=usuario_id)
+            if ajenos:
+                quienes = ', '.join(sorted({f['tecnico'] for f in ajenos}))
                 return redirect(url_for('tecnico',
                     error=f'🔒 Esta camioneta quedó sin control en un turno anterior '
                           f'({quienes}). No se puede retirar hasta que se resuelva: '
