@@ -132,6 +132,64 @@
             </div>
         {% endif %}
 
+        {# Retiros que quedaron sin completar. Van fuera del if de asignación:
+           casi siempre son de otro día y de una camioneta que hoy no tiene. #}
+        {% if faltantes %}
+            <div class="card border-warning mb-4">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clipboard-x"></i>
+                        Control sin hacer
+                        <span class="badge bg-dark">{{ faltantes|length }}</span>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p>
+                        {{ 'Estos turnos quedaron' if faltantes|length > 1 else 'Este turno quedó' }}
+                        sin el control de retiro. Mientras no {{ 'se cierren' if faltantes|length > 1 else 'se cierre' }},
+                        <strong>nadie puede retirar {{ 'esas camionetas' if faltantes|length > 1 else 'esa camioneta' }}</strong>:
+                        no hay constancia del estado en que {{ 'estaban' if faltantes|length > 1 else 'estaba' }}.
+                    </p>
+
+                    {% for f in faltantes %}
+                        <div class="alert alert-warning d-flex justify-content-between
+                                    align-items-center flex-wrap gap-2">
+                            <div>
+                                <strong><i class="bi bi-truck"></i> {{ f.patente }}</strong>
+                                <br>
+                                <small>
+                                    Turno del {{ f.fecha }} ({{ f.jornada }}){% if f.zona %} · zona {{ f.zona }}{% endif %}.
+                                    {% if f.control_activo_id %}
+                                        Lo empezaste y quedó sin terminar.
+                                    {% elif f.horas < 48 %}
+                                        Vencido hace {{ f.horas }} horas.
+                                    {% else %}
+                                        Vencido hace {{ f.horas // 24 }} días.
+                                    {% endif %}
+                                    <br>Al hacerlo ahora queda registrado como fuera de término.
+                                </small>
+                            </div>
+                            {% if f.control_activo_id %}
+                                <a href="{{ url_for('realizar_control', control_id=f.control_activo_id) }}"
+                                   class="btn btn-warning">
+                                    <i class="bi bi-arrow-right"></i> Continuar el control
+                                </a>
+                            {% else %}
+                                <form method="POST" action="{{ url_for('iniciar_control') }}" class="mb-0">
+                                    <input type="hidden" name="asignacion_id" value="{{ f.asignacion_id }}">
+                                    <input type="hidden" name="jornada" value="{{ f.jornada }}">
+                                    <button type="submit" name="tipo_control" value="RETIRO"
+                                            class="btn btn-warning">
+                                        <i class="bi bi-clipboard-check"></i> Hacer el control
+                                    </button>
+                                </form>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
         {% if asignacion %}
             {% if bloqueada_por %}
                 <div class="alert alert-danger">
@@ -236,6 +294,45 @@
                                     <small>El control lo realiza
                                     {{ asignacion.tecnico_nombre or 'el técnico responsable' }}.</small>
                                 </div>
+
+                            {% elif trabada_por_hueco %}
+                                <!-- Otro dejó el control sin hacer: sin constancia
+                                     del estado, nadie la retira -->
+                                <div class="alert alert-danger mb-0">
+                                    <i class="bi bi-clipboard-x"></i>
+                                    <strong>Camioneta sin control</strong>
+                                    <br>
+                                    <small>
+                                        {{ trabada_por_hueco }} no hizo el control de un turno
+                                        anterior, así que no hay constancia de cómo está.
+                                        No se puede retirar hasta que se resuelva:
+                                        avisá a soporte técnico.
+                                    </small>
+                                </div>
+
+                            {% elif falta_de_hoy %}
+                                <!-- El hueco es propio: lo cierra él mismo -->
+                                <div class="alert alert-warning mb-2">
+                                    <i class="bi bi-clipboard-x"></i>
+                                    <strong>Te falta el control del {{ falta_de_hoy.fecha }}</strong>
+                                    <br>
+                                    <small>Cerralo antes de volver a retirar esta camioneta.</small>
+                                </div>
+                                {% if falta_de_hoy.control_activo_id %}
+                                    <a href="{{ url_for('realizar_control', control_id=falta_de_hoy.control_activo_id) }}"
+                                       class="btn btn-warning">
+                                        <i class="bi bi-arrow-right"></i> Continuar el control
+                                    </a>
+                                {% else %}
+                                    <form method="POST" action="{{ url_for('iniciar_control') }}">
+                                        <input type="hidden" name="asignacion_id" value="{{ falta_de_hoy.asignacion_id }}">
+                                        <input type="hidden" name="jornada" value="{{ falta_de_hoy.jornada }}">
+                                        <button type="submit" name="tipo_control" value="RETIRO"
+                                                class="btn btn-warning">
+                                            <i class="bi bi-clipboard-check"></i> Hacer el control que falta
+                                        </button>
+                                    </form>
+                                {% endif %}
 
                             {% elif deudas %}
                                 <!-- Debe una devolución: no puede hacerse cargo de otra camioneta -->

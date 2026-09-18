@@ -77,14 +77,13 @@
                     {% endif %}
                 </div>
                 <div class="alerta-item-acciones">
-                    {% if p.tipo == 'DEVOLUCION' %}
-                        {# La camioneta queda bloqueada para todos hasta que se cierre
-                           la devolución. Si el técnico no aparece, soporte la libera. #}
-                        <button type="button" class="btn btn-sm btn-warning"
-                                onclick="forzarDevolucion({{ p.camioneta_id }}, '{{ p.patente }}', '{{ p.tecnico }}')">
-                            <i class="bi bi-unlock"></i> Liberar
-                        </button>
-                    {% endif %}
+                    {# Los dos casos traban la camioneta para todos: la devolución
+                       que nadie hizo y el turno que quedó sin control. Si el
+                       técnico no aparece, soporte lo cierra a mano. #}
+                    <button type="button" class="btn btn-sm btn-warning"
+                            onclick="forzarControl({{ p.camioneta_id }}, '{{ p.tipo }}', '{{ p.patente }}', '{{ p.tecnico }}')">
+                        <i class="bi bi-unlock"></i> Liberar
+                    </button>
                     <button type="button" class="alerta-cerrar" title="Descartar alerta"
                             onclick="descartarControl(this)">&times;</button>
                 </div>

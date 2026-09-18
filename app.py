@@ -1244,6 +1244,7 @@ def aplicar_migraciones(conexion):
         ],
         'controles_tecnicos': [
             ('kilometraje', 'INTEGER'),
+            ('fuera_de_termino', 'INTEGER DEFAULT 0'),
             ('forzado_por', 'TEXT'),
             ('observacion', 'TEXT'),
         ],
@@ -1750,6 +1751,7 @@ def retiro_abierto(conexion, camioneta_id):
         JOIN asignaciones a ON ct.asignacion_id = a.id
         JOIN usuarios u ON a.tecnico_id = u.id
         WHERE a.camioneta_id = ? AND ct.tipo_control = 'RETIRO' AND ct.finalizado = 1
+          AND COALESCE(ct.fuera_de_termino, 0) = 0
         ORDER BY ct.fecha DESC,
                  (CASE ct.jornada WHEN 'mañana' THEN 0 ELSE 1 END) DESC
         LIMIT 1
@@ -1905,6 +1907,124 @@ def custodia_de_camioneta(conexion, camioneta_id, momento=None):
 # CONTROLES NO REALIZADOS
 # ============================================
 
+def controles_faltantes(conexion, momento=None, tecnico_id=None, camioneta_id=None):
+    """Retiros que debían hacerse y nunca se completaron.
+
+    No es lo mismo que una custodia abierta: acá la camioneta se usó sin
+    revisarla, así que no hay constancia del estado en que estaba. Mientras el
+    hueco siga abierto nadie más debería retirarla, porque si aparece algo roto
+    no hay forma de saber de qué turno viene.
+
+    Un control empezado y no terminado cuenta como faltante: lo que vale es el
+    control completo, no haberlo abierto.
+
+    Un hueco deja de contar cuando alguien controló la camioneta después: ahí
+    volvió a haber constancia del estado, y seguir reclamando un turno viejo
+    sería ruido. Lo que queda sin superar es lo que traba la camioneta.
+
+    No lleva ventana de días a propósito. El hueco se cierra cuando el técnico
+    hace el control tarde, cuando soporte lo libera, o cuando un control
+    posterior lo supera; nunca por el simple paso del tiempo, porque entonces
+    la camioneta quedaría trabada sin que nadie lo vea.
+    """
+    momento = momento or ahora()
+
+    # Último control completo de cada camioneta, para saber hasta dónde hay
+    # constancia del estado. Se compara por (fecha, orden de jornada).
+    ultimo_control = {}
+    for fila in conexion.execute('''
+        SELECT a.camioneta_id, ct.fecha, ct.jornada
+        FROM controles_tecnicos ct
+        JOIN asignaciones a ON ct.asignacion_id = a.id
+        WHERE ct.finalizado = 1
+    '''):
+        clave = (fila['fecha'], orden_jornada(fila['jornada']))
+        actual = ultimo_control.get(fila['camioneta_id'])
+        if actual is None or clave > actual:
+            ultimo_control[fila['camioneta_id']] = clave
+
+    sql = '''
+        SELECT a.id, a.camioneta_id, a.fecha, a.jornada, a.tecnico_id, a.zona,
+               c.patente, u.nombre AS tecnico
+        FROM asignaciones a
+        JOIN camionetas c ON a.camioneta_id = c.id
+        JOIN usuarios u ON a.tecnico_id = u.id
+        WHERE a.estado = 'ASIGNADA' AND a.tecnico_id IS NOT NULL
+          AND a.fecha <= ?
+          AND NOT EXISTS (
+              SELECT 1 FROM controles_tecnicos ct
+              WHERE ct.asignacion_id = a.id
+                AND ct.tipo_control = 'RETIRO' AND ct.finalizado = 1
+          )
+    '''
+    parametros = [momento.strftime('%Y-%m-%d')]
+    if tecnico_id is not None:
+        sql += ' AND a.tecnico_id = ?'
+        parametros.append(tecnico_id)
+    if camioneta_id is not None:
+        sql += ' AND a.camioneta_id = ?'
+        parametros.append(camioneta_id)
+    sql += ' ORDER BY a.fecha DESC, a.jornada'
+
+    faltantes = []
+    for asignacion in conexion.execute(sql, parametros).fetchall():
+        try:
+            fecha = datetime.strptime(asignacion['fecha'], '%Y-%m-%d')
+        except (ValueError, TypeError):
+            continue
+
+        inicio, fin = inicio_fin_jornada(asignacion['jornada'], fecha)
+        if inicio is None:
+            continue  # ese día no se trabaja en esa jornada
+
+        vence = vencimiento_retiro(inicio, fin)
+        if momento <= vence:
+            continue  # todavía está en hora
+        # Superado por un control posterior: la camioneta ya volvió a tener
+        # constancia de su estado, así que este turno no traba nada. Va antes
+        # que requiere_retiro() a propósito: esta comparación es de memoria y
+        # aquella consulta la base por cada turno vecino.
+        posterior = ultimo_control.get(asignacion['camioneta_id'])
+        if posterior and posterior > (asignacion['fecha'],
+                                      orden_jornada(asignacion['jornada'])):
+            continue
+
+        if not requiere_retiro(conexion, asignacion):
+            continue  # venía con la camioneta del turno anterior
+
+        # Si lo empezó y lo dejó por la mitad, se retoma ese mismo control.
+        abierto = conexion.execute('''
+            SELECT id FROM controles_tecnicos
+            WHERE asignacion_id = ? AND tipo_control = 'RETIRO' AND finalizado = 0
+            ORDER BY id DESC LIMIT 1
+        ''', (asignacion['id'],)).fetchone()
+
+        faltantes.append({
+            'asignacion_id': asignacion['id'],
+            'camioneta_id': asignacion['camioneta_id'],
+            'patente': asignacion['patente'],
+            'tecnico_id': asignacion['tecnico_id'],
+            'tecnico': asignacion['tecnico'],
+            'fecha': asignacion['fecha'],
+            'jornada': asignacion['jornada'],
+            'zona': asignacion['zona'] or '',
+            'tipo': 'RETIRO',
+            'control_activo_id': abierto['id'] if abierto else None,
+            'vencido_desde': vence,
+            'horas': int((momento - vence).total_seconds() // 3600),
+        })
+
+    faltantes.sort(key=lambda f: f['vencido_desde'], reverse=True)
+    return faltantes
+
+
+def falta_control_de(conexion, camioneta_id, momento=None, excepto_tecnico=None):
+    """Huecos de control sobre una camioneta que impiden que otro la retire."""
+    faltantes = controles_faltantes(conexion, momento, camioneta_id=camioneta_id)
+    if excepto_tecnico is not None:
+        faltantes = [f for f in faltantes if f['tecnico_id'] != excepto_tecnico]
+    return faltantes
+
 def vencimiento_retiro(inicio, fin):
     """Desde cuándo un retiro sin hacer cuenta como pendiente: media jornada.
 
@@ -1915,88 +2035,39 @@ def vencimiento_retiro(inicio, fin):
     return inicio + (fin - inicio) / 2
 
 
-def controles_pendientes(conexion, momento=None, dias_atras=2):
+def controles_pendientes(conexion, momento=None):
     """Controles que deberían estar hechos y no lo están.
 
-    Los RETIROS se buscan recorriendo la planilla de los últimos días: se
-    reclaman pasada la mitad del turno.
-
-    Las DEVOLUCIONES no se buscan en la planilla sino en las custodias abiertas
-    (camionetas retiradas que nadie devolvió), y por eso no tienen ventana de
-    días: antes se calculaban con el mismo `dias_atras` que los retiros y la
-    alerta se borraba sola a los tres días, mientras la camioneta seguía
-    bloqueada para siempre sin que nadie se enterara.
+    Los RETIROS salen de controles_faltantes() y las DEVOLUCIONES de las
+    custodias abiertas. Ninguno de los dos tiene ventana de días: antes los
+    retiros se buscaban solo en la planilla de los últimos dos días y la alerta
+    se borraba sola al tercero, mientras la camioneta seguía trabada sin que
+    nadie se enterara.
     """
     momento = momento or ahora()
-    desde = (momento - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-    hasta = momento.strftime('%Y-%m-%d')
 
     # Quién tiene cada camioneta ahora mismo. Se calcula una sola vez porque
-    # hace falta para cada asignación del recorrido.
+    # hace falta para cada hueco del recorrido.
     custodias = custodias_abiertas(conexion, momento)
     custodia_por_camioneta = {c['camioneta_id']: c for c in custodias}
     deuda_por_tecnico = {}
     for custodia in custodias:
         deuda_por_tecnico.setdefault(custodia['tecnico_id'], []).append(custodia)
 
-    asignaciones = conexion.execute('''
-        SELECT a.id, a.camioneta_id, a.fecha, a.jornada, a.tecnico_id, a.zona,
-               c.patente, u.nombre as tecnico_nombre
-        FROM asignaciones a
-        JOIN camionetas c ON a.camioneta_id = c.id
-        JOIN usuarios u ON a.tecnico_id = u.id
-        WHERE a.fecha BETWEEN ? AND ?
-          AND a.estado = 'ASIGNADA'
-          AND a.tecnico_id IS NOT NULL
-        ORDER BY a.fecha DESC, a.jornada
-    ''', (desde, hasta)).fetchall()
-
     pendientes = []
-    for asignacion in asignaciones:
-        try:
-            fecha = datetime.strptime(asignacion['fecha'], '%Y-%m-%d')
-        except (ValueError, TypeError):
+    for falta in controles_faltantes(conexion, momento):
+        # Si ya la tiene retirada, el retiro está hecho aunque sea de otro turno.
+        custodia = custodia_por_camioneta.get(falta['camioneta_id'])
+        if custodia is not None and custodia['tecnico_id'] == falta['tecnico_id']:
             continue
 
-        inicio, fin = inicio_fin_jornada(asignacion['jornada'], fecha)
-        if inicio is None:
-            continue  # ese día no se trabaja en esa jornada
-
-        hechos = {
-            fila['tipo_control']
-            for fila in conexion.execute('''
-                SELECT tipo_control FROM controles_tecnicos
-                WHERE asignacion_id = ? AND finalizado = 1
-            ''', (asignacion['id'],))
-        }
-
-        base = {
-            'asignacion_id': asignacion['id'],
-            'patente': asignacion['patente'],
-            'tecnico': asignacion['tecnico_nombre'],
-            'fecha': asignacion['fecha'],
-            'jornada': asignacion['jornada'],
-            'zona': asignacion['zona'] or '',
-        }
-
-        # Si ya la tiene retirada, el retiro está hecho aunque sea de otro turno.
-        custodia = custodia_por_camioneta.get(asignacion['camioneta_id'])
-        ya_la_tiene = custodia is not None and custodia['tecnico_id'] == asignacion['tecnico_id']
-
-        vence_retiro = vencimiento_retiro(inicio, fin)
-        if (requiere_retiro(conexion, asignacion)
-                and 'RETIRO' not in hechos
-                and not ya_la_tiene
-                and momento > vence_retiro):
-            # Un técnico que debe una devolución tiene el retiro bloqueado: no
-            # es que no quiera hacerlo, es que el sistema no se lo permite.
-            # Soporte necesita ver esa diferencia para saber a qué atender.
-            deudas = [d for d in deuda_por_tecnico.get(asignacion['tecnico_id'], [])
-                      if d['camioneta_id'] != asignacion['camioneta_id']]
-            pendientes.append({**base, 'tipo': 'RETIRO',
-                               'vencido_desde': vence_retiro,
-                               'bloqueado_por_deuda': ', '.join(d['patente'] for d in deudas),
-                               'horas': int((momento - vence_retiro).total_seconds() // 3600)})
+        # Un técnico que debe una devolución tiene el retiro bloqueado: no es
+        # que no quiera hacerlo, es que el sistema no se lo permite. Soporte
+        # necesita ver esa diferencia para saber a qué atender.
+        deudas = [d for d in deuda_por_tecnico.get(falta['tecnico_id'], [])
+                  if d['camioneta_id'] != falta['camioneta_id']]
+        pendientes.append({**falta,
+                           'bloqueado_por_deuda': ', '.join(d['patente'] for d in deudas)})
 
     # Las devoluciones salen de las custodias abiertas, no del recorrido de
     # arriba: así siguen reclamándose por más viejas que sean.
@@ -2835,6 +2906,11 @@ def tecnico():
     # para él mientras la camioneta quedaba bloqueada para todos los demás.
     custodias = custodias_abiertas(conexion, momento, tecnico_id=usuario_id)
 
+    # Retiros que este técnico nunca completó. Igual que las deudas, se buscan
+    # por técnico y no por la asignación de hoy: el control que falta casi
+    # siempre es de otro día, y antes no tenía forma de llegar a él.
+    faltantes = controles_faltantes(conexion, momento, tecnico_id=usuario_id)
+
     control_retiro_activo = None
     control_devolucion_activo = None
     tiene_camioneta = False
@@ -2892,6 +2968,25 @@ def tecnico():
     deudas = [c for c in custodias
               if not asignacion or c['camioneta_id'] != asignacion['camioneta_id']]
 
+    # El hueco de la camioneta de hoy se resuelve desde la tarjeta del día; el
+    # resto va en su propio panel.
+    faltantes_otros = [f for f in faltantes
+                       if not asignacion or f['camioneta_id'] != asignacion['camioneta_id']]
+
+    # Con la camioneta de hoy sin controlar de un turno anterior, el retiro
+    # normal no corresponde: primero hay que cerrar ese hueco.
+    falta_de_hoy = next((f for f in faltantes
+                         if asignacion and f['camioneta_id'] == asignacion['camioneta_id']
+                         and f['asignacion_id'] != asignacion['id']), None)
+
+    # Y si el hueco lo dejó otro técnico, esta camioneta no se puede retirar.
+    trabada_por_hueco = ''
+    if asignacion:
+        ajenos = falta_control_de(conexion, asignacion['camioneta_id'], momento,
+                                  excepto_tecnico=usuario_id)
+        if ajenos:
+            trabada_por_hueco = ', '.join(sorted({f['tecnico'] for f in ajenos}))
+
     elementos_bloqueados = []
     if asignacion:
         bloqueados = conexion.execute('''
@@ -2915,6 +3010,9 @@ def tecnico():
                          necesita_retiro=necesita_retiro,
                          necesita_devolucion=necesita_devolucion,
                          deudas=deudas,
+                         faltantes=faltantes_otros,
+                         falta_de_hoy=falta_de_hoy,
+                         trabada_por_hueco=trabada_por_hueco,
                          asignacion_devolucion_id=asignacion_devolucion_id,
                          jornada_devolucion=jornada_devolucion,
                          devolucion_en_otro_turno=devolucion_en_otro_turno,
@@ -3077,6 +3175,26 @@ def iniciar_control():
                     error=f'🔒 Tenés la devolución de {patentes} sin hacer. Cerrala '
                           'antes de retirar otra camioneta.'))
 
+            # Un turno anterior que quedó sin control deja a la camioneta sin
+            # constancia de en qué estado está. Hasta que ese hueco se cierre
+            # no se puede retirar: si aparece algo roto, no habría forma de
+            # saber de qué turno viene.
+            huecos = [f for f in controles_faltantes(
+                          conexion, camioneta_id=asignacion['camioneta_id'])
+                      if f['asignacion_id'] != asignacion['id']]
+            if huecos:
+                quienes = ', '.join(sorted({f['tecnico'] for f in huecos}))
+                propios = [f for f in huecos if f['tecnico_id'] == usuario_id]
+                if propios:
+                    return redirect(url_for('tecnico',
+                        error='🔒 Esta camioneta tiene un control tuyo sin terminar '
+                              f'({propios[0]["fecha"]}, {propios[0]["jornada"]}). '
+                              'Completalo antes de retirarla de nuevo.'))
+                return redirect(url_for('tecnico',
+                    error=f'🔒 Esta camioneta quedó sin control en un turno anterior '
+                          f'({quienes}). No se puede retirar hasta que se resuelva: '
+                          'avisá a soporte técnico.'))
+
         if tipo_control == 'DEVOLUCION':
             if abierto is None:
                 return redirect(url_for('tecnico',
@@ -3238,16 +3356,27 @@ def finalizar_control(control_id):
                 error='No se puede cerrar el control sin el kilometraje. '
                       'Volvé a entrar al control, cargalo y finalizá desde ahí.'))
         
-        fecha_hora = ahora().isoformat()
+        momento = ahora()
+
+        # Un control cerrado un día posterior al del turno es una puesta al día,
+        # no el control del turno: sirve para dejar constancia y para destrabar
+        # la camioneta, pero no puede poner el vehículo en manos de nadie (el
+        # técnico ya no lo tiene). Por eso no abre custodia.
+        tarde = int(momento.strftime('%Y-%m-%d') > (control['fecha'] or ''))
+
         conexion.execute('''
-            UPDATE controles_tecnicos 
-            SET finalizado = 1, fecha_hora_fin = ?
+            UPDATE controles_tecnicos
+            SET finalizado = 1, fecha_hora_fin = ?, fuera_de_termino = ?
             WHERE id = ?
-        ''', (fecha_hora, control_id))
+        ''', (momento.isoformat(), tarde, control_id))
         
         conexion.commit()
         conexion.close()
-        
+
+        if tarde:
+            return redirect(url_for('tecnico',
+                mensaje='✅ Control registrado fuera de término. Queda la constancia '
+                        'y la camioneta se destraba, pero figura como hecho tarde.'))
         return redirect(url_for('tecnico', mensaje='✅ Control finalizado correctamente'))
         
     except Exception as e:
@@ -3862,11 +3991,12 @@ def generar_remito_pdf(reporte_id):
 
 @app.route('/forzar-devolucion', methods=['POST'])
 def forzar_devolucion():
-    """Soporte cierra una devolución que el técnico dejó colgada.
+    """Soporte cierra a mano un control que dejó trabada a una camioneta.
 
-    Sin esto la camioneta quedaba trabada para siempre cuando el técnico no
-    aparecía: nadie más podía retirarla y no había forma de liberarla. Queda
-    registrado quién la forzó y por qué, y el control se marca como forzado
+    Sirve para los dos casos que la bloquean: una devolución que el técnico
+    nunca hizo, y un retiro que quedó sin control. Sin esto la camioneta se
+    trababa para siempre cuando el técnico no aparecía. Queda registrado quién
+    lo cerró y por qué, y el control se marca como forzado y fuera de término
     para que no se confunda con una revisión real.
     """
     if not autorizado('soporte'):
@@ -3877,41 +4007,62 @@ def forzar_devolucion():
     except (TypeError, ValueError):
         return redirect(url_for('admin', error='Camioneta inválida'))
 
+    tipo = (request.form.get('tipo') or 'DEVOLUCION').strip().upper()
+    if tipo not in ('RETIRO', 'DEVOLUCION'):
+        return redirect(url_for('admin', error='Tipo de control inválido'))
+
     motivo = (request.form.get('motivo') or '').strip()
     if not motivo:
         return redirect(url_for('admin',
-            error='Hay que explicar por qué se cierra la devolución a mano.'))
+            error='Hay que explicar por qué se cierra el control a mano.'))
 
     conexion = get_db()
     try:
-        custodia = custodia_de_camioneta(conexion, camioneta_id)
-        if custodia is None:
-            return redirect(url_for('admin',
-                error='Esa camioneta no tiene ninguna devolución pendiente.'))
+        if tipo == 'DEVOLUCION':
+            pendiente = custodia_de_camioneta(conexion, camioneta_id)
+            if pendiente is None:
+                return redirect(url_for('admin',
+                    error='Esa camioneta no tiene ninguna devolución pendiente.'))
+            asignacion_id = pendiente['asignacion_devolucion_id']
+            patente = pendiente['patente']
+            quien = pendiente['tecnico']
+            cuando = f'{pendiente["retirada_fecha"]} ({pendiente["retirada_jornada"]})'
+        else:
+            # Puede haber más de un turno sin control: se cierra el más viejo,
+            # así repetir la acción los va limpiando de a uno y siempre en orden.
+            huecos = controles_faltantes(conexion, camioneta_id=camioneta_id)
+            if not huecos:
+                return redirect(url_for('admin',
+                    error='Esa camioneta no tiene ningún retiro sin controlar.'))
+            pendiente = huecos[-1]
+            asignacion_id = pendiente['asignacion_id']
+            patente = pendiente['patente']
+            quien = pendiente['tecnico']
+            cuando = f'{pendiente["fecha"]} ({pendiente["jornada"]})'
 
-        fecha_hora = ahora().isoformat()
         destino = conexion.execute(
             'SELECT id, fecha, jornada FROM asignaciones WHERE id = ?',
-            (custodia['asignacion_devolucion_id'],)).fetchone()
+            (asignacion_id,)).fetchone()
         if destino is None:
             return redirect(url_for('admin',
-                error='No se encontró el turno donde registrar la devolución.'))
+                error='No se encontró el turno donde registrar el control.'))
 
+        fecha_hora = ahora().isoformat()
         conexion.execute('''
             INSERT INTO controles_tecnicos
                 (asignacion_id, fecha, jornada, tipo_control, finalizado,
-                 fecha_hora_inicio, fecha_hora_fin, forzado_por, observacion)
-            VALUES (?, ?, ?, 'DEVOLUCION', 1, ?, ?, ?, ?)
-        ''', (destino['id'], destino['fecha'], destino['jornada'],
+                 fecha_hora_inicio, fecha_hora_fin, forzado_por, observacion,
+                 fuera_de_termino)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 1)
+        ''', (destino['id'], destino['fecha'], destino['jornada'], tipo,
               fecha_hora, fecha_hora, session.get('nombre'), motivo))
 
+        etiqueta = 'la devolución' if tipo == 'DEVOLUCION' else 'el control de retiro'
         crear_notificacion(
-            'DEVOLUCION_FORZADA',
-            f'{session.get("nombre")} cerró a mano la devolución de '
-            f'{custodia["patente"]} que {custodia["tecnico"]} dejó pendiente '
-            f'del {custodia["retirada_fecha"]} ({custodia["retirada_jornada"]}). '
-            f'Motivo: {motivo}',
-            patente=custodia['patente'],
+            'CONTROL_FORZADO',
+            f'{session.get("nombre")} cerró a mano {etiqueta} de {patente} '
+            f'que {quien} dejó sin hacer del {cuando}. Motivo: {motivo}',
+            patente=patente,
             destinatario_rol='jefe',
             conexion=conexion)
 
@@ -3919,9 +4070,14 @@ def forzar_devolucion():
     finally:
         conexion.close()
 
+    quedan = ''
+    if tipo == 'RETIRO' and len(huecos) > 1:
+        restantes = len(huecos) - 1
+        quedan = (f' Todavía {"quedan" if restantes > 1 else "queda"} '
+                  f'{restantes} turno{"s" if restantes > 1 else ""} sin control.')
     return redirect(url_for('admin',
-        mensaje=f'🔓 {custodia["patente"]} liberada. La devolución quedó '
-                f'registrada como cierre manual de {session.get("nombre")}.'))
+        mensaje=f'🔓 {patente}: se cerró {etiqueta} a mano '
+                f'({session.get("nombre")}).{quedan}'))
 
 
 @app.route('/api/reportes')

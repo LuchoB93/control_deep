@@ -130,6 +130,7 @@
         <form id="form-forzar-devolucion" method="POST"
               action="{{ url_for('forzar_devolucion') }}" style="display:none;">
             <input type="hidden" name="camioneta_id" id="forzar-camioneta-id">
+            <input type="hidden" name="tipo" id="forzar-tipo">
             <input type="hidden" name="motivo" id="forzar-motivo">
         </form>
 
@@ -564,18 +565,22 @@
         // Cierra a mano una devolución que el técnico dejó colgada. La camioneta
         // queda bloqueada para todos hasta que alguien la libere, así que este
         // es el único camino cuando el técnico ya no está disponible.
-        function forzarDevolucion(camionetaId, patente, tecnico) {
+        function forzarControl(camionetaId, tipo, patente, tecnico) {
+            const causa = tipo === 'DEVOLUCION'
+                ? `${tecnico} la retiró y nunca hizo la devolución.`
+                : `${tecnico} usó la camioneta sin hacer el control de retiro, ` +
+                  `así que no hay constancia de en qué estado estaba.`;
             const motivo = prompt(
-                `Liberar ${patente}\n\n` +
-                `${tecnico} la retiró y nunca hizo la devolución. Si la cerrás a mano, ` +
-                `la camioneta vuelve a estar disponible y queda registrado que el control ` +
-                `no se hizo.\n\n¿Por qué la estás liberando?`);
+                `Liberar ${patente}\n\n${causa} Si lo cerrás a mano, la camioneta ` +
+                `vuelve a estar disponible y queda registrado que el control no se ` +
+                `hizo.\n\n¿Por qué la estás liberando?`);
             if (motivo === null) return;
             if (!motivo.trim()) {
                 alert('Hace falta un motivo para poder liberarla.');
                 return;
             }
             document.getElementById('forzar-camioneta-id').value = camionetaId;
+            document.getElementById('forzar-tipo').value = tipo;
             document.getElementById('forzar-motivo').value = motivo.trim();
             document.getElementById('form-forzar-devolucion').submit();
         }
