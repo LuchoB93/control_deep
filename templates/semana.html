@@ -12,7 +12,7 @@
         <header>
             <div class="header-left">
                 <h1>📅 Asignación Semanal</h1>
-                <span>Jornada: {{ jornada|capitalize }}</span>
+                <span>Semana del {{ lunes }} · Jornada {{ jornada|capitalize }}</span>
             </div>
             <div class="user-info">
                 <span>👤 {{ session.nombre }}</span>
@@ -28,27 +28,87 @@
             <div class="alert alert-danger">{{ error }}</div>
         {% endif %}
 
-                               <div class="jornada-selector">
+        <!-- Selector de semana: la carga jefatura, acá solo se elige cuál mirar -->
+        <div class="semana-selector">
             <form method="GET" action="{{ url_for('asignacion_semanal') }}">
-                <div class="form-group">
-                    <label for="jornada">🕐 Jornada:</label>
-                    <select id="jornada" name="jornada" onchange="this.form.submit()">
-                        <option value="mañana" {% if jornada == 'mañana' %}selected{% endif %}>Mañana</option>
-                        <option value="tarde" {% if jornada == 'tarde' %}selected{% endif %}>Tarde</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="fecha_inicio">📅 Inicio de Semana:</label>
-                    <input type="date" id="fecha_inicio" name="fecha_inicio" value="{{ fecha_inicio }}" required>
-                </div>
-                <button type="submit" class="btn btn-primary">📋 Generar Semana</button>
+                <label for="semana">📅 Semana del</label>
+                <select id="semana" name="semana" onchange="this.form.submit()">
+                    {% for s in semanas %}
+                        <option value="{{ s }}" {% if s == lunes %}selected{% endif %}>
+                            {{ s }}{% if s == semana_actual %} — esta semana{% elif s < semana_actual %} — cerrada{% else %} — próxima{% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+                <input type="hidden" name="jornada" value="{{ jornada }}">
             </form>
+            {% if not editable %}
+                <span class="semana-bloqueada">🔒 {{ motivo_bloqueo }}</span>
+            {% endif %}
+        </div>
+
+        <!-- Distribución de la semana, que se completa con lo que se asigna abajo -->
+        <div class="planilla-container">
+            <div class="planilla-header">
+                <h2>👥 DISTRIBUCIÓN DE LA SEMANA</h2>
+                <p>Se va completando con las camionetas que asignás abajo.</p>
+            </div>
+            <div class="distribucion-resumen">
+                {% if distribucion %}
+                    {% for j in jornadas %}
+                        <div class="dist-columna">
+                            <div class="dist-columna-titulo">
+                                Turno {{ j|title }}
+                                <small>{{ horarios[j] }}</small>
+                            </div>
+                            {% for p in distribucion.tecnicos[j] %}
+                                <div class="dist-persona">
+                                    {{ p.nombre }}
+                                    {% set suyas = camionetas_por_tecnico.get(p.usuario_id) %}
+                                    {% if suyas %}
+                                        {% for patente in suyas %}
+                                            <span class="dist-camioneta">{{ patente }}</span>
+                                        {% endfor %}
+                                    {% elif j == jornada %}
+                                        <span class="dist-camioneta dist-camioneta-falta">sin camioneta</span>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <div class="dist-persona dist-persona-vacia">Sin técnicos</div>
+                            {% endfor %}
+                        </div>
+                    {% endfor %}
+
+                    <div class="dist-columna">
+                        <div class="dist-columna-titulo">Guardia</div>
+                        {% for g in distribucion.guardia.get(lunes, []) %}
+                            <div class="dist-persona">{{ g.nombre }}</div>
+                        {% else %}
+                            <div class="dist-persona dist-persona-vacia">Sin asignar</div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="dist-persona dist-persona-vacia">
+                        Jefatura todavía no cargó la distribución de esta semana.
+                    </div>
+                {% endif %}
+            </div>
         </div>
 
         <div class="planilla-container">
-            <div class="planilla-header">
-                <h2>📋 PLANILLA BASE ({{ jornada|upper }})</h2>
-                <p>💡 Completá los datos. Luego usá el botón <strong>"Replicar a toda la semana"</strong> para copiar esta configuración a los 7 días.</p>
+            <div class="planilla-header planilla-header-jornada">
+                <div>
+                    <h2>📋 PLANILLA BASE</h2>
+                    <p>💡 Completá los datos. Luego usá el botón <strong>"Replicar a toda la semana"</strong> para copiar esta configuración a los 7 días.</p>
+                </div>
+                <form method="GET" action="{{ url_for('asignacion_semanal') }}" class="jornada-en-cuadro">
+                    <input type="hidden" name="semana" value="{{ lunes }}">
+                    <label for="jornada">🕐 Jornada</label>
+                    <select id="jornada" name="jornada" onchange="this.form.submit()">
+                        {% for j in jornadas %}
+                            <option value="{{ j }}" {% if jornada == j %}selected{% endif %}>{{ j|title }}</option>
+                        {% endfor %}
+                    </select>
+                </form>
             </div>
 
             <!-- ⚠️ ESTE ES EL FORMULARIO ÚNICO. TODO DEBE ESTAR DENTRO -->
@@ -171,7 +231,11 @@
 
                 <div class="planilla-actions">
                     <button type="button" class="btn btn-success" onclick="replicarSemana()">📅 Replicar a Toda la Semana</button>
-                    <button type="submit" class="btn btn-primary">💾 Guardar Todo</button>
+                    {% if editable %}
+                        <button type="submit" class="btn btn-primary">💾 Guardar Todo</button>
+                    {% else %}
+                        <span class="semana-bloqueada">🔒 {{ motivo_bloqueo }}</span>
+                    {% endif %}
                 </div>
             </form>
         </div>

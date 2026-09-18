@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distribución semanal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="config-container">
+
+    <div class="seccion-header">
+        <h1><i class="bi bi-people"></i> Distribución semanal</h1>
+        <p class="text-muted">
+            Qué jornada le toca a cada uno esta semana y quiénes están de guardia.
+            {% if editable %}La cargás vos y se ve recién cuando la publicás.{% endif %}
+        </p>
+        <a href="{{ url_for('jefe') if session.rol == 'jefe' else (url_for('tecnico') if session.rol == 'tecnico' else url_for('admin')) }}"
+           class="btn btn-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Volver al panel
+        </a>
+    </div>
+
+    {% if mensaje %}<div class="alert alert-success">{{ mensaje }}</div>{% endif %}
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+    <!-- Selector de semana -->
+    <div class="card mb-3">
+        <div class="card-body dist-barra">
+            <a class="btn btn-secondary btn-sm"
+               href="{{ url_for('distribucion', semana=anterior) }}">
+                <i class="bi bi-chevron-left"></i>
+            </a>
+            <form method="GET" action="{{ url_for('distribucion') }}" class="dist-selector">
+                <label for="semana">Semana del</label>
+                <select name="semana" id="semana" class="form-control" onchange="this.form.submit()">
+                    {% for s in semanas %}
+                        <option value="{{ s }}" {% if s == lunes %}selected{% endif %}>
+                            {{ s }}{% if s == semana_actual %} (esta semana){% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+            <a class="btn btn-secondary btn-sm"
+               href="{{ url_for('distribucion', semana=siguiente) }}">
+                <i class="bi bi-chevron-right"></i>
+            </a>
+
+            <span class="dist-estado">
+                {% if datos and datos.publicada %}
+                    <span class="badge badge-success">Publicada</span>
+                    <small class="text-muted">
+                        por {{ datos.publicada_por }}
+                    </small>
+                {% elif datos %}
+                    <span class="badge badge-warning">Borrador</span>
+                    <small class="text-muted">todavía no la ve nadie más</small>
+                {% else %}
+                    <span class="badge badge-danger">Sin cargar</span>
+                {% endif %}
+            </span>
+
+            {% if editable and datos %}
+                <form method="POST" action="{{ url_for('distribucion_publicar') }}" class="dist-publicar">
+                    <input type="hidden" name="semana" value="{{ lunes }}">
+                    {% if datos.publicada %}
+                        <button type="submit" name="accion" value="ocultar" class="btn btn-secondary btn-sm">
+                            <i class="bi bi-eye-slash"></i> Ocultar
+                        </button>
+                    {% else %}
+                        <button type="submit" name="accion" value="publicar" class="btn btn-primary btn-sm">
+                            <i class="bi bi-megaphone"></i> Publicar
+                        </button>
+                    {% endif %}
+                </form>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if not datos and not editable %}
+        <div class="card">
+            <div class="card-body text-center dist-vacio">
+                <i class="bi bi-calendar-x"></i>
+                <h3>Todavía no está publicada</h3>
+                <p class="text-muted">
+                    Cuando jefatura publique la distribución de esta semana, la vas a ver acá.
+                </p>
+            </div>
+        </div>
+    {% else %}
+
+    <form method="POST" action="{{ url_for('distribucion_guardar') }}" id="form-distribucion">
+        <input type="hidden" name="semana" value="{{ lunes }}">
+
+        <!-- ========================================== -->
+        <!-- TÉCNICOS -->
+        <!-- ========================================== -->
+        <div class="card mb-3">
+            <div class="card-header dist-header">
+                <strong><i class="bi bi-tools"></i> Técnicos</strong>
+                <small class="text-muted">Una jornada para toda la semana</small>
+            </div>
+            <div class="card-body">
+                {% if editable %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr><th>Técnico</th><th>Jornada</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for t in tecnicos %}
+                                    <tr>
+                                        <td>{{ t.nombre }}</td>
+                                        <td>
+                                            <select name="jornada_{{ t.id }}" class="form-control">
+                                                <option value="">Sin asignar</option>
+                                                {% for j in jornadas %}
+                                                    <option value="{{ j }}"
+                                                        {% if datos and datos.jornada_por_usuario.get(t.id) == j %}selected{% endif %}>
+                                                        {{ j|title }}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="dist-columnas">
+                        {% for j in jornadas %}
+                            <div class="dist-columna">
+                                <div class="dist-columna-titulo">
+                                    Turno {{ j|title }}
+                                    <small>{{ horarios[j] }}</small>
+                                </div>
+                                {% for p in datos.tecnicos[j] %}
+                                    <div class="dist-persona">{{ p.nombre }}</div>
+                                {% else %}
+                                    <div class="dist-persona dist-persona-vacia">Sin asignar</div>
+                                {% endfor %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- SOPORTE -->
+        <!-- ========================================== -->
+        <div class="card mb-3">
+            <div class="card-header dist-header">
+                <strong><i class="bi bi-headset"></i> Soporte</strong>
+                <small class="text-muted">Tantos puestos como haga falta</small>
+            </div>
+            <div class="card-body">
+                <div class="dist-columnas">
+                    {% for j in jornadas %}
+                        <div class="dist-columna">
+                            <div class="dist-columna-titulo">
+                                Turno {{ j|title }}
+                                <small>{{ horarios[j] }}</small>
+                            </div>
+
+                            {% if editable %}
+                                <div class="dist-puestos" data-jornada="{{ j }}">
+                                    {% for p in (datos.soporte[j] if datos else []) %}
+                                        <div class="dist-puesto">
+                                            <select name="soporte_{{ j }}_usuario" class="form-control">
+                                                <option value="">Sin asignar</option>
+                                                {% for u in soporte %}
+                                                    <option value="{{ u.id }}"
+                                                        {% if u.id == p.usuario_id %}selected{% endif %}>
+                                                        {{ u.nombre }}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                            <input type="text" name="soporte_{{ j }}_puesto"
+                                                   class="form-control" value="{{ p.puesto }}"
+                                                   placeholder="Puesto">
+                                            <button type="button" class="btn btn-danger btn-sm"
+                                                    onclick="quitarPuesto(this)" title="Quitar">
+                                                <i class="bi bi-x-lg"></i>
+                                            </button>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                                <button type="button" class="btn btn-secondary btn-sm"
+                                        onclick="agregarPuesto('{{ j }}')">
+                                    <i class="bi bi-plus-lg"></i> Agregar puesto
+                                </button>
+                            {% else %}
+                                {% for p in datos.soporte[j] %}
+                                    <div class="dist-persona">
+                                        <span class="dist-puesto-etiqueta">{{ p.puesto }}</span>
+                                        {{ p.nombre }}
+                                    </div>
+                                {% else %}
+                                    <div class="dist-persona dist-persona-vacia">Sin asignar</div>
+                                {% endfor %}
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- GUARDIA -->
+        <!-- ========================================== -->
+        <div class="card mb-3">
+            <div class="card-header dist-header">
+                <strong><i class="bi bi-shield-check"></i> Guardia</strong>
+                <small class="text-muted">
+                    La de la semana siguiente funciona como alternativa
+                </small>
+            </div>
+            <div class="card-body">
+                <div class="dist-columnas">
+                    {% for sufijo, titulo, semana in [
+                        ('esta', 'Esta semana', lunes),
+                        ('proxima', 'Semana siguiente', semana_guardia_siguiente)] %}
+                        <div class="dist-columna">
+                            <div class="dist-columna-titulo">
+                                {{ titulo }}
+                                <small>{{ semana }}</small>
+                            </div>
+                            {% set asignados = (datos.guardia.get(semana, []) if datos else []) %}
+                            {% if editable %}
+                                {% for i in range(guardias_por_semana) %}
+                                    <select name="guardia_{{ sufijo }}" class="form-control mb-2">
+                                        <option value="">Sin asignar</option>
+                                        {% for t in tecnicos %}
+                                            <option value="{{ t.id }}"
+                                                {% if asignados|length > i and asignados[i].usuario_id == t.id %}selected{% endif %}>
+                                                {{ t.nombre }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                {% endfor %}
+                            {% else %}
+                                {% for g in asignados %}
+                                    <div class="dist-persona">{{ g.nombre }}</div>
+                                {% else %}
+                                    <div class="dist-persona dist-persona-vacia">Sin asignar</div>
+                                {% endfor %}
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        {% if editable %}
+            <div class="dist-acciones">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-save"></i> Guardar distribución
+                </button>
+                <small class="text-muted">
+                    Guardar no la publica. Publicala cuando esté lista para que la vean todos.
+                </small>
+            </div>
+        {% endif %}
+    </form>
+    {% endif %}
+</div>
+
+{% if editable %}
+<template id="plantilla-puesto">
+    <div class="dist-puesto">
+        <select class="form-control" data-campo="usuario">
+            <option value="">Sin asignar</option>
+            {% for u in soporte %}
+                <option value="{{ u.id }}">{{ u.nombre }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" class="form-control" data-campo="puesto" placeholder="Puesto">
+        <button type="button" class="btn btn-danger btn-sm" onclick="quitarPuesto(this)" title="Quitar">
+            <i class="bi bi-x-lg"></i>
+        </button>
+    </div>
+</template>
+
+<script>
+    // Los puestos de soporte son variables: se agregan y se sacan filas. Los
+    // name de los campos se arman acá porque dependen de la jornada.
+    function agregarPuesto(jornada) {
+        const contenedor = document.querySelector(`.dist-puestos[data-jornada="${jornada}"]`);
+        const fila = document.getElementById('plantilla-puesto').content.cloneNode(true);
+        fila.querySelector('[data-campo="usuario"]').name = `soporte_${jornada}_usuario`;
+        const puesto = fila.querySelector('[data-campo="puesto"]');
+        puesto.name = `soporte_${jornada}_puesto`;
+        puesto.value = `Puesto ${contenedor.children.length + 1}`;
+        contenedor.appendChild(fila);
+    }
+
+    function quitarPuesto(boton) {
+        boton.closest('.dist-puesto').remove();
+    }
+</script>
+{% endif %}
+</body>
+</html>

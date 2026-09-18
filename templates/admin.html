@@ -32,6 +32,14 @@
                 <i class="bi bi-clock-history"></i>
                 <span>Historial</span>
             </a>
+            <a href="{{ url_for('reclamos') }}" class="sidebar-link">
+                <i class="bi bi-chat-left-text"></i>
+                <span>Actividades coordinadas</span>
+            </a>
+            <a href="{{ url_for('distribucion') }}" class="sidebar-link">
+                <i class="bi bi-people"></i>
+                <span>Distribución semanal</span>
+            </a>
             <a href="{{ url_for('calendario') }}" class="sidebar-link">
                 <i class="bi bi-calendar3"></i>
                 <span>Calendario</span>
@@ -571,9 +579,10 @@
                 : `${tecnico} usó la camioneta sin hacer el control de retiro, ` +
                   `así que no hay constancia de en qué estado estaba.`;
             const motivo = prompt(
-                `Liberar ${patente}\n\n${causa} Si lo cerrás a mano, la camioneta ` +
-                `vuelve a estar disponible y queda registrado que el control no se ` +
-                `hizo.\n\n¿Por qué la estás liberando?`);
+                `Liberar ${patente}\n\n${causa}\n\n` +
+                `Para destrabarla tenés que controlarla vos: al aceptar se abre el ` +
+                `control y lo hacés elemento por elemento. Queda a tu nombre, y figura ` +
+                `que ${tecnico} no lo hizo.\n\n¿Por qué tenés que controlarla vos?`);
             if (motivo === null) return;
             if (!motivo.trim()) {
                 alert('Hace falta un motivo para poder liberarla.');

@@ -210,6 +210,13 @@ HORARIOS = {
     },
 }
 
+# Los horarios en texto, para mostrarlos en la distribución sin que haya que
+# leerlos del diccionario de arriba en cada plantilla.
+HORARIOS_TEXTO = {
+    'mañana': 'Lunes a viernes de 7:30 a 14:45',
+    'tarde': 'Lunes a viernes de 14:30 a 20:30 · Sábados de 9:30 a 15:30',
+}
+
 # Margen para reclamar una devolución no realizada: una hora desde que termina
 # el turno. El retiro no se reclama con este margen: ver vencimiento_retiro().
 MARGEN_CONTROL = timedelta(hours=1)
@@ -1144,6 +1151,80 @@ def crear_base_de_datos():
     )
 ''')
     
+    # Reclamos y actividades coordinadas: mensajes que soporte le deja a un
+    # técnico puntual o a toda una zona. El técnico solo los lee.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reclamos_coordinados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mensaje TEXT NOT NULL,
+            destino_tipo TEXT NOT NULL,
+            destino_usuario_id INTEGER,
+            destino_zona TEXT,
+            fecha TEXT NOT NULL,
+            creado_por TEXT,
+            fecha_creacion TEXT,
+            activo INTEGER DEFAULT 1,
+            FOREIGN KEY (destino_usuario_id) REFERENCES usuarios(id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_reclamos_fecha
+        ON reclamos_coordinados (fecha, activo)
+    ''')
+
+    # Distribución semanal: qué jornada le toca a cada técnico y a cada
+    # persona de soporte esa semana, y quiénes están de guardia. La carga el
+    # jefe y recién cuando la publica la ve el resto.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS distribucion_semanal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            semana_inicio TEXT NOT NULL UNIQUE,
+            publicada INTEGER DEFAULT 0,
+            creada_por TEXT,
+            fecha_creacion TEXT,
+            publicada_por TEXT,
+            fecha_publicacion TEXT
+        )
+    ''')
+
+    # Una fila por persona: la jornada de la semana. `puesto` solo lo usa
+    # soporte, que además de la jornada tiene un puesto asignado.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS distribucion_jornadas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            distribucion_id INTEGER NOT NULL,
+            usuario_id INTEGER NOT NULL,
+            jornada TEXT NOT NULL,
+            puesto TEXT,
+            orden INTEGER DEFAULT 0,
+            FOREIGN KEY (distribucion_id) REFERENCES distribucion_semanal(id),
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_distribucion_persona
+        ON distribucion_jornadas (distribucion_id, usuario_id)
+    ''')
+
+    # La guardia se carga por adelantado: en la distribución de una semana van
+    # la guardia de esa semana y la de la siguiente, que además funciona como
+    # alternativa si alguno de los titulares no puede.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS distribucion_guardia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            distribucion_id INTEGER NOT NULL,
+            semana_guardia TEXT NOT NULL,
+            usuario_id INTEGER NOT NULL,
+            orden INTEGER DEFAULT 0,
+            FOREIGN KEY (distribucion_id) REFERENCES distribucion_semanal(id),
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_distribucion_guardia
+        ON distribucion_guardia (semana_guardia)
+    ''')
+
     # Vencimientos programados de cada camioneta: VTV, matafuego, service,
     # lavado. Uno por camioneta y tipo; la fila guarda cuándo vence el próximo
     # y cada cuánto se repite.
@@ -1245,6 +1326,7 @@ def aplicar_migraciones(conexion):
         'controles_tecnicos': [
             ('kilometraje', 'INTEGER'),
             ('fuera_de_termino', 'INTEGER DEFAULT 0'),
+            ('urgencia', 'INTEGER DEFAULT 0'),
             ('forzado_por', 'TEXT'),
             ('observacion', 'TEXT'),
         ],
@@ -2093,6 +2175,218 @@ def controles_pendientes(conexion, momento=None):
 
 
 # ============================================
+# RECLAMOS COORDINADOS
+# ============================================
+
+def reclamos_de(conexion, usuario_id=None, zona=None, fecha=None, dias=1):
+    """Los mensajes vigentes para alguien: los suyos y los de su zona.
+
+    `dias` mira también hacia atrás: un reclamo cargado ayer a última hora
+    tiene que seguir a la vista hoy a la mañana, si no se pierde.
+    """
+    fecha = fecha or ahora().date()
+    desde = (fecha - timedelta(days=dias - 1)).strftime('%Y-%m-%d')
+    hasta = fecha.strftime('%Y-%m-%d')
+
+    condiciones, parametros = [], [desde, hasta]
+    if usuario_id is not None:
+        condiciones.append('(r.destino_tipo = \'persona\' AND r.destino_usuario_id = ?)')
+        parametros.append(usuario_id)
+    if zona:
+        condiciones.append('(r.destino_tipo = \'zona\' AND UPPER(r.destino_zona) = ?)')
+        parametros.append(zona.strip().upper())
+    if not condiciones:
+        return []
+
+    return [dict(f) for f in conexion.execute(f'''
+        SELECT r.id, r.mensaje, r.destino_tipo, r.destino_zona, r.fecha,
+               r.creado_por, r.fecha_creacion, u.nombre AS destino_nombre
+        FROM reclamos_coordinados r
+        LEFT JOIN usuarios u ON r.destino_usuario_id = u.id
+        WHERE r.activo = 1 AND r.fecha BETWEEN ? AND ?
+          AND ({' OR '.join(condiciones)})
+        ORDER BY r.fecha DESC, r.id DESC
+    ''', parametros)]
+
+
+# ============================================
+# DISTRIBUCIÓN SEMANAL
+# ============================================
+
+# Cuánta gente de guardia se carga por semana.
+GUARDIAS_POR_SEMANA = 2
+
+
+def lunes_de(fecha):
+    """El lunes de la semana de esa fecha, como 'YYYY-MM-DD'.
+
+    Toda la distribución se indexa por el lunes: es la clave que permite
+    hablar de 'la semana del 21' sin ambigüedad.
+    """
+    if isinstance(fecha, str):
+        fecha = _fecha_iso(fecha) or ahora().date()
+    if isinstance(fecha, datetime):
+        fecha = fecha.date()
+    return (fecha - timedelta(days=fecha.weekday())).strftime('%Y-%m-%d')
+
+
+def semana_actual():
+    return lunes_de(ahora().date())
+
+
+def correr_semana(lunes, semanas):
+    base = _fecha_iso(lunes) or ahora().date()
+    return (base + timedelta(weeks=semanas)).strftime('%Y-%m-%d')
+
+
+def distribucion_de(conexion, lunes, solo_publicada=False):
+    """La distribución de una semana con su gente, o None si no existe.
+
+    `solo_publicada` es lo que ve todo el mundo menos el jefe: mientras la
+    arma, nadie más debería estar mirando una planilla a medio hacer.
+    """
+    sql = 'SELECT * FROM distribucion_semanal WHERE semana_inicio = ?'
+    if solo_publicada:
+        sql += ' AND publicada = 1'
+    cabecera = conexion.execute(sql, (lunes,)).fetchone()
+    if cabecera is None:
+        return None
+
+    jornadas = conexion.execute('''
+        SELECT dj.usuario_id, dj.jornada, dj.puesto, dj.orden,
+               u.nombre, u.rol
+        FROM distribucion_jornadas dj
+        JOIN usuarios u ON dj.usuario_id = u.id
+        WHERE dj.distribucion_id = ?
+        ORDER BY dj.orden, u.nombre
+    ''', (cabecera['id'],)).fetchall()
+
+    guardias = conexion.execute('''
+        SELECT dg.semana_guardia, dg.usuario_id, dg.orden, u.nombre
+        FROM distribucion_guardia dg
+        JOIN usuarios u ON dg.usuario_id = u.id
+        WHERE dg.distribucion_id = ?
+        ORDER BY dg.semana_guardia, dg.orden
+    ''', (cabecera['id'],)).fetchall()
+
+    datos = {
+        'id': cabecera['id'],
+        'semana_inicio': cabecera['semana_inicio'],
+        'publicada': bool(cabecera['publicada']),
+        'creada_por': cabecera['creada_por'],
+        'publicada_por': cabecera['publicada_por'],
+        'fecha_publicacion': cabecera['fecha_publicacion'],
+        'tecnicos': {'mañana': [], 'tarde': []},
+        'soporte': {'mañana': [], 'tarde': []},
+        'jornada_por_usuario': {},
+        'puesto_por_usuario': {},
+        'guardia': {},
+    }
+
+    for fila in jornadas:
+        if fila['jornada'] not in JORNADAS:
+            continue
+        grupo = 'soporte' if fila['rol'] in ('soporte', 'jefe', 'admin') else 'tecnicos'
+        datos[grupo][fila['jornada']].append(dict(fila))
+        datos['jornada_por_usuario'][fila['usuario_id']] = fila['jornada']
+        datos['puesto_por_usuario'][fila['usuario_id']] = fila['puesto'] or ''
+
+    for fila in guardias:
+        datos['guardia'].setdefault(fila['semana_guardia'], []).append(dict(fila))
+
+    return datos
+
+
+def jornada_asignada(conexion, usuario_id, momento=None):
+    """La jornada que le toca a esta persona esta semana, o None.
+
+    Manda sobre el horario de entrada: alguien puede entrar a las 18 hs a
+    cerrar el control de su turno de la mañana, y tiene que ver su turno de la
+    mañana igual. Los horarios siguen usándose para los vencimientos, que son
+    del turno y no de la persona.
+    """
+    momento = momento or ahora()
+    distribucion = distribucion_de(conexion, lunes_de(momento.date()),
+                                   solo_publicada=True)
+    if distribucion is None:
+        return None
+    return distribucion['jornada_por_usuario'].get(usuario_id)
+
+
+def guardias_vigentes(conexion, momento=None):
+    """Quiénes están de guardia ahora y quiénes son la alternativa.
+
+    La guardia de la semana siguiente hace de alternativa: si alguno de los
+    titulares no puede, sale el de la semana que viene.
+    """
+    momento = momento or ahora()
+    esta = lunes_de(momento.date())
+    proxima = correr_semana(esta, 1)
+
+    titulares, alternativa = [], []
+    for lunes, destino in ((esta, titulares), (proxima, alternativa)):
+        for fila in conexion.execute('''
+            SELECT dg.usuario_id, u.nombre
+            FROM distribucion_guardia dg
+            JOIN distribucion_semanal ds ON dg.distribucion_id = ds.id
+            JOIN usuarios u ON dg.usuario_id = u.id
+            WHERE dg.semana_guardia = ? AND ds.publicada = 1 AND u.activo = 1
+            ORDER BY dg.orden
+        ''', (lunes,)):
+            if not any(d['usuario_id'] == fila['usuario_id'] for d in destino):
+                destino.append(dict(fila))
+
+    return {'semana': esta, 'titulares': titulares,
+            'proxima_semana': proxima, 'alternativa': alternativa}
+
+
+def camionetas_para_urgencia(conexion, usuario_id, momento=None):
+    """Camionetas que el de guardia puede tomar ahora mismo.
+
+    Se excluyen las que otro técnico tiene retiradas: esas están físicamente
+    con él, no hay urgencia que las traiga de vuelta. Las que están asignadas
+    a otro en este turno se muestran avisando, porque el de guardia suele
+    salir fuera del horario normal y la planilla del turno ya no aplica.
+    """
+    momento = momento or ahora()
+    fecha = momento.strftime('%Y-%m-%d')
+    jornada = jornada_actual(momento)
+
+    disponibles = []
+    for camioneta in conexion.execute(
+            'SELECT id, patente FROM camionetas WHERE activa = 1 ORDER BY patente'):
+        abierto = retiro_abierto(conexion, camioneta['id'])
+        if abierto is not None and abierto['tecnico_id'] != usuario_id:
+            continue  # la tiene otro en la mano
+
+        ocupada = conexion.execute('''
+            SELECT u.nombre
+            FROM asignaciones a
+            JOIN usuarios u ON a.tecnico_id = u.id
+            WHERE a.camioneta_id = ? AND a.fecha = ? AND a.jornada = ?
+              AND a.tecnico_id IS NOT NULL AND a.tecnico_id != ?
+        ''', (camioneta['id'], fecha, jornada, usuario_id)).fetchone()
+
+        disponibles.append({
+            'id': camioneta['id'],
+            'patente': camioneta['patente'],
+            'ya_la_tengo': abierto is not None,
+            'asignada_a': ocupada['nombre'] if ocupada else '',
+        })
+    return disponibles
+
+
+def esta_de_guardia(conexion, usuario_id, momento=None):
+    """(bool, rol) — si puede usar el retiro de urgencia y en qué carácter."""
+    vigentes = guardias_vigentes(conexion, momento)
+    if any(g['usuario_id'] == usuario_id for g in vigentes['titulares']):
+        return True, 'titular'
+    if any(g['usuario_id'] == usuario_id for g in vigentes['alternativa']):
+        return True, 'alternativa'
+    return False, None
+
+
+# ============================================
 # CALENDARIO DE VENCIMIENTOS
 # ============================================
 
@@ -2721,57 +3015,87 @@ def guardar_planilla():
 
 @app.route('/admin/semana', methods=['GET', 'POST'])
 def asignacion_semanal():
-    if not autorizado('soporte'):
+    if not autorizado('soporte', 'jefe', 'admin'):
         return redirect(url_for('login'))
-    
+
     jornada = request.args.get('jornada', 'mañana')
     if not jornada_valida(jornada):
         jornada = 'mañana'
-    fecha_inicio = request.args.get('fecha_inicio', ahora().strftime('%Y-%m-%d'))
-    
+
+    # La semana ya no se elige con un calendario libre: sale de la distribución
+    # que carga jefatura. Soporte asigna camionetas recién cuando esa semana
+    # está publicada, y no puede tocar las que ya pasaron.
+    lunes = lunes_de(request.args.get('semana') or ahora().date())
+    actual = semana_actual()
+    manda_jefatura = session.get('rol') in ('jefe', 'admin')
+
     dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
-    
-    # Una fecha inválida en la URL rompía la pantalla con un ValueError.
-    try:
-        fecha_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
-    except ValueError:
-        fecha_dt = ahora()
-        fecha_inicio = fecha_dt.strftime('%Y-%m-%d')
-    inicio_semana = fecha_dt - timedelta(days=fecha_dt.weekday())
+    inicio_semana = datetime.strptime(lunes, '%Y-%m-%d')
     fechas_semana = [inicio_semana + timedelta(days=i) for i in range(7)]
-    
+
     conexion = get_db()
-    
+
     try:
         tecnicos = obtener_tecnicos()
         camionetas = obtener_camionetas()
         zonas = zonas_activas(conexion)
 
+        distribucion = distribucion_de(conexion, lunes,
+                                       solo_publicada=not manda_jefatura)
+
+        # Semanas a la vista: las que tienen distribución, más la actual.
+        semanas = {f['semana_inicio'] for f in conexion.execute(
+            'SELECT semana_inicio FROM distribucion_semanal'
+            + ('' if manda_jefatura else ' WHERE publicada = 1'))}
+        semanas.add(actual)
+        semanas.add(lunes)
+
         fechas_str = [fecha.strftime('%Y-%m-%d') for fecha in fechas_semana]
         placeholders = ','.join('?' for _ in fechas_str)
-        
+
         asignaciones_semana = conexion.execute(f'''
-            SELECT a.camioneta_id, a.tecnico_id, a.tecnico2_id, a.zona, a.fecha
+            SELECT a.camioneta_id, a.tecnico_id, a.tecnico2_id, a.zona, a.fecha,
+                   c.patente
             FROM asignaciones a
+            JOIN camionetas c ON a.camioneta_id = c.id
             WHERE a.fecha IN ({placeholders}) AND a.jornada = ?
         ''', fechas_str + [jornada]).fetchall()
-        
+
         asignaciones_por_dia = {}
         for asignacion in asignaciones_semana:
             camioneta_id = asignacion['camioneta_id']
             fecha = asignacion['fecha']
-            if camioneta_id not in asignaciones_por_dia:
-                asignaciones_por_dia[camioneta_id] = {}
-            if fecha not in asignaciones_por_dia[camioneta_id]:
-                asignaciones_por_dia[camioneta_id][fecha] = {
-                    'tecnico_id': asignacion['tecnico_id'],
-                    'tecnico2_id': asignacion['tecnico2_id'],
-                    'zona': asignacion['zona'] or ''
-                }
-        
+            asignaciones_por_dia.setdefault(camioneta_id, {})[fecha] = {
+                'tecnico_id': asignacion['tecnico_id'],
+                'tecnico2_id': asignacion['tecnico2_id'],
+                'zona': asignacion['zona'] or ''
+            }
+
+        # Qué camionetas le tocaron a cada uno esa semana: es lo que va arriba,
+        # sobre la distribución, y se completa a medida que se asigna abajo.
+        camionetas_por_tecnico = {}
+        for asignacion in asignaciones_semana:
+            for campo in ('tecnico_id', 'tecnico2_id'):
+                if asignacion[campo]:
+                    camionetas_por_tecnico.setdefault(asignacion[campo], set()).add(
+                        asignacion['patente'])
+        camionetas_por_tecnico = {k: sorted(v) for k, v in camionetas_por_tecnico.items()}
+
     finally:
         conexion.close()
-    
+
+    # Sin distribución publicada no hay a quién asignarle: soporte tiene que
+    # esperar a que jefatura la saque.
+    if manda_jefatura:
+        editable, motivo_bloqueo = True, ''
+    elif lunes < actual:
+        editable, motivo_bloqueo = False, 'Esa semana ya pasó: queda como registro.'
+    elif distribucion is None:
+        editable, motivo_bloqueo = False, ('Jefatura todavía no publicó la distribución '
+                                           'de esa semana.')
+    else:
+        editable, motivo_bloqueo = True, ''
+
     return render_template('semana.html',
                          tecnicos=tecnicos,
                          zonas=zonas,
@@ -2779,22 +3103,38 @@ def asignacion_semanal():
                          dias_semana=dias_semana,
                          fechas_semana=fechas_semana,
                          asignaciones_por_dia=asignaciones_por_dia,
+                         distribucion=distribucion,
+                         camionetas_por_tecnico=camionetas_por_tecnico,
                          jornada=jornada,
-                         fecha_inicio=fecha_inicio,
+                         jornadas=JORNADAS,
+                         horarios=HORARIOS_TEXTO,
+                         lunes=lunes,
+                         semana_actual=actual,
+                         semanas=sorted(semanas, reverse=True),
+                         editable=editable,
+                         motivo_bloqueo=motivo_bloqueo,
                          mensaje=request.args.get('mensaje', ''),
                          error=request.args.get('error', ''))
 
+
 @app.route('/guardar-semana', methods=['POST'])
 def guardar_semana():
-    if not autorizado('soporte'):
+    if not autorizado('soporte', 'jefe', 'admin'):
         return redirect(url_for('login'))
-    
+
     fechas = request.form.getlist('fechas[]')
     jornada = request.form.get('jornada', 'mañana')
     fecha_inicio = fechas[0] if fechas else ahora().strftime('%Y-%m-%d')
-    
+    lunes = lunes_de(fecha_inicio)
+
     if not jornada_valida(jornada):
         return redirect(url_for('asignacion_semanal', error='Jornada inválida'))
+
+    # El mismo candado que en la pantalla, para que no alcance con mandar el
+    # POST a mano: una semana cerrada es el registro de lo que se hizo.
+    if session.get('rol') not in ('jefe', 'admin') and lunes < semana_actual():
+        return redirect(url_for('asignacion_semanal', semana=lunes, jornada=jornada,
+            error='Esa semana ya pasó y no se puede modificar.'))
     
     camioneta_ids = request.form.getlist('camioneta_ids')
     
@@ -2808,7 +3148,7 @@ def guardar_semana():
                     continue
                 if valor in asignados:
                     return redirect(url_for('asignacion_semanal', jornada=jornada,
-                        fecha_inicio=fecha_inicio,
+                        semana=lunes,
                         error=f'Un mismo técnico quedó en más de una camioneta el {fecha}.'))
                 asignados.add(valor)
     
@@ -2846,14 +3186,14 @@ def guardar_semana():
     except Exception as e:
         conexion.rollback()
         return redirect(url_for('asignacion_semanal', jornada=jornada,
-                                fecha_inicio=fecha_inicio,
+                                semana=lunes,
                                 error=f'Error al guardar: {str(e)}'))
     finally:
         conexion.close()
     
     # Se vuelve a la misma semana y jornada que se estaba editando.
     return redirect(url_for('asignacion_semanal', jornada=jornada,
-                            fecha_inicio=fecha_inicio, mensaje=mensaje))
+                            semana=lunes, mensaje=mensaje))
 
 # ============================================
 # RUTAS DE TÉCNICO
@@ -2875,7 +3215,17 @@ def tecnico():
     # 14:30 a 14:45 no hay que hacerlo elegir.
     asignacion = None
     jornada_actual_tecnico = jornada_actual(momento)
+
+    # La jornada la manda la distribución semanal, no el reloj: alguien puede
+    # entrar a las 18 hs a cerrar el control de su turno de la mañana y tiene
+    # que ver el turno de la mañana igual. El horario queda como respaldo para
+    # cuando esa semana no tiene distribución publicada, y las otras jornadas
+    # quedan de alternativa por si esa no tiene asignación cargada.
+    asignada = jornada_asignada(conexion, usuario_id, momento)
     candidatas = jornadas_activas(momento) or [jornada_actual_tecnico]
+    if asignada:
+        candidatas = [asignada] + [j for j in JORNADAS if j != asignada]
+        jornada_actual_tecnico = asignada
     
     for jornada in candidatas:
         asignacion = conexion.execute('''
@@ -2987,6 +3337,15 @@ def tecnico():
         if ajenos:
             trabada_por_hueco = ', '.join(sorted({f['tecnico'] for f in ajenos}))
 
+    de_guardia, caracter_guardia = esta_de_guardia(conexion, usuario_id, momento)
+    camionetas_urgencia = (camionetas_para_urgencia(conexion, usuario_id, momento)
+                           if de_guardia else [])
+
+    # Lo que soporte le dejó anotado: lo suyo y lo de la zona en la que anda.
+    actividades = reclamos_de(conexion, usuario_id=usuario_id,
+                              zona=(asignacion['zona'] if asignacion else None),
+                              fecha=momento.date(), dias=2)
+
     elementos_bloqueados = []
     if asignacion:
         bloqueados = conexion.execute('''
@@ -3019,6 +3378,11 @@ def tecnico():
                          retirada_fecha=retirada_fecha,
                          retirada_jornada=retirada_jornada,
                          es_guardia=es_guardia,
+                         de_guardia=de_guardia,
+                         caracter_guardia=caracter_guardia,
+                         camionetas_urgencia=camionetas_urgencia,
+                         actividades=actividades,
+                         jornada_de_la_semana=asignada,
                          bloqueada_por=bloqueada_por,
                          elementos_bloqueados=elementos_bloqueados,
                          fecha_actual=fecha_actual,
@@ -3094,6 +3458,24 @@ def deuda_que_bloquea(conexion, usuario_id, camioneta_id):
     deudas = [c for c in custodias_abiertas(conexion, tecnico_id=usuario_id)
               if c['camioneta_id'] != camioneta_id]
     return ', '.join(d['patente'] for d in deudas)
+
+
+def control_de_liberacion(conexion, control_id):
+    """Control que soporte abrió para destrabar una camioneta, o None.
+
+    Lo hace soporte pero queda anotado sobre el turno del técnico que no lo
+    hizo: así el historial muestra las dos cosas, quién falló y quién tuvo que
+    salir a cubrirlo.
+    """
+    return conexion.execute('''
+        SELECT ct.*, a.camioneta_id, a.tecnico_id, c.patente,
+               u.nombre AS tecnico_nombre
+        FROM controles_tecnicos ct
+        JOIN asignaciones a ON ct.asignacion_id = a.id
+        JOIN camionetas c ON a.camioneta_id = c.id
+        JOIN usuarios u ON a.tecnico_id = u.id
+        WHERE ct.id = ? AND ct.forzado_por IS NOT NULL
+    ''', (control_id,)).fetchone()
 
 
 def control_del_tecnico(conexion, control_id, usuario_id):
@@ -3243,34 +3625,177 @@ def iniciar_control():
     
     return redirect(url_for('realizar_control', control_id=control_id))
 
-@app.route('/realizar-control/<int:control_id>')
-def realizar_control(control_id):
+@app.route('/retiro-urgencia', methods=['POST'])
+def retiro_urgencia():
+    """El de guardia toma una camioneta fuera de la planilla.
+
+    La guardia sale a cualquier hora y con lo que haya, así que este camino
+    no mira los controles que el técnico deba: la urgencia primero, el
+    reclamo después. Queda marcado como urgencia para que soporte sepa que
+    esa salida no estaba en la planilla.
+
+    Lo único que sí respeta es la realidad física: una camioneta que otro
+    tiene retirada no está disponible por más urgente que sea.
+    """
     if 'usuario_id' not in session or session.get('rol') != 'tecnico':
         return redirect(url_for('login'))
-    
-    conexion = get_db()
-    
-    control = conexion.execute('''
-        SELECT ct.*, a.camioneta_id, c.patente, u.nombre as tecnico_nombre
-        FROM controles_tecnicos ct
-        JOIN asignaciones a ON ct.asignacion_id = a.id
-        JOIN camionetas c ON a.camioneta_id = c.id
-        JOIN usuarios u ON a.tecnico_id = u.id
-        WHERE ct.id = ? AND ct.finalizado = 0 AND a.tecnico_id = ?
-    ''', (control_id, session['usuario_id'])).fetchone()
-    
-    if not control:
-        conexion.close()
-        return redirect(url_for('tecnico',
-            error='Control no encontrado, ya finalizado, o no te corresponde.'))
 
-    if control['tipo_control'] == 'RETIRO':
-        patentes = deuda_que_bloquea(conexion, session['usuario_id'], control['camioneta_id'])
-        if patentes:
+    usuario_id = session['usuario_id']
+    momento = ahora()
+
+    try:
+        camioneta_id = int(request.form.get('camioneta_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('tecnico', error='Elegí una camioneta.'))
+
+    motivo = (request.form.get('motivo') or '').strip()
+    if not motivo:
+        return redirect(url_for('tecnico',
+            error='Contá para qué la necesitás: queda en el registro de la guardia.'))
+
+    conexion = get_db()
+    try:
+        de_guardia, caracter = esta_de_guardia(conexion, usuario_id, momento)
+        if not de_guardia:
+            return redirect(url_for('tecnico',
+                error='El retiro de urgencia es solo para quien está de guardia.'))
+
+        camioneta = conexion.execute(
+            'SELECT id, patente FROM camionetas WHERE id = ? AND activa = 1',
+            (camioneta_id,)).fetchone()
+        if camioneta is None:
+            return redirect(url_for('tecnico', error='Camioneta no encontrada.'))
+
+        abierto = retiro_abierto(conexion, camioneta_id)
+        if abierto is not None:
+            if abierto['tecnico_id'] == usuario_id:
+                return redirect(url_for('tecnico',
+                    error=f'Ya tenés {camioneta["patente"]} retirada.'))
+            return redirect(url_for('tecnico',
+                error=f'{abierto["tecnico_nombre"]} tiene {camioneta["patente"]} '
+                      'retirada y no la devolvió: no está disponible.'))
+
+        # Un retiro de urgencia a medio hacer todavía no figura como custodia
+        # (no está finalizado), así que hay que buscarlo aparte: si no, pedir
+        # la misma camioneta otra vez abría un segundo control en paralelo.
+        en_curso = conexion.execute('''
+            SELECT ct.id FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            WHERE a.camioneta_id = ? AND a.tecnico_id = ?
+              AND ct.tipo_control = 'RETIRO' AND ct.finalizado = 0
+            ORDER BY ct.id DESC LIMIT 1
+        ''', (camioneta_id, usuario_id)).fetchone()
+        if en_curso:
+            return redirect(url_for('realizar_control', control_id=en_curso['id']))
+
+        fecha = momento.strftime('%Y-%m-%d')
+        jornada = jornada_actual(momento)
+
+        # La salida de guardia necesita una asignación donde colgar el control.
+        # Si el turno ya tiene una de otro técnico, se usa el turno siguiente
+        # libre para no pisarle la planilla a nadie.
+        asignacion = None
+        for candidata_fecha, candidata_jornada in (
+                (fecha, jornada),
+                (fecha, [j for j in JORNADAS if j != jornada][0]),
+                ((momento + timedelta(days=1)).strftime('%Y-%m-%d'), JORNADAS[0])):
+            existente = conexion.execute('''
+                SELECT id, tecnico_id FROM asignaciones
+                WHERE camioneta_id = ? AND fecha = ? AND jornada = ?
+            ''', (camioneta_id, candidata_fecha, candidata_jornada)).fetchone()
+
+            if existente is None:
+                cursor = conexion.cursor()
+                cursor.execute('''
+                    INSERT INTO asignaciones
+                        (camioneta_id, tecnico_id, fecha, jornada, estado, zona)
+                    VALUES (?, ?, ?, ?, 'ASIGNADA', ?)
+                ''', (camioneta_id, usuario_id, candidata_fecha, candidata_jornada,
+                      ZONA_GUARDIA))
+                asignacion = (cursor.lastrowid, candidata_fecha, candidata_jornada)
+                break
+            if existente['tecnico_id'] in (None, usuario_id):
+                conexion.execute('''
+                    UPDATE asignaciones SET tecnico_id = ?, zona = ? WHERE id = ?
+                ''', (usuario_id, ZONA_GUARDIA, existente['id']))
+                asignacion = (existente['id'], candidata_fecha, candidata_jornada)
+                break
+
+        if asignacion is None:
+            return redirect(url_for('tecnico',
+                error=f'{camioneta["patente"]} ya está asignada a otro técnico en '
+                      'los próximos turnos. Avisá a soporte para que la libere.'))
+
+        asignacion_id, fecha_control, jornada_control = asignacion
+        cursor = conexion.cursor()
+        cursor.execute('''
+            INSERT INTO controles_tecnicos
+                (asignacion_id, fecha, jornada, tipo_control, finalizado,
+                 fecha_hora_inicio, observacion, urgencia)
+            VALUES (?, ?, ?, 'RETIRO', 0, ?, ?, 1)
+        ''', (asignacion_id, fecha_control, jornada_control, momento.isoformat(),
+              f'Retiro de urgencia por guardia ({caracter}): {motivo}'))
+        control_id = cursor.lastrowid
+
+        crear_notificacion(
+            'RETIRO_URGENCIA',
+            f'🚨 {session.get("nombre")} retiró {camioneta["patente"]} de urgencia '
+            f'por guardia ({caracter}). Motivo: {motivo}',
+            patente=camioneta['patente'],
+            destinatario_rol='soporte',
+            conexion=conexion)
+
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('realizar_control', control_id=control_id))
+
+
+@app.route('/realizar-control/<int:control_id>')
+def realizar_control(control_id):
+    if 'usuario_id' not in session:
+        return redirect(url_for('login'))
+
+    rol = session.get('rol')
+    if rol not in ('tecnico', 'soporte'):
+        return redirect(url_for('login'))
+
+    conexion = get_db()
+
+    # Soporte entra solo a los controles de liberación que abrió el propio
+    # soporte; el técnico, solo a los suyos.
+    liberacion = control_de_liberacion(conexion, control_id) if rol == 'soporte' else None
+    if rol == 'soporte':
+        control = liberacion if liberacion and not liberacion['finalizado'] else None
+        if not control:
+            conexion.close()
+            return redirect(url_for('admin',
+                error='Control no encontrado o ya finalizado.'))
+    else:
+        control = conexion.execute('''
+            SELECT ct.*, a.camioneta_id, c.patente, u.nombre as tecnico_nombre
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            JOIN usuarios u ON a.tecnico_id = u.id
+            WHERE ct.id = ? AND ct.finalizado = 0 AND a.tecnico_id = ?
+              AND ct.forzado_por IS NULL
+        ''', (control_id, session['usuario_id'])).fetchone()
+
+        if not control:
             conexion.close()
             return redirect(url_for('tecnico',
-                error=f'🔒 Tenés la devolución de {patentes} sin hacer. Cerrala antes '
-                      'de seguir con este retiro.'))
+                error='Control no encontrado, ya finalizado, o no te corresponde.'))
+
+        if control['tipo_control'] == 'RETIRO':
+            patentes = deuda_que_bloquea(conexion, session['usuario_id'],
+                                         control['camioneta_id'])
+            if patentes:
+                conexion.close()
+                return redirect(url_for('tecnico',
+                    error=f'🔒 Tenés la devolución de {patentes} sin hacer. Cerrala antes '
+                          'de seguir con este retiro.'))
     
     items_registrados = conexion.execute('''
         SELECT elemento, estado FROM items_control_tecnico 
@@ -3327,6 +3852,7 @@ def realizar_control(control_id):
 
     return render_template('realizar_control.html',
                          control=control,
+                         es_liberacion=bool(liberacion),
                          ultimo_km=ultimo_km,
                          elementos_por_categoria=elementos_por_categoria,
                          elementos_bloqueados=elementos_bloqueados_lista,
@@ -3334,22 +3860,26 @@ def realizar_control(control_id):
 
 @app.route('/finalizar-control/<int:control_id>', methods=['POST'])
 def finalizar_control(control_id):
-    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
+    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
         return redirect(url_for('login'))
-    
+
+    es_soporte = session.get('rol') == 'soporte'
+    volver = 'admin' if es_soporte else 'tecnico'
+
     conexion = get_db()
-    
+
     try:
-        control = control_del_tecnico(conexion, control_id, session['usuario_id'])
-        
+        control = (control_de_liberacion(conexion, control_id) if es_soporte
+                   else control_del_tecnico(conexion, control_id, session['usuario_id']))
+
         if not control:
             conexion.close()
-            return redirect(url_for('tecnico',
+            return redirect(url_for(volver,
                 error='Control no encontrado o no te corresponde'))
         
         if control['finalizado'] == 1:
             conexion.close()
-            return redirect(url_for('tecnico', error='Este control ya fue finalizado'))
+            return redirect(url_for(volver, error='Este control ya fue finalizado'))
 
         # El kilometraje se carga junto con los ítems, en guardar-control-rapido.
         # Si acá falta es porque ese guardado falló o porque se llegó directo a
@@ -3357,7 +3887,7 @@ def finalizar_control(control_id):
         # la camioneta sin lectura de odómetro, que es de donde sale el service.
         if control['kilometraje'] is None:
             conexion.close()
-            return redirect(url_for('tecnico',
+            return redirect(url_for(volver,
                 error='No se puede cerrar el control sin el kilometraje. '
                       'Volvé a entrar al control, cargalo y finalizá desde ahí.'))
         
@@ -3375,24 +3905,39 @@ def finalizar_control(control_id):
             WHERE id = ?
         ''', (momento.isoformat(), tarde, control_id))
         
+        if es_soporte:
+            crear_notificacion(
+                'CONTROL_LIBERACION',
+                f'{session.get("nombre")} controló {control["patente"]} para destrabarla: '
+                f'{control["tecnico_nombre"]} no hizo el '
+                f'{control["tipo_control"].lower()} del {control["fecha"]} '
+                f'({control["jornada"]}).',
+                patente=control['patente'],
+                destinatario_rol='jefe',
+                conexion=conexion)
+
         conexion.commit()
         conexion.close()
 
+        if es_soporte:
+            return redirect(url_for('admin',
+                mensaje=f'🔓 {control["patente"]} liberada. El control quedó a tu nombre '
+                        f'y figura que {control["tecnico_nombre"]} no lo hizo.'))
         if tarde:
             return redirect(url_for('tecnico',
                 mensaje='✅ Control registrado fuera de término. Queda la constancia '
                         'y la camioneta se destraba, pero figura como hecho tarde.'))
         return redirect(url_for('tecnico', mensaje='✅ Control finalizado correctamente'))
-        
+
     except Exception as e:
         conexion.rollback()
         conexion.close()
         print(f"❌ Error al finalizar: {e}")
-        return redirect(url_for('tecnico', error=f'Error al finalizar: {str(e)}'))
+        return redirect(url_for(volver, error=f'Error al finalizar: {str(e)}'))
 
 @app.route('/guardar-control-rapido', methods=['POST'])
 def guardar_control_rapido():
-    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
+    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
         return jsonify({'error': 'No autorizado'}), 401
     
     data = request.get_json(silent=True) or {}
@@ -3416,15 +3961,18 @@ def guardar_control_rapido():
     try:
         fecha_hora = ahora().isoformat()
         
-        info = control_del_tecnico(conexion, control_id, session['usuario_id'])
-        
+        if session.get('rol') == 'soporte':
+            info = control_de_liberacion(conexion, control_id)
+        else:
+            info = control_del_tecnico(conexion, control_id, session['usuario_id'])
+
         if not info:
             return jsonify({'error': 'Control no encontrado o no te corresponde'}), 404
         
         if info['finalizado']:
             return jsonify({'error': 'Este control ya fue finalizado'}), 400
 
-        if info['tipo_control'] == 'RETIRO':
+        if info['tipo_control'] == 'RETIRO' and session.get('rol') == 'tecnico':
             patentes = deuda_que_bloquea(conexion, session['usuario_id'], info['camioneta_id'])
             if patentes:
                 return jsonify({'error':
@@ -3996,13 +4544,15 @@ def generar_remito_pdf(reporte_id):
 
 @app.route('/forzar-devolucion', methods=['POST'])
 def forzar_devolucion():
-    """Soporte cierra a mano un control que dejó trabada a una camioneta.
+    """Soporte abre el control con el que va a destrabar una camioneta.
 
     Sirve para los dos casos que la bloquean: una devolución que el técnico
-    nunca hizo, y un retiro que quedó sin control. Sin esto la camioneta se
-    trababa para siempre cuando el técnico no aparecía. Queda registrado quién
-    lo cerró y por qué, y el control se marca como forzado y fuera de término
-    para que no se confunda con una revisión real.
+    nunca hizo y un retiro que quedó sin control. No cierra nada por sí sola:
+    crea el control y manda a soporte a revisar la camioneta de verdad. Recién
+    al finalizarlo la camioneta se libera.
+
+    El control queda anotado sobre el turno del técnico que no lo hizo, con el
+    nombre de soporte en `forzado_por`: el historial muestra a los dos.
     """
     if not autorizado('soporte'):
         return redirect(url_for('login'))
@@ -4019,7 +4569,7 @@ def forzar_devolucion():
     motivo = (request.form.get('motivo') or '').strip()
     if not motivo:
         return redirect(url_for('admin',
-            error='Hay que explicar por qué se cierra el control a mano.'))
+            error='Hay que explicar por qué tenés que controlarla vos.'))
 
     conexion = get_db()
     try:
@@ -4029,21 +4579,14 @@ def forzar_devolucion():
                 return redirect(url_for('admin',
                     error='Esa camioneta no tiene ninguna devolución pendiente.'))
             asignacion_id = pendiente['asignacion_devolucion_id']
-            patente = pendiente['patente']
-            quien = pendiente['tecnico']
-            cuando = f'{pendiente["retirada_fecha"]} ({pendiente["retirada_jornada"]})'
         else:
-            # Puede haber más de un turno sin control: se cierra el más viejo,
-            # así repetir la acción los va limpiando de a uno y siempre en orden.
+            # Puede haber más de un turno sin control: se toma el más viejo, así
+            # repetir la acción los va limpiando de a uno y siempre en orden.
             huecos = controles_faltantes(conexion, camioneta_id=camioneta_id)
             if not huecos:
                 return redirect(url_for('admin',
                     error='Esa camioneta no tiene ningún retiro sin controlar.'))
-            pendiente = huecos[-1]
-            asignacion_id = pendiente['asignacion_id']
-            patente = pendiente['patente']
-            quien = pendiente['tecnico']
-            cuando = f'{pendiente["fecha"]} ({pendiente["jornada"]})'
+            asignacion_id = huecos[-1]['asignacion_id']
 
         destino = conexion.execute(
             'SELECT id, fecha, jornada FROM asignaciones WHERE id = ?',
@@ -4052,37 +4595,31 @@ def forzar_devolucion():
             return redirect(url_for('admin',
                 error='No se encontró el turno donde registrar el control.'))
 
-        fecha_hora = ahora().isoformat()
-        conexion.execute('''
-            INSERT INTO controles_tecnicos
-                (asignacion_id, fecha, jornada, tipo_control, finalizado,
-                 fecha_hora_inicio, fecha_hora_fin, forzado_por, observacion,
-                 fuera_de_termino)
-            VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 1)
-        ''', (destino['id'], destino['fecha'], destino['jornada'], tipo,
-              fecha_hora, fecha_hora, session.get('nombre'), motivo))
+        # Si ya lo había empezado, se retoma en vez de abrir otro.
+        abierto = conexion.execute('''
+            SELECT id FROM controles_tecnicos
+            WHERE asignacion_id = ? AND tipo_control = ? AND finalizado = 0
+              AND forzado_por IS NOT NULL
+            ORDER BY id DESC LIMIT 1
+        ''', (destino['id'], tipo)).fetchone()
 
-        etiqueta = 'la devolución' if tipo == 'DEVOLUCION' else 'el control de retiro'
-        crear_notificacion(
-            'CONTROL_FORZADO',
-            f'{session.get("nombre")} cerró a mano {etiqueta} de {patente} '
-            f'que {quien} dejó sin hacer del {cuando}. Motivo: {motivo}',
-            patente=patente,
-            destinatario_rol='jefe',
-            conexion=conexion)
-
+        if abierto:
+            control_id = abierto['id']
+        else:
+            cursor = conexion.cursor()
+            cursor.execute('''
+                INSERT INTO controles_tecnicos
+                    (asignacion_id, fecha, jornada, tipo_control, finalizado,
+                     fecha_hora_inicio, forzado_por, observacion, fuera_de_termino)
+                VALUES (?, ?, ?, ?, 0, ?, ?, ?, 1)
+            ''', (destino['id'], destino['fecha'], destino['jornada'], tipo,
+                  ahora().isoformat(), session.get('nombre'), motivo))
+            control_id = cursor.lastrowid
         conexion.commit()
     finally:
         conexion.close()
 
-    quedan = ''
-    if tipo == 'RETIRO' and len(huecos) > 1:
-        restantes = len(huecos) - 1
-        quedan = (f' Todavía {"quedan" if restantes > 1 else "queda"} '
-                  f'{restantes} turno{"s" if restantes > 1 else ""} sin control.')
-    return redirect(url_for('admin',
-        mensaje=f'🔓 {patente}: se cerró {etiqueta} a mano '
-                f'({session.get("nombre")}).{quedan}'))
+    return redirect(url_for('realizar_control', control_id=control_id))
 
 
 @app.route('/api/reportes')
@@ -4837,6 +5374,312 @@ def config_elementos():
 # ============================================
 # RUTAS DE LOGOUT
 # ============================================
+
+# ============================================
+# RECLAMOS COORDINADOS
+# ============================================
+
+@app.route('/reclamos')
+def reclamos():
+    """Los carga soporte; el técnico los lee desde su panel."""
+    if not autorizado('soporte', 'admin', 'jefe'):
+        return redirect(url_for('login'))
+
+    conexion = get_db()
+    try:
+        vigentes = [dict(f) for f in conexion.execute('''
+            SELECT r.id, r.mensaje, r.destino_tipo, r.destino_zona, r.fecha,
+                   r.creado_por, r.fecha_creacion, u.nombre AS destino_nombre
+            FROM reclamos_coordinados r
+            LEFT JOIN usuarios u ON r.destino_usuario_id = u.id
+            WHERE r.activo = 1
+            ORDER BY r.fecha DESC, r.id DESC
+            LIMIT 200
+        ''')]
+        tecnicos = obtener_tecnicos()
+        zonas = zonas_activas(conexion)
+    finally:
+        conexion.close()
+
+    return render_template('reclamos.html',
+                           reclamos=vigentes,
+                           tecnicos=tecnicos,
+                           zonas=zonas,
+                           hoy=ahora().strftime('%Y-%m-%d'),
+                           mensaje=request.args.get('mensaje', ''),
+                           error=request.args.get('error', ''))
+
+
+def _volver_reclamos(mensaje=None, error=None):
+    return redirect(url_for('reclamos', mensaje=mensaje or '', error=error or ''))
+
+
+@app.route('/reclamos/crear', methods=['POST'])
+def reclamos_crear():
+    if not autorizado('soporte', 'admin', 'jefe'):
+        return redirect(url_for('login'))
+
+    mensaje = (request.form.get('mensaje') or '').strip()
+    if not mensaje:
+        return _volver_reclamos(error='El mensaje no puede estar vacío.')
+
+    destino_tipo = (request.form.get('destino_tipo') or '').strip()
+    if destino_tipo not in ('persona', 'zona'):
+        return _volver_reclamos(error='Elegí si va para una persona o para una zona.')
+
+    fecha = (request.form.get('fecha') or '').strip() or ahora().strftime('%Y-%m-%d')
+    if _fecha_iso(fecha) is None:
+        return _volver_reclamos(error='La fecha no es válida.')
+
+    conexion = get_db()
+    try:
+        destino_usuario_id, destino_zona = None, None
+        if destino_tipo == 'persona':
+            try:
+                destino_usuario_id = int(request.form.get('destino_usuario_id', ''))
+            except (TypeError, ValueError):
+                return _volver_reclamos(error='Elegí a quién va dirigido.')
+            existe = conexion.execute(
+                "SELECT id FROM usuarios WHERE id = ? AND activo = 1 AND rol = 'tecnico'",
+                (destino_usuario_id,)).fetchone()
+            if not existe:
+                return _volver_reclamos(error='Ese técnico no existe o está dado de baja.')
+        else:
+            destino_zona = (request.form.get('destino_zona') or '').strip().upper()
+            if not destino_zona:
+                return _volver_reclamos(error='Elegí la zona.')
+
+        conexion.execute('''
+            INSERT INTO reclamos_coordinados
+                (mensaje, destino_tipo, destino_usuario_id, destino_zona,
+                 fecha, creado_por, fecha_creacion, activo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        ''', (mensaje, destino_tipo, destino_usuario_id, destino_zona, fecha,
+              session.get('nombre'), ahora().isoformat()))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_reclamos(mensaje='Actividad cargada.')
+
+
+@app.route('/reclamos/borrar', methods=['POST'])
+def reclamos_borrar():
+    """Baja lógica: el mensaje deja de mostrarse pero queda el registro."""
+    if not autorizado('soporte', 'admin', 'jefe'):
+        return redirect(url_for('login'))
+
+    try:
+        reclamo_id = int(request.form.get('reclamo_id', ''))
+    except (TypeError, ValueError):
+        return _volver_reclamos(error='Actividad inválida.')
+
+    conexion = get_db()
+    try:
+        conexion.execute('UPDATE reclamos_coordinados SET activo = 0 WHERE id = ?',
+                         (reclamo_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_reclamos(mensaje='Actividad dada de baja.')
+
+
+# ============================================
+# DISTRIBUCIÓN SEMANAL
+# ============================================
+
+def puede_editar_distribucion():
+    return session.get('rol') in ('jefe', 'admin')
+
+
+@app.route('/distribucion')
+def distribucion():
+    """La planilla de la semana. La ven todos; la editan el jefe y el admin."""
+    if 'usuario_id' not in session:
+        return redirect(url_for('login'))
+
+    editable = puede_editar_distribucion()
+    lunes = lunes_de(request.args.get('semana') or ahora().date())
+
+    conexion = get_db()
+    try:
+        # Quien no la edita solo ve lo publicado: una planilla a medio armar
+        # confundiría más de lo que ayuda.
+        datos = distribucion_de(conexion, lunes, solo_publicada=not editable)
+
+        tecnicos = [dict(f) for f in conexion.execute(
+            "SELECT id, nombre FROM usuarios WHERE rol = 'tecnico' AND activo = 1 "
+            "ORDER BY nombre")]
+        soporte = [dict(f) for f in conexion.execute(
+            "SELECT id, nombre FROM usuarios WHERE rol IN ('soporte', 'jefe') "
+            "AND activo = 1 ORDER BY nombre")]
+
+        # Semanas que se pueden elegir: las cargadas más la actual y la
+        # siguiente, para poder empezar a armarlas.
+        semanas = {f['semana_inicio'] for f in conexion.execute(
+            'SELECT semana_inicio FROM distribucion_semanal'
+            + ('' if editable else ' WHERE publicada = 1'))}
+        semanas |= {semana_actual(), correr_semana(semana_actual(), 1)} if editable else set()
+        semanas.add(lunes)
+    finally:
+        conexion.close()
+
+    return render_template('distribucion.html',
+                           datos=datos,
+                           lunes=lunes,
+                           semanas=sorted(semanas, reverse=True),
+                           semana_actual=semana_actual(),
+                           anterior=correr_semana(lunes, -1),
+                           siguiente=correr_semana(lunes, 1),
+                           tecnicos=tecnicos,
+                           soporte=soporte,
+                           jornadas=JORNADAS,
+                           guardias_por_semana=GUARDIAS_POR_SEMANA,
+                           semana_guardia_siguiente=correr_semana(lunes, 1),
+                           editable=editable,
+                           horarios=HORARIOS_TEXTO,
+                           mensaje=request.args.get('mensaje', ''),
+                           error=request.args.get('error', ''))
+
+
+def _volver_distribucion(lunes, mensaje=None, error=None):
+    return redirect(url_for('distribucion', semana=lunes,
+                            mensaje=mensaje or '', error=error or ''))
+
+
+@app.route('/distribucion/guardar', methods=['POST'])
+def distribucion_guardar():
+    """Guarda la planilla de la semana sin publicarla."""
+    if not puede_editar_distribucion():
+        return redirect(url_for('login'))
+
+    lunes = lunes_de(request.form.get('semana') or ahora().date())
+
+    conexion = get_db()
+    try:
+        cabecera = conexion.execute(
+            'SELECT id FROM distribucion_semanal WHERE semana_inicio = ?',
+            (lunes,)).fetchone()
+        if cabecera:
+            distribucion_id = cabecera['id']
+        else:
+            cursor = conexion.cursor()
+            cursor.execute('''
+                INSERT INTO distribucion_semanal
+                    (semana_inicio, publicada, creada_por, fecha_creacion)
+                VALUES (?, 0, ?, ?)
+            ''', (lunes, session.get('nombre'), ahora().isoformat()))
+            distribucion_id = cursor.lastrowid
+
+        # Se reescribe entera: es una planilla, no un historial de cambios.
+        conexion.execute('DELETE FROM distribucion_jornadas WHERE distribucion_id = ?',
+                         (distribucion_id,))
+        conexion.execute('DELETE FROM distribucion_guardia WHERE distribucion_id = ?',
+                         (distribucion_id,))
+
+        validos = {f['id'] for f in conexion.execute(
+            "SELECT id FROM usuarios WHERE activo = 1 AND rol IN "
+            "('tecnico', 'soporte', 'jefe')")}
+
+        def entero(valor):
+            try:
+                return int(valor)
+            except (TypeError, ValueError):
+                return None
+
+        # Técnicos: una jornada para toda la semana.
+        for clave, valor in request.form.items():
+            if not clave.startswith('jornada_'):
+                continue
+            usuario_id = entero(clave[len('jornada_'):])
+            if usuario_id not in validos or valor not in JORNADAS:
+                continue
+            conexion.execute('''
+                INSERT OR REPLACE INTO distribucion_jornadas
+                    (distribucion_id, usuario_id, jornada, puesto, orden)
+                VALUES (?, ?, ?, NULL, 0)
+            ''', (distribucion_id, usuario_id, valor))
+
+        # Soporte: puede haber tantos puestos como haga falta, así que vienen
+        # como listas paralelas (persona, puesto) por jornada.
+        for jornada in JORNADAS:
+            personas = request.form.getlist(f'soporte_{jornada}_usuario')
+            puestos = request.form.getlist(f'soporte_{jornada}_puesto')
+            for orden, (persona, puesto) in enumerate(zip(personas, puestos)):
+                usuario_id = entero(persona)
+                if usuario_id not in validos:
+                    continue
+                conexion.execute('''
+                    INSERT OR REPLACE INTO distribucion_jornadas
+                        (distribucion_id, usuario_id, jornada, puesto, orden)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (distribucion_id, usuario_id, jornada,
+                      (puesto or '').strip() or f'Puesto {orden + 1}', orden))
+
+        # Guardia de esta semana y de la siguiente.
+        for sufijo, semana_guardia in (('esta', lunes), ('proxima', correr_semana(lunes, 1))):
+            for orden, valor in enumerate(request.form.getlist(f'guardia_{sufijo}')):
+                usuario_id = entero(valor)
+                if usuario_id not in validos:
+                    continue
+                conexion.execute('''
+                    INSERT INTO distribucion_guardia
+                        (distribucion_id, semana_guardia, usuario_id, orden)
+                    VALUES (?, ?, ?, ?)
+                ''', (distribucion_id, semana_guardia, usuario_id, orden))
+
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_distribucion(lunes, mensaje='Distribución guardada. '
+                                               'Todavía no la ve nadie más.')
+
+
+@app.route('/distribucion/publicar', methods=['POST'])
+def distribucion_publicar():
+    """La hace visible para todos, o la vuelve a ocultar."""
+    if not puede_editar_distribucion():
+        return redirect(url_for('login'))
+
+    lunes = lunes_de(request.form.get('semana') or ahora().date())
+    ocultar = request.form.get('accion') == 'ocultar'
+
+    conexion = get_db()
+    try:
+        cabecera = conexion.execute(
+            'SELECT id FROM distribucion_semanal WHERE semana_inicio = ?',
+            (lunes,)).fetchone()
+        if cabecera is None:
+            return _volver_distribucion(lunes,
+                error='Todavía no hay nada cargado para esa semana.')
+
+        if ocultar:
+            conexion.execute('''
+                UPDATE distribucion_semanal
+                SET publicada = 0, publicada_por = NULL, fecha_publicacion = NULL
+                WHERE id = ?
+            ''', (cabecera['id'],))
+            mensaje = 'Distribución oculta. Volvió a verla solo jefatura.'
+        else:
+            conexion.execute('''
+                UPDATE distribucion_semanal
+                SET publicada = 1, publicada_por = ?, fecha_publicacion = ?
+                WHERE id = ?
+            ''', (session.get('nombre'), ahora().isoformat(), cabecera['id']))
+            crear_notificacion(
+                'DISTRIBUCION_PUBLICADA',
+                f'📋 Ya está la distribución de la semana del {lunes}.',
+                destinatario_rol='todos', conexion=conexion)
+            mensaje = 'Distribución publicada. Ya la ven todos.'
+
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_distribucion(lunes, mensaje=mensaje)
+
 
 # ============================================
 # CALENDARIO

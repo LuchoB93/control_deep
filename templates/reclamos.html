@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Actividades coordinadas</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="config-container">
+
+    <div class="seccion-header">
+        <h1><i class="bi bi-chat-left-text"></i> Actividades coordinadas</h1>
+        <p class="text-muted">
+            Reclamos y trabajos que hay que avisarle a un técnico o a toda una zona.
+            El técnico los ve en su panel.
+        </p>
+        <a href="{{ url_for('admin') }}" class="btn btn-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Volver al panel
+        </a>
+    </div>
+
+    {% if mensaje %}<div class="alert alert-success">{{ mensaje }}</div>{% endif %}
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+    <!-- Alta -->
+    <div class="card mb-3">
+        <div class="card-header"><strong><i class="bi bi-plus-circle"></i> Nueva actividad</strong></div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('reclamos_crear') }}" class="reclamo-form">
+                <div class="reclamo-fila">
+                    <div class="reclamo-campo">
+                        <label for="destino_tipo">¿Para quién?</label>
+                        <select name="destino_tipo" id="destino_tipo" class="form-control"
+                                onchange="cambiarDestino()">
+                            <option value="persona">Un técnico</option>
+                            <option value="zona">Una zona</option>
+                        </select>
+                    </div>
+
+                    <div class="reclamo-campo" id="campo-persona">
+                        <label for="destino_usuario_id">Técnico</label>
+                        <select name="destino_usuario_id" id="destino_usuario_id" class="form-control">
+                            {% for t in tecnicos %}
+                                <option value="{{ t.id }}">{{ t.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="reclamo-campo" id="campo-zona" hidden>
+                        <label for="destino_zona">Zona</label>
+                        <select name="destino_zona" id="destino_zona" class="form-control">
+                            {% for z in zonas %}
+                                <option value="{{ z.nombre }}">{{ z.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="reclamo-campo">
+                        <label for="fecha">Día</label>
+                        <input type="date" name="fecha" id="fecha" class="form-control"
+                               value="{{ hoy }}">
+                    </div>
+                </div>
+
+                <div class="reclamo-campo">
+                    <label for="mensaje">Mensaje</label>
+                    <textarea name="mensaje" id="mensaje" class="form-control" rows="3" required
+                              placeholder="Ej: OL: Nap final muerta. Cambiar f8 unos 150 mts de nap anterior final. Calle Córdoba 245."></textarea>
+                </div>
+
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-send"></i> Cargar actividad
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Listado -->
+    <div class="card">
+        <div class="card-header"><strong><i class="bi bi-list-ul"></i> Cargadas</strong></div>
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Día</th><th>Para</th><th>Mensaje</th><th>Cargó</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in reclamos %}
+                        <tr>
+                            <td>{{ r.fecha }}</td>
+                            <td>
+                                {% if r.destino_tipo == 'zona' %}
+                                    <span class="badge badge-info">Zona {{ r.destino_zona }}</span>
+                                {% else %}
+                                    <span class="badge badge-primary">{{ r.destino_nombre }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="reclamo-mensaje">{{ r.mensaje }}</td>
+                            <td>{{ r.creado_por or '—' }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('reclamos_borrar') }}"
+                                      onsubmit="return confirm('¿Dar de baja esta actividad?');">
+                                    <input type="hidden" name="reclamo_id" value="{{ r.id }}">
+                                    <button type="submit" class="btn btn-danger btn-sm" title="Dar de baja">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted reclamo-vacio">
+                                Todavía no hay actividades cargadas.
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Persona y zona son excluyentes: se muestra solo el campo que aplica.
+    function cambiarDestino() {
+        const tipo = document.getElementById('destino_tipo').value;
+        document.getElementById('campo-persona').hidden = tipo !== 'persona';
+        document.getElementById('campo-zona').hidden = tipo !== 'zona';
+    }
+    document.addEventListener('DOMContentLoaded', cambiarDestino);
+</script>
+</body>
+</html>

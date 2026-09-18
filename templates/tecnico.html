@@ -132,6 +132,95 @@
             </div>
         {% endif %}
 
+        {# Guardia: puede sacar una camioneta fuera de la planilla. #}
+        {% if de_guardia %}
+            <div class="card border-dark mb-4">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-shield-check"></i>
+                        Estás de guardia
+                        <span class="badge bg-light text-dark">
+                            {{ 'Titular' if caracter_guardia == 'titular' else 'Alternativa' }}
+                        </span>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="mb-3">
+                        {% if caracter_guardia == 'alternativa' %}
+                            Sos la guardia de la semana que viene, así que cubrís si alguno
+                            de los titulares no puede.
+                        {% endif %}
+                        Si tenés que salir de urgencia podés retirar una camioneta aunque no
+                        la tengas asignada. Queda registrado como salida de guardia y se le
+                        avisa a soporte.
+                    </p>
+
+                    {% if camionetas_urgencia %}
+                        <form method="POST" action="{{ url_for('retiro_urgencia') }}"
+                              class="urgencia-form"
+                              onsubmit="return confirm('¿Retirar esta camioneta de urgencia? Se le avisa a soporte.');">
+                            <div class="urgencia-campo">
+                                <label for="camioneta_urgencia">Camioneta</label>
+                                <select name="camioneta_id" id="camioneta_urgencia"
+                                        class="form-select" required>
+                                    <option value="">Elegí una</option>
+                                    {% for c in camionetas_urgencia %}
+                                        {% if not c.ya_la_tengo %}
+                                            <option value="{{ c.id }}">
+                                                {{ c.patente }}{% if c.asignada_a %} — asignada a {{ c.asignada_a }} en este turno{% endif %}
+                                            </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="urgencia-campo">
+                                <label for="motivo_urgencia">¿Para qué la necesitás?</label>
+                                <input type="text" name="motivo" id="motivo_urgencia"
+                                       class="form-control" required
+                                       placeholder="Ej: reclamo urgente en Córdoba 245">
+                            </div>
+                            <button type="submit" class="btn btn-dark">
+                                <i class="bi bi-box-arrow-right"></i> Retirar de urgencia
+                            </button>
+                        </form>
+                    {% else %}
+                        <div class="alert alert-warning mb-0">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            Ahora mismo no hay camionetas libres: están todas retiradas por
+                            otros técnicos. Avisá a soporte.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        {% endif %}
+
+        {# Lo que soporte dejó anotado para este técnico o para su zona. #}
+        {% if actividades %}
+            <div class="card border-primary mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-chat-left-text"></i>
+                        Actividades coordinadas
+                        <span class="badge bg-light text-primary">{{ actividades|length }}</span>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% for a in actividades %}
+                        <div class="actividad-item {{ 'actividad-zona' if a.destino_tipo == 'zona' }}">{{ a.mensaje }}<span class="actividad-meta">
+                                {{ a.fecha }} ·
+                                {% if a.destino_tipo == 'zona' %}
+                                    para toda la zona {{ a.destino_zona }}
+                                {% else %}
+                                    para vos
+                                {% endif %}
+                                {% if a.creado_por %}· cargó {{ a.creado_por }}{% endif %}
+                            </span>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
         {# Retiros que quedaron sin completar. Van fuera del if de asignación:
            casi siempre son de otro día y de una camioneta que hoy no tiene. #}
         {% if faltantes %}
@@ -483,6 +572,9 @@
 
         <!-- Botón Volver al Inicio (adicional) -->
         <div class="text-center mt-4">
+            <a href="{{ url_for('distribucion') }}" class="btn btn-outline-primary">
+                <i class="bi bi-people"></i> Distribución semanal
+            </a>
             <a href="{{ url_for('admin_firma') }}" class="btn btn-outline-primary">
                 <i class="bi bi-pen"></i> Mi Firma
             </a>

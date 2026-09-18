@@ -19,7 +19,12 @@
                     {{ control.tipo_control|title }}
                 </h1>
                 <div class="info">
-                    {{ control.patente }} · {{ control.tecnico_nombre }}
+                    {{ control.patente }} ·
+                    {% if es_liberacion %}
+                        turno de {{ control.tecnico_nombre }}
+                    {% else %}
+                        {{ control.tecnico_nombre }}
+                    {% endif %}
                 </div>
             </div>
             <div class="text-end">
@@ -41,8 +46,24 @@
         
         <input type="hidden" id="control-id" value="{{ control.id }}">
         
+        {% if es_liberacion %}
+            <div class="alert alert-warning aviso-control">
+                <i class="bi bi-unlock"></i>
+                <strong>Control de liberación.</strong>
+                {{ control.tecnico_nombre }} no hizo el
+                {{ control.tipo_control|lower }} del {{ control.fecha }}
+                ({{ control.jornada }}), así que no hay constancia del estado de la
+                camioneta. La revisás vos ahora para destrabarla.
+                {% if control.observacion %}
+                    <br><em>{{ control.observacion }}</em>
+                {% endif %}
+                <br>El control queda a tu nombre y figura que
+                {{ control.tecnico_nombre }} no lo hizo.
+            </div>
+        {% endif %}
+
         <!-- Mensaje inicial -->
-        <div class="alert alert-info" style="border-radius: 12px; font-size: 0.9rem;">
+        <div class="alert alert-info aviso-control">
             <i class="bi bi-info-circle"></i>
             <strong>Revisá elemento por elemento.</strong>
             Marcá <strong>Está</strong> cuando lo tengas a la vista y en condiciones,
@@ -79,7 +100,7 @@
 
         <!-- Elementos bloqueados -->
         {% if elementos_bloqueados %}
-            <div class="alert alert-warning" style="border-radius: 12px; font-size: 0.85rem;">
+            <div class="alert alert-warning aviso-control aviso-control-chico">
                 <i class="bi bi-lock"></i>
                 <strong>Elementos bloqueados:</strong>
                 {% for eb in elementos_bloqueados %}
