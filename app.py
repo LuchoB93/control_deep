@@ -1171,7 +1171,6 @@ def crear_base_de_datos():
         material_entregado TEXT,
         creado_por TEXT,
         creado_por_id INTEGER,
-        entregado_por TEXT,
         entrega_id INTEGER,
         firmado_por_id INTEGER,
         ruta_remito TEXT,
