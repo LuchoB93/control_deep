@@ -29,40 +29,51 @@
         <div class="card-header"><strong><i class="bi bi-plus-circle"></i> Nueva actividad</strong></div>
         <div class="card-body">
             <form method="POST" action="{{ url_for('reclamos_crear') }}" class="reclamo-form">
-                <div class="reclamo-fila">
-                    <div class="reclamo-campo">
-                        <label for="destino_tipo">¿Para quién?</label>
-                        <select name="destino_tipo" id="destino_tipo" class="form-control"
-                                onchange="cambiarDestino()">
-                            <option value="persona">Un técnico</option>
-                            <option value="zona">Una zona</option>
-                        </select>
-                    </div>
+    <div class="reclamo-fila">
+        <div class="reclamo-campo">
+            <label for="destino_tipo">¿Para quién?</label>
+            <select name="destino_tipo" id="destino_tipo" onchange="cambiarDestino()">
+                <option value="persona">Un técnico</option>
+                <option value="zona">Una zona</option>
+            </select>
+        </div>
 
-                    <div class="reclamo-campo" id="campo-persona">
-                        <label for="destino_usuario_id">Técnico</label>
-                        <select name="destino_usuario_id" id="destino_usuario_id" class="form-control">
-                            {% for t in tecnicos %}
-                                <option value="{{ t.id }}">{{ t.nombre }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+        <div class="reclamo-campo" id="campo-persona">
+            <label for="destino_usuario_id">Técnico</label>
+            <select name="destino_usuario_id" id="destino_usuario_id">
+                {% for t in tecnicos %}
+                    <option value="{{ t.id }}">{{ t.nombre }}</option>
+                {% endfor %}
+            </select>
+        </div>
 
-                    <div class="reclamo-campo" id="campo-zona" hidden>
-                        <label for="destino_zona">Zona</label>
-                        <select name="destino_zona" id="destino_zona" class="form-control">
-                            {% for z in zonas %}
-                                <option value="{{ z.nombre }}">{{ z.nombre }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+        <div class="reclamo-campo" id="campo-zona" hidden>
+            <label for="destino_zona">Zona</label>
+            <select name="destino_zona" id="destino_zona">
+                {% for z in zonas %}
+                    <option value="{{ z.nombre }}">{{ z.nombre }}</option>
+                {% endfor %}
+            </select>
+        </div>
 
-                    <div class="reclamo-campo">
-                        <label for="fecha">Día</label>
-                        <input type="date" name="fecha" id="fecha" class="form-control"
-                               value="{{ hoy }}">
-                    </div>
-                </div>
+        <div class="reclamo-campo">
+            <label for="fecha">Día</label>
+            <input type="date" name="fecha" id="fecha" value="{{ hoy }}">
+        </div>
+    </div>
+
+    <div class="reclamo-campo">
+        <label for="mensaje">Mensaje</label>
+        <textarea name="mensaje" id="mensaje" rows="4" required
+                  placeholder="Ej: OL: Nap final muerta. Cambiar f8 unos 150 mts de nap anterior final. Calle Córdoba 245."></textarea>
+    </div>
+
+    <div>
+        <button type="submit" class="btn btn-primary">
+            <i class="bi bi-send"></i> Cargar actividad
+        </button>
+    </div>
+</form>
 
                 <div class="reclamo-campo">
                     <label for="mensaje">Mensaje</label>
