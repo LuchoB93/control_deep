@@ -72,6 +72,82 @@
         </div>
 
         <!-- ========================================== -->
+        <!-- FOTOS OBLIGATORIAS DE LA CAMIONETA -->
+        <!-- ========================================== -->
+        {# Las cinco fotos se sacan con la cámara del celular, en el momento.
+           El capture="environment" hace que se abra directo la cámara trasera
+           en vez de la galería. El servidor además verifica la fecha del EXIF
+           para rechazar fotos viejas. #}
+        <div class="categoria-card mb-4" id="card-fotos">
+            <div class="categoria-header">
+                <span><i class="bi bi-camera"></i> Fotos de la camioneta</span>
+                <span class="badge" id="badge-fotos">
+                    <span id="fotos-cargadas">0</span>/{{ posiciones_foto|length }}
+                </span>
+            </div>
+
+            <div style="padding: 12px;">
+                <p class="small text-muted mb-3">
+                    <i class="bi bi-info-circle"></i>
+                    Sacá las 5 fotos con la cámara, en el momento. No se puede
+                    subir desde la galería.
+                </p>
+
+                <div class="fotos-grid">
+                    {% for f in fotos_control %}
+                        <div class="foto-slot" data-posicion="{{ f.posicion }}"
+                             data-tiene="{{ 'true' if f.foto else 'false' }}"
+                             {% if f.foto %}data-foto-id="{{ f.foto.id }}"{% endif %}>
+                            <div class="foto-slot-header">
+                                <span class="foto-slot-titulo">
+                                    <i class="bi bi-{{ f.icono }}"></i>
+                                    {{ f.etiqueta }}
+                                </span>
+                                {% if f.foto %}
+                                    <span class="foto-slot-ok"><i class="bi bi-check-circle-fill"></i></span>
+                                {% endif %}
+                            </div>
+
+                            <div class="foto-slot-preview">
+                                {% if f.foto %}
+                                    <img src="{{ url_for('servir_foto', ruta=f.foto.ruta) }}"
+                                         alt="{{ f.etiqueta }}" class="foto-miniatura">
+                                {% else %}
+                                    <div class="foto-vacia">
+                                        <i class="bi bi-camera"></i>
+                                    </div>
+                                {% endif %}
+                            </div>
+
+                            <p class="foto-slot-ayuda">{{ f.ayuda }}</p>
+
+                            <div class="foto-slot-acciones">
+                                <input type="file"
+                                       accept="image/*"
+                                       capture="environment"
+                                       class="foto-input"
+                                       id="input-{{ f.posicion }}"
+                                       data-posicion="{{ f.posicion }}"
+                                       style="display:none;">
+                                <button type="button" class="btn btn-sm btn-primary"
+                                        onclick="document.getElementById('input-{{ f.posicion }}').click()">
+                                    <i class="bi bi-camera"></i>
+                                    {% if f.foto %}Reemplazar{% else %}Sacar foto{% endif %}
+                                </button>
+                                {% if f.foto %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                            onclick="borrarFoto('{{ f.posicion }}')">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
         <!-- KILOMETRAJE (obligatorio) -->
         <!-- ========================================== -->
         <div class="categoria-card mb-4" id="card-kilometraje">
@@ -282,8 +358,20 @@
             const badge = document.getElementById('badge-km');
             if (badge) badge.textContent = kmCargado ? '✓ Cargado' : 'Obligatorio';
 
-            const total = items.length + 1;          // +1 por el kilometraje
-            const porcentaje = Math.round(((marcados.length + kmCargado) / total) * 100);
+            // Cuenta de fotos cargadas.
+            const slotsFotos = document.querySelectorAll('.foto-slot');
+            const fotosListas = [...slotsFotos].filter(s => s.dataset.tiene === 'true').length;
+            const totalFotos = slotsFotos.length;
+            const contadorFotos = document.getElementById('fotos-cargadas');
+            if (contadorFotos) contadorFotos.textContent = fotosListas;
+            const badgeFotos = document.getElementById('badge-fotos');
+            if (badgeFotos) {
+                badgeFotos.classList.toggle('bg-success', fotosListas === totalFotos);
+            }
+
+            const total = items.length + 1 + totalFotos;   // ítems + km + fotos
+            const hechos = marcados.length + kmCargado + fotosListas;
+            const porcentaje = Math.round((hechos / total) * 100);
             document.getElementById('contador-progreso').textContent = porcentaje + '%';
 
             const barra = document.getElementById('barra-progreso');
@@ -292,6 +380,118 @@
             else if (porcentaje >= 66) barra.style.background = '#17a2b8';
             else if (porcentaje >= 33) barra.style.background = '#ffc107';
             else barra.style.background = '#6c757d';
+        }
+
+        // ==========================================
+        // FOTOS DEL CONTROL
+        // ==========================================
+        // Cada foto se sube apenas se saca, sin esperar a finalizar el control.
+        // Así, si el técnico cierra la pestaña a mitad de camino, las fotos ya
+        // están en el servidor y el control puede retomarse sin repetirlas.
+        document.querySelectorAll('.foto-input').forEach(input => {
+            input.addEventListener('change', async function() {
+                const archivo = this.files && this.files[0];
+                if (!archivo) return;
+
+                const posicion = this.dataset.posicion;
+                const slot = document.querySelector(`.foto-slot[data-posicion="${posicion}"]`);
+                const botonera = slot.querySelector('.foto-slot-acciones');
+                const botonesOriginales = botonera.innerHTML;
+
+                botonera.innerHTML =
+                    '<span class="spinner-border spinner-border-sm text-primary"></span>' +
+                    '<span class="ms-2 small text-muted">Subiendo…</span>';
+
+                const formData = new FormData();
+                formData.append('foto', archivo);
+                formData.append('posicion', posicion);
+
+                const controlId = document.getElementById('control-id').value;
+
+                try {
+                    const resp = await fetch(`/control/${controlId}/foto`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await resp.json();
+
+                    if (!data.success) {
+                        alert('❌ ' + (data.error || 'No se pudo subir la foto'));
+                        botonera.innerHTML = botonesOriginales;
+                        this.value = '';
+                        return;
+                    }
+
+                    slot.dataset.tiene = 'true';
+                    slot.dataset.fotoId = data.foto_id;
+
+                    slot.querySelector('.foto-slot-preview').innerHTML =
+                        `<img src="${data.url}" alt="" class="foto-miniatura">`;
+
+                    const header = slot.querySelector('.foto-slot-header');
+                    if (!header.querySelector('.foto-slot-ok')) {
+                        header.insertAdjacentHTML('beforeend',
+                            '<span class="foto-slot-ok"><i class="bi bi-check-circle-fill"></i></span>');
+                    }
+
+                    botonera.innerHTML = `
+                        <button type="button" class="btn btn-sm btn-primary"
+                                onclick="document.getElementById('input-${posicion}').click()">
+                            <i class="bi bi-camera"></i> Reemplazar
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger"
+                                onclick="borrarFoto('${posicion}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    `;
+                    this.value = '';
+
+                    actualizarProgreso();
+                } catch (e) {
+                    console.error(e);
+                    alert('❌ Error de conexión al subir la foto.');
+                    botonera.innerHTML = botonesOriginales;
+                    this.value = '';
+                }
+            });
+        });
+
+        async function borrarFoto(posicion) {
+            const slot = document.querySelector(`.foto-slot[data-posicion="${posicion}"]`);
+            const fotoId = slot.dataset.fotoId;
+            if (!fotoId) return;
+
+            if (!confirm('¿Borrar esta foto? Vas a tener que sacarla de nuevo.')) return;
+
+            try {
+                const resp = await fetch(`/foto/${fotoId}/borrar`, { method: 'POST' });
+                const data = await resp.json();
+                if (!data.success) {
+                    alert('❌ ' + (data.error || 'No se pudo borrar'));
+                    return;
+                }
+
+                slot.dataset.tiene = 'false';
+                delete slot.dataset.fotoId;
+
+                slot.querySelector('.foto-slot-preview').innerHTML =
+                    '<div class="foto-vacia"><i class="bi bi-camera"></i></div>';
+
+                const ok = slot.querySelector('.foto-slot-ok');
+                if (ok) ok.remove();
+
+                slot.querySelector('.foto-slot-acciones').innerHTML = `
+                    <button type="button" class="btn btn-sm btn-primary"
+                            onclick="document.getElementById('input-${posicion}').click()">
+                        <i class="bi bi-camera"></i> Sacar foto
+                    </button>
+                `;
+
+                actualizarProgreso();
+            } catch (e) {
+                console.error(e);
+                alert('❌ Error de conexión.');
+            }
         }
 
         // ==========================================
@@ -376,13 +576,42 @@
             return km;
         }
 
-        function finalizarControlRapido() {
-            const recuperados = recolectarRecuperados();
-            if (recuperados === null) return;  // falta una explicación
+        // Devuelve la lista de posiciones de foto que faltan cargar.
+        function fotosFaltantes() {
+            const faltan = [];
+            document.querySelectorAll('.foto-slot').forEach(slot => {
+                if (slot.dataset.tiene !== 'true') {
+                    faltan.push(slot.querySelector('.foto-slot-titulo').textContent.trim());
+                }
+            });
+            return faltan;
+        }
 
+        function finalizarControlRapido() {
+            // 1) Fotos obligatorias primero: es lo que el técnico ve al llegar
+            //    a la camioneta, así el aviso aparece arriba de todo.
+            const faltanFotos = fotosFaltantes();
+            if (faltanFotos.length) {
+                const primero = document.querySelector('.foto-slot[data-tiene="false"]');
+                alert(`📷 Faltan ${faltanFotos.length} foto(s) obligatoria(s):\n\n` +
+                      faltanFotos.map(f => '• ' + f).join('\n'));
+                if (primero) {
+                    primero.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    primero.classList.add('item-pendiente-foco');
+                    setTimeout(() => primero.classList.remove('item-pendiente-foco'), 2000);
+                }
+                return;
+            }
+
+            // 2) Recuperaciones (necesita explicación).
+            const recuperados = recolectarRecuperados();
+            if (recuperados === null) return;
+
+            // 3) Kilometraje.
             const kilometraje = leerKilometraje();
             if (kilometraje === null) return;
 
+            // 4) Ítems todos revisados.
             const items = [...document.querySelectorAll('.item-control')];
             const sinMarcar = items.filter(i => !i.dataset.estado);
 
@@ -429,7 +658,8 @@
                 ? mensaje + '\n¿Confirmar?'
                 : '✅ Revisaste todos los elementos y están en orden. ¿Finalizar control?';
 
-            mensaje = `🚐 Kilometraje: ${kilometraje.toLocaleString('es-AR')} km\n\n` + mensaje;
+            mensaje = `🚐 Kilometraje: ${kilometraje.toLocaleString('es-AR')} km\n` +
+                      `📷 5 fotos cargadas\n\n` + mensaje;
 
             if (confirm(mensaje)) {
                 guardarControlRapido(problemas, recuperados, revisados, kilometraje);

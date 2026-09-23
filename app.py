@@ -18,6 +18,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image as PILImage
 from zoneinfo import ZoneInfo
+import fotos
 
 # La consola de Windows suele venir en cp1252 y no puede imprimir los emojis
 # que usan los mensajes de este archivo: sin esto, un print de arranque corta
@@ -51,13 +52,18 @@ def ahora():
 DATA_DIR = Path(os.environ.get('CONTROL_DATA_DIR') or BASE_DIR)
 DATABASE = DATA_DIR / "database.db"
 
-# Carpeta de remitos y de firmas: también deben ir a un volumen.
+# Carpeta de remitos, de firmas y de fotos: también deben ir a un volumen.
 REMITOS_DIR = Path(os.environ.get('CONTROL_REMITOS_DIR') or (BASE_DIR / "remitos"))
 UPLOAD_FOLDER = Path(os.environ.get('CONTROL_FIRMAS_DIR') or (BASE_DIR / "static" / "firmas"))
+FOTOS_DIR = Path(os.environ.get('CONTROL_FOTOS_DIR') or (BASE_DIR / "fotos"))
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
+# Tope de subida por request. Las fotos de celular pesan 3-5 MB cada una, y
+# en un mismo control pueden subirse varias juntas.
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
+
 # Crear carpetas necesarias
-for _carpeta in (DATA_DIR, REMITOS_DIR, UPLOAD_FOLDER):
+for _carpeta in (DATA_DIR, REMITOS_DIR, UPLOAD_FOLDER, FOTOS_DIR):
     _carpeta.mkdir(parents=True, exist_ok=True)
 
 def allowed_file(filename):
@@ -830,7 +836,35 @@ def marcar_notificacion_leida(notificacion_id):
         return False, str(e)
     finally:
         conexion.close()
+def fotos_del_control(conexion, control_id):
+    """Las cinco posiciones obligatorias con su foto actual (o None).
 
+    Se devuelve siempre la lista completa, en el orden definido en fotos.py:
+    la pantalla tiene que mostrar las cinco casillas aunque todavía no haya
+    ninguna foto, porque todas son obligatorias.
+    """
+    guardadas = {}
+    for fila in conexion.execute('''
+        SELECT id, tipo AS posicion, ruta, fecha_hora
+        FROM fotos
+        WHERE control_id = ?
+        ORDER BY id DESC
+    ''', (control_id,)):
+        # Una posición puede tener varias filas históricas (si el técnico
+        # reemplazó una foto): se guarda la más nueva y el resto se ignora.
+        if fila['posicion'] not in guardadas:
+            guardadas[fila['posicion']] = dict(fila)
+
+    return [
+        {
+            'posicion': clave,
+            'etiqueta': config['etiqueta'],
+            'ayuda': config['ayuda'],
+            'icono': config['icono'],
+            'foto': guardadas.get(clave),
+        }
+        for clave, config in fotos.POSICIONES.items()
+    ]
 
 
 # ============================================
@@ -1277,7 +1311,7 @@ def crear_base_de_datos():
             tipo TEXT NOT NULL,
             ruta TEXT NOT NULL,
             fecha_hora TEXT NOT NULL,
-            FOREIGN KEY (control_id) REFERENCES controles(id)
+            FOREIGN KEY (control_id) REFERENCES controles_tecnicos(id)
         )
     ''')
     
@@ -1354,6 +1388,8 @@ def aplicar_migraciones(conexion):
         ('idx_seguimiento_reporte', 'seguimiento_remitos (reporte_id)'),
         ('idx_notificaciones_rol', 'notificaciones (destinatario_rol, leido)'),
         ('idx_controles_kilometraje', 'controles_tecnicos (asignacion_id, kilometraje)'),
+        ('idx_fotos_control', 'fotos (control_id, tipo)'),
+        
     ]
     for nombre, definicion in indices:
         cursor.execute(f'CREATE INDEX IF NOT EXISTS {nombre} ON {definicion}')
@@ -1404,6 +1440,54 @@ def aplicar_migraciones(conexion):
     except sqlite3.IntegrityError:
         print('⚠️ Hay asignaciones duplicadas (misma camioneta/fecha/jornada). '
               'No se pudo crear el índice único; revisar los datos.')
+
+        # La tabla `fotos` apuntaba a `controles` (la tabla vieja que se llena al
+    # guardar el control). Pero las fotos se suben DURANTE el control, cuando
+    # esa fila todavía no existe: SQLite rechazaba el INSERT con
+    # 'FOREIGN KEY constraint failed'. La FK correcta es `controles_tecnicos`,
+    # que es la fila que se crea al iniciar el control.
+    #
+    # fetchone() devuelve una tupla porque este cursor no usa row_factory:
+    # por eso se accede a la columna por índice ([0]) y no por nombre.
+    fotos_sql = cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='fotos'"
+    ).fetchone()
+
+    necesita_recrear = (
+        fotos_sql and 'controles_tecnicos' not in (fotos_sql[0] or '')
+    )
+
+    if necesita_recrear:
+        print('🔧 Migración: recreando tabla fotos con FK a controles_tecnicos')
+        cursor.execute('ALTER TABLE fotos RENAME TO fotos_vieja')
+
+        cursor.execute('''
+            CREATE TABLE fotos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                control_id INTEGER NOT NULL,
+                tipo TEXT NOT NULL,
+                ruta TEXT NOT NULL,
+                fecha_hora TEXT NOT NULL,
+                FOREIGN KEY (control_id) REFERENCES controles_tecnicos(id)
+            )
+        ''')
+
+        cursor.execute('''
+            INSERT INTO fotos (id, control_id, tipo, ruta, fecha_hora)
+            SELECT f.id, f.control_id, f.tipo, f.ruta, f.fecha_hora
+            FROM fotos_vieja f
+            WHERE EXISTS (
+                SELECT 1 FROM controles_tecnicos ct WHERE ct.id = f.control_id
+            )
+        ''')
+
+        conservadas = cursor.execute('SELECT COUNT(*) FROM fotos').fetchone()[0]
+        descartadas = cursor.execute('SELECT COUNT(*) FROM fotos_vieja').fetchone()[0] - conservadas
+        if descartadas:
+            print(f'   {descartadas} foto(s) sin control válido fueron descartadas')
+        print(f'   {conservadas} foto(s) conservadas')
+
+        cursor.execute('DROP TABLE fotos_vieja')
 
     conexion.commit()
 
@@ -3845,8 +3929,10 @@ def realizar_control(control_id):
                 'registrado': nombre in estado_registrado
             })
 
-    ultimo_km = ultimo_kilometraje(conexion, control['camioneta_id'],
+        ultimo_km = ultimo_kilometraje(conexion, control['camioneta_id'],
                                    antes_de_control=control_id)
+
+    fotos_control = fotos_del_control(conexion, control_id)
 
     conexion.close()
 
@@ -3856,8 +3942,9 @@ def realizar_control(control_id):
                          ultimo_km=ultimo_km,
                          elementos_por_categoria=elementos_por_categoria,
                          elementos_bloqueados=elementos_bloqueados_lista,
-                         faltantes_recuperables=faltantes_recuperables)
-
+                         faltantes_recuperables=faltantes_recuperables,
+                         fotos_control=fotos_control,
+                         posiciones_foto=fotos.POSICIONES)
 @app.route('/finalizar-control/<int:control_id>', methods=['POST'])
 def finalizar_control(control_id):
     if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
@@ -4055,6 +4142,21 @@ def guardar_control_rapido():
                     'error': f'"{elemento}" no puede estar recuperado y faltante a la vez'
                 }), 400
             recuperados_dict[elemento] = observacion
+
+        # Las cinco fotos son obligatorias: sin todas no hay constancia del
+        # estado en que estaba la camioneta, que es la razón de ser del control.
+        fotos_presentes = {
+            fila['tipo'] for fila in cursor.execute(
+                'SELECT DISTINCT tipo FROM fotos WHERE control_id = ?',
+                (control_id,))
+        }
+        faltan_fotos = [fotos.POSICIONES[p]['etiqueta']
+                        for p in fotos.POSICIONES
+                        if p not in fotos_presentes]
+        if faltan_fotos:
+            return jsonify({
+                'error': 'Faltan las fotos obligatorias: ' + ', '.join(faltan_fotos)
+            }), 400
         
         # Un registro de `controles` por asignación y tipo de control. Antes se
         # reutilizaba cualquier fila 'ABIERTO' de la asignación, así que los
@@ -5928,6 +6030,173 @@ def calendario_configurar():
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+# ============================================
+# FOTOS DEL CONTROL
+# ============================================
+
+def _control_editable(conexion, control_id, usuario_id, rol):
+    """Devuelve el control si el usuario puede operar sobre él, o None.
+
+    El técnico solo toca sus propios controles abiertos; soporte solo los
+    de liberación que abrió él mismo. Es la misma regla que usa la pantalla
+    para decidir qué mostrar.
+    """
+    if rol == 'soporte':
+        control = control_de_liberacion(conexion, control_id)
+    else:
+        control = control_del_tecnico(conexion, control_id, usuario_id)
+
+    if not control or control['finalizado']:
+        return None
+    return control
+
+
+@app.route('/control/<int:control_id>/foto', methods=['POST'])
+def subir_foto_control(control_id):
+    """Guarda (o reemplaza) la foto de una posición del control."""
+    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+
+    posicion = (request.form.get('posicion') or '').strip().upper()
+    if posicion not in fotos.POSICIONES:
+        return jsonify({'success': False, 'error': 'Posición inválida'}), 400
+
+    archivo = request.files.get('foto')
+    if not archivo:
+        return jsonify({'success': False, 'error': 'No se recibió ninguna foto'}), 400
+
+    conexion = get_db()
+    try:
+        control = _control_editable(conexion, control_id,
+                                    session.get('usuario_id'), session.get('rol'))
+        if not control:
+            return jsonify({'success': False, 'error':
+                'Control no encontrado, ya finalizado, o no te corresponde'}), 404
+
+        camioneta = conexion.execute(
+            'SELECT patente FROM camionetas WHERE id = ?',
+            (control['camioneta_id'],)).fetchone()
+        if not camioneta:
+            return jsonify({'success': False, 'error': 'Camioneta no encontrada'}), 404
+
+        momento = ahora()
+        fecha = control['fecha']
+
+        ruta_relativa, error = fotos.guardar_foto(
+            archivo, FOTOS_DIR, camioneta['patente'],
+            control_id, posicion, fecha, momento)
+
+        if error:
+            return jsonify({'success': False, 'error': error}), 400
+
+        # Una nueva foto de la misma posición reemplaza la anterior.
+        anteriores = conexion.execute('''
+            SELECT id, ruta FROM fotos WHERE control_id = ? AND tipo = ?
+        ''', (control_id, posicion)).fetchall()
+        for fila in anteriores:
+            fotos.borrar_foto(FOTOS_DIR, fila['ruta'])
+            conexion.execute('DELETE FROM fotos WHERE id = ?', (fila['id'],))
+
+        cursor = conexion.cursor()
+        cursor.execute('''
+            INSERT INTO fotos (control_id, tipo, ruta, fecha_hora)
+            VALUES (?, ?, ?, ?)
+        ''', (control_id, posicion, ruta_relativa, momento.isoformat()))
+        foto_id = cursor.lastrowid
+        conexion.commit()
+
+        return jsonify({
+            'success': True,
+            'foto_id': foto_id,
+            'posicion': posicion,
+            'url': url_for('servir_foto', ruta=ruta_relativa),
+            'mensaje': f'✅ Foto de {fotos.POSICIONES[posicion]["etiqueta"]} guardada.'
+        })
+
+    except Exception as e:
+        conexion.rollback()
+        print(f'❌ Error al subir foto: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conexion.close()
+
+
+@app.route('/control/<int:control_id>/fotos')
+def listar_fotos_control(control_id):
+    """Estado actual de las cinco fotos obligatorias del control."""
+    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+        return jsonify({'error': 'No autorizado'}), 401
+
+    conexion = get_db()
+    try:
+        control = _control_editable(conexion, control_id,
+                                    session.get('usuario_id'), session.get('rol'))
+        if not control:
+            return jsonify({'error': 'Control no encontrado'}), 404
+
+        fotos_control = fotos_del_control(conexion, control_id)
+        return jsonify({
+            'fotos': [
+                {
+                    'posicion': f['posicion'],
+                    'etiqueta': f['etiqueta'],
+                    'tiene': f['foto'] is not None,
+                    'foto_id': f['foto']['id'] if f['foto'] else None,
+                    'url': (url_for('servir_foto', ruta=f['foto']['ruta'])
+                            if f['foto'] else None),
+                }
+                for f in fotos_control
+            ],
+            'completas': all(f['foto'] for f in fotos_control),
+        })
+    finally:
+        conexion.close()
+
+
+@app.route('/foto/<int:foto_id>/borrar', methods=['POST'])
+def borrar_foto_control(foto_id):
+    """Borra una foto mientras el control siga abierto."""
+    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+
+    conexion = get_db()
+    try:
+        fila = conexion.execute(
+            'SELECT id, control_id, ruta FROM fotos WHERE id = ?',
+            (foto_id,)).fetchone()
+        if not fila:
+            return jsonify({'success': False, 'error': 'Foto no encontrada'}), 404
+
+        control = _control_editable(conexion, fila['control_id'],
+                                    session.get('usuario_id'), session.get('rol'))
+        if not control:
+            return jsonify({'success': False, 'error':
+                'El control ya está cerrado o no te corresponde'}), 403
+
+        fotos.borrar_foto(FOTOS_DIR, fila['ruta'])
+        conexion.execute('DELETE FROM fotos WHERE id = ?', (foto_id,))
+        conexion.commit()
+
+        return jsonify({'success': True, 'mensaje': 'Foto borrada.'})
+    except Exception as e:
+        conexion.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conexion.close()
+
+
+@app.route('/fotos/<path:ruta>')
+def servir_foto(ruta):
+    """Sirve una foto guardada, validando que no se escape de FOTOS_DIR."""
+    if 'usuario_id' not in session:
+        return redirect(url_for('login'))
+
+    ruta_absoluta = fotos.resolver_ruta(FOTOS_DIR, ruta)
+    if not ruta_absoluta:
+        return "Foto no encontrada", 404
+
+    return send_file(ruta_absoluta, as_attachment=False)
 
 # ============================================
 # MAIN
