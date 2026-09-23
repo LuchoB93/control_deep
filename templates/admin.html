@@ -20,7 +20,11 @@
             </span>
         </div>
         <nav class="sidebar-nav">
-            <a href="#" class="sidebar-link active" data-section="asignaciones" onclick="cambiarSeccion('asignaciones')">
+            <a href="#" class="sidebar-link active" data-section="inicio" onclick="cambiarSeccion('inicio')">
+                <i class="bi bi-speedometer2"></i>
+                <span>Inicio</span>
+            </a>
+            <a href="#" class="sidebar-link" data-section="asignaciones" onclick="cambiarSeccion('asignaciones')">
                 <i class="bi bi-calendar-check"></i>
                 <span>Asignaciones</span>
             </a>
@@ -35,6 +39,11 @@
             <a href="{{ url_for('reclamos') }}" class="sidebar-link">
                 <i class="bi bi-chat-left-text"></i>
                 <span>Actividades coordinadas</span>
+                {# Cuantas cerro un tecnico y soporte todavia no miro. Se apaga
+                   solo al entrar a la pantalla. #}
+                {% if actividades_sin_ver %}
+                    <span class="badge sidebar-badge">{{ actividades_sin_ver }}</span>
+                {% endif %}
             </a>
             <a href="{{ url_for('distribucion') }}" class="sidebar-link">
                 <i class="bi bi-people"></i>
@@ -52,11 +61,6 @@
                 <i class="bi bi-pen"></i>
                 <span>Mi Firma</span>
             </a>
-            <a href="#" class="sidebar-link" data-section="materiales" onclick="cambiarSeccion('materiales')">
-                <i class="bi bi-box-seam"></i>
-                <span>Materiales</span>
-                <span class="badge badge-proximamente">Próximamente</span>
-            </a>
             <a href="#" class="sidebar-link" data-section="tecnicos" onclick="cambiarSeccion('tecnicos')">
                 <i class="bi bi-people"></i>
                 <span>Técnicos</span>
@@ -73,6 +77,13 @@
                 </a>
             {% endif %}
         </nav>
+        <div class="sidebar-volver">
+            <a href="{{ url_for('modulos') }}" class="sidebar-link">
+                <i class="bi bi-grid-3x3-gap"></i>
+                <span>Otros módulos</span>
+            </a>
+        </div>
+
         <div class="sidebar-footer">
             <span class="user-name">{{ session.nombre }}</span>
             <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm">Salir</a>
@@ -143,9 +154,245 @@
         </form>
 
         <!-- ========================================== -->
+        <!-- SECCIÓN 0: INICIO -->
+        <!-- ========================================== -->
+        <div id="seccion-inicio" class="seccion-content" style="display:none;">
+            <div class="seccion-header">
+                <h1><i class="bi bi-speedometer2"></i> Inicio</h1>
+                <p class="text-muted">
+                    Cómo está la flota ahora mismo. Tocá cualquier tarjeta para ir al detalle.
+                </p>
+            </div>
+
+            {% if inicio %}
+            <div class="inicio-grilla" id="inicio-grilla">
+
+                {# --- Controles sin hacer: lo que traba camionetas --- #}
+                <div class="inicio-tarjeta {{ 'inicio-alerta' if inicio.pendientes_total }}">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-clipboard-x"></i> Controles sin hacer
+                        </span>
+                        <span class="inicio-numero">{{ inicio.pendientes_total }}</span>
+                    </div>
+
+                    {% if inicio.pendientes %}
+                        <ul class="inicio-lista">
+                            {% for p in inicio.pendientes %}
+                                <li>
+                                    <strong>{{ p.patente }}</strong>
+                                    <span class="badge {{ 'bg-warning text-dark' if p.tipo == 'RETIRO' else 'bg-primary' }}">
+                                        {{ p.tipo }}
+                                    </span>
+                                    {{ p.tecnico }} · {{ p.fecha }}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                        {% if inicio.trabadas %}
+                            <p class="inicio-pie inicio-pie-alerta">
+                                <i class="bi bi-lock-fill"></i>
+                                Trabadas: {{ inicio.trabadas|join(', ') }}
+                            </p>
+                        {% endif %}
+                    {% else %}
+                        <p class="inicio-vacio"><i class="bi bi-check-circle"></i> Todo al día.</p>
+                    {% endif %}
+                </div>
+
+                {# --- Planilla del día --- #}
+                <div class="inicio-tarjeta">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-calendar-check"></i> Asignadas hoy
+                        </span>
+                        <span class="inicio-numero">
+                            {{ inicio.asignadas_hoy }}<small>/{{ inicio.camionetas_activas }}</small>
+                        </span>
+                    </div>
+                    {% if inicio.asignadas_hoy < inicio.camionetas_activas %}
+                        <p class="inicio-pie">
+                            Quedan {{ inicio.camionetas_activas - inicio.asignadas_hoy }}
+                            camioneta(s) sin técnico en la planilla de hoy.
+                        </p>
+                    {% else %}
+                        <p class="inicio-vacio">
+                            <i class="bi bi-check-circle"></i> La planilla de hoy está completa.
+                        </p>
+                    {% endif %}
+                    <button type="button" class="inicio-ir"
+                            onclick="cambiarSeccion('asignaciones')">
+                        Ver asignaciones <i class="bi bi-arrow-right"></i>
+                    </button>
+                </div>
+
+                {# --- Faltantes sin resolver --- #}
+                <div class="inicio-tarjeta {{ 'inicio-aviso' if inicio.faltantes_total }}">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-exclamation-triangle"></i> Faltantes sin resolver
+                        </span>
+                        <span class="inicio-numero">{{ inicio.faltantes_total }}</span>
+                    </div>
+                    {% if inicio.faltantes %}
+                        <ul class="inicio-lista">
+                            {% for f in inicio.faltantes %}
+                                <li><strong>{{ f.patente }}</strong> · {{ f.elemento }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="inicio-vacio"><i class="bi bi-check-circle"></i> No hay faltantes abiertos.</p>
+                    {% endif %}
+                    <button type="button" class="inicio-ir" onclick="cambiarSeccion('reportes')">
+                        Ver reportes <i class="bi bi-arrow-right"></i>
+                    </button>
+                </div>
+
+                {# --- Remitos --- #}
+                <div class="inicio-tarjeta {{ 'inicio-aviso' if inicio.remitos_soporte }}">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-file-earmark-pdf"></i> Remitos abiertos
+                        </span>
+                        <span class="inicio-numero">
+                            {{ inicio.remitos_tecnico + inicio.remitos_soporte }}
+                        </span>
+                    </div>
+                    <p class="inicio-pie">
+                        {{ inicio.remitos_soporte }} esperan tu firma ·
+                        {{ inicio.remitos_tecnico }} esperan al técnico
+                    </p>
+                    {% if inicio.remitos_muestra %}
+                        <ul class="inicio-lista">
+                            {% for r in inicio.remitos_muestra %}
+                                <li><strong>{{ r.patente }}</strong> · {{ r.elemento }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                    <button type="button" class="inicio-ir" onclick="cambiarSeccion('remitos')">
+                        Ver remitos <i class="bi bi-arrow-right"></i>
+                    </button>
+                </div>
+
+                {# --- Vencimientos --- #}
+                <div class="inicio-tarjeta {{ 'inicio-alerta' if inicio.vencidos_total }}">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-calendar3"></i> Vencimientos
+                        </span>
+                        <span class="inicio-numero">{{ inicio.vencidos_total }}</span>
+                    </div>
+                    <p class="inicio-pie">
+                        {{ inicio.vencidos_total }} vencido(s) ·
+                        {{ inicio.por_vencer_total }} por vencer
+                    </p>
+                    {% if inicio.vencidos %}
+                        <ul class="inicio-lista">
+                            {% for v in inicio.vencidos %}
+                                <li>
+                                    <strong>{{ v.patente }}</strong> · {{ v.etiqueta }}
+                                    {% if v.fecha_vencimiento %}
+                                        <small class="text-muted">{{ v.fecha_vencimiento }}</small>
+                                    {% endif %}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="inicio-vacio"><i class="bi bi-check-circle"></i> Nada vencido.</p>
+                    {% endif %}
+                    <a href="{{ url_for('calendario') }}" class="inicio-ir">
+                        Ver calendario <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+
+                {# --- Actividades coordinadas --- #}
+                <div class="inicio-tarjeta {{ 'inicio-aviso' if inicio.actividades_sin_ver }}">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-chat-left-text"></i> Actividades coordinadas
+                        </span>
+                        <span class="inicio-numero">{{ inicio.actividades_pendientes }}</span>
+                    </div>
+                    <p class="inicio-pie">
+                        {{ inicio.actividades_pendientes }} pendiente(s) en la calle
+                        {% if inicio.actividades_sin_ver %}
+                            · <strong class="text-danger">
+                                {{ inicio.actividades_sin_ver }} cerrada(s) sin mirar
+                              </strong>
+                        {% endif %}
+                    </p>
+                    <a href="{{ url_for('reclamos') }}" class="inicio-ir">
+                        Ver actividades <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+
+                {# --- Guardia --- #}
+                <div class="inicio-tarjeta">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-shield-check"></i> Guardia
+                        </span>
+                    </div>
+                    {% if inicio.guardias.titulares %}
+                        <p class="inicio-pie">
+                            <strong>Esta semana:</strong>
+                            {{ inicio.guardias.titulares|map(attribute='nombre')|join(', ') }}
+                        </p>
+                    {% else %}
+                        <p class="inicio-vacio">Sin guardia publicada esta semana.</p>
+                    {% endif %}
+                    {% if inicio.guardias.alternativa %}
+                        <p class="inicio-pie">
+                            <strong>Alternativa:</strong>
+                            {{ inicio.guardias.alternativa|map(attribute='nombre')|join(', ') }}
+                        </p>
+                    {% endif %}
+                    <a href="{{ url_for('distribucion') }}" class="inicio-ir">
+                        Ver distribución <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+
+                {# --- Turnos justificados, con el deshacer a mano --- #}
+                {% if inicio.justificaciones %}
+                    <div class="inicio-tarjeta">
+                        <div class="inicio-tarjeta-top">
+                            <span class="inicio-titulo">
+                                <i class="bi bi-calendar-x"></i> Turnos justificados
+                            </span>
+                        </div>
+                        <ul class="inicio-lista">
+                            {% for j in inicio.justificaciones %}
+                                <li>
+                                    <strong>{{ j.patente }}</strong> · {{ j.fecha_turno }}
+                                    <span class="badge bg-secondary">{{ j.motivo_etiqueta }}</span>
+                                    {% if j.anulable %}
+                                        {# Solo dentro de los 10 minutos: despues el
+                                           registro queda firme. #}
+                                        <form method="POST" class="d-inline"
+                                              action="{{ url_for('anular_justificacion') }}">
+                                            <input type="hidden" name="justificacion_id" value="{{ j.id }}">
+                                            <button type="submit" class="btn btn-link btn-sm p-0"
+                                                    title="Deshacer">deshacer</button>
+                                        </form>
+                                    {% endif %}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+
+            </div>
+            {% else %}
+                <div class="alert alert-warning">
+                    No se pudo armar el resumen. Probá recargar la página.
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- ========================================== -->
+        <!-- ========================================== -->
         <!-- SECCIÓN 1: ASIGNACIONES -->
         <!-- ========================================== -->
-        <div id="seccion-asignaciones" class="seccion-content">
+        <div id="seccion-asignaciones" class="seccion-content" style="display:none;">
             <div class="seccion-header">
                 <h1><i class="bi bi-calendar-check"></i> Asignaciones</h1>
                 <p class="text-muted">Gestión de asignaciones de camionetas por jornada</p>
@@ -301,12 +548,11 @@
                 </div>
 
                 <div class="mt-2 mb-3">
-                    <a href="{{ url_for('historial_camioneta', patente='') }}" 
-                       class="btn btn-info btn-sm" 
-                       id="btn-historial-detallado"
-                       onclick="this.href = this.href.replace('/historial-camioneta/', '/historial-camioneta/' + document.getElementById('selector-patente').value)">
+                    <button type="button" class="btn btn-info btn-sm"
+                            id="btn-historial-detallado"
+                            onclick="verHistorialDe(document.getElementById('selector-patente').value)">
                         <i class="bi bi-clock-history"></i> Ver Historial Detallado
-                    </a>
+                    </button>
                     <button class="btn btn-secondary btn-sm" onclick="verRegistroActual()">
                         <i class="bi bi-calendar-day"></i> Ver Registro Actual
                     </button>
@@ -328,68 +574,148 @@
         <div id="seccion-historial" class="seccion-content" style="display:none;">
             <div class="seccion-header">
                 <h1><i class="bi bi-clock-history"></i> Historial</h1>
-                <p class="text-muted">Historial completo de todas las camionetas</p>
+                <p class="text-muted">
+                    Tocá una camioneta para ver solo sus controles, o mirá abajo
+                    el historial de toda la flota.
+                </p>
             </div>
 
-            <div class="card">
-                <div class="card-body">
-                    <p class="text-muted">Selecciona una camioneta para ver su historial completo:</p>
-                    <div class="form-group">
-                        <select id="historial-patente-select" class="form-control" onchange="irHistorial()">
-                            <option value="">-- Seleccione una camioneta --</option>
-                            {% for camioneta in camionetas %}
-                                <option value="{{ camioneta.patente }}">{{ camioneta.patente }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <button class="btn btn-primary mt-2" onclick="irHistorial()">
-                        <i class="bi bi-clock-history"></i> Ver Historial
+            {# Una tarjeta por camioneta. Es lo que se ve antes de elegir: de un
+               vistazo se nota cuál hace rato que no se controla. #}
+            <div class="hist-tarjetas" id="hist-tarjetas">
+                {% for c in resumen_historial %}
+                    <button type="button"
+                            class="hist-tarjeta"
+                            data-patente="{{ c.patente }}"
+                            onclick="filtrarHistorialPor('{{ c.patente }}')">
+                        <div class="hist-tarjeta-top">
+                            <span class="hist-patente">{{ c.patente }}</span>
+                            {% if c.pendientes %}
+                                <span class="badge bg-warning text-dark">
+                                    {{ c.pendientes }} pendiente{{ 's' if c.pendientes != 1 }}
+                                </span>
+                            {% else %}
+                                <span class="badge bg-success">Al día</span>
+                            {% endif %}
+                        </div>
+
+                        {% if c.ultimo %}
+                            <div class="hist-tarjeta-dato">
+                                <i class="bi bi-calendar-check"></i>
+                                Último: {{ c.ultimo.fecha }} {{ c.ultimo.jornada }}
+                                <span class="badge {{ 'bg-secondary' if c.ultimo.tipo_control == 'RETIRO' else 'bg-info' }}">
+                                    {{ c.ultimo.tipo_control }}
+                                </span>
+                            </div>
+                            <div class="hist-tarjeta-dato">
+                                <i class="bi bi-person"></i> {{ c.ultimo.tecnico or '—' }}
+                            </div>
+                        {% else %}
+                            <div class="hist-tarjeta-dato text-muted">
+                                <i class="bi bi-dash-circle"></i> Sin controles registrados
+                            </div>
+                        {% endif %}
+
+                        <div class="hist-tarjeta-pie">
+                            <span><i class="bi bi-speedometer2"></i>
+                                {% if c.km_actual %}{{ c.km_actual|miles }} km{% else %}sin km{% endif %}
+                            </span>
+                            <span><i class="bi bi-list-check"></i> {{ c.total_controles }} controles</span>
+                            {% if c.dias_sin_control is not none %}
+                                <span class="{{ 'text-danger' if c.dias_sin_control > 7 }}">
+                                    <i class="bi bi-hourglass"></i>
+                                    {% if c.dias_sin_control == 0 %}hoy
+                                    {% elif c.dias_sin_control == 1 %}ayer
+                                    {% else %}hace {{ c.dias_sin_control }} días{% endif %}
+                                </span>
+                            {% endif %}
+                        </div>
                     </button>
-                </div>
+                {% else %}
+                    <p class="text-muted">No hay camionetas activas.</p>
+                {% endfor %}
             </div>
 
+            {# Historial de controles. Arranca con toda la flota; al tocar una
+               tarjeta se filtra por esa patente sin cambiar de pantalla. #}
             <div class="card mt-3">
-                <div class="card-header">
-                    <h5><i class="bi bi-table"></i> Últimos reportes</h5>
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <strong><i class="bi bi-list-ul"></i> Controles realizados</strong>
+                    <span class="text-muted small" id="hist-resumen"></span>
                 </div>
+
                 <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-sm table-striped">
-                            <thead>
-                                <tr>
-                                    <th>Fecha</th>
-                                    <th>Patente</th>
-                                    <th>Elemento</th>
-                                    <th>Estado</th>
-                                    <th>Técnico</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% set contador = 0 %}
-                                {% for patente, registros in reportes_por_patente.items() %}
-                                    {% for r in registros[:3] %}
-                                        {% if contador < 20 %}
-                                            <tr>
-                                                <td>{{ r.fecha_hora[:16]|replace('T', ' ') }}</td>
-                                                <td>{{ patente }}</td>
-                                                <td>{{ r.elemento }}</td>
-                                                <td>
-                                                    <span class="badge 
-                                                        {% if r.estado == 'OK' %}bg-success
-                                                        {% elif r.estado == 'FALTANTE' %}bg-warning text-dark
-                                                        {% elif r.estado == 'RESUELTO' %}bg-info
-                                                        {% else %}bg-secondary{% endif %}">
-                                                        {{ r.estado }}
-                                                    </span>
-                                                </td>
-                                                <td>{{ r.tecnico_nombre or '-' }}</td>
-                                            </tr>
-                                            {% set contador = contador + 1 %}
-                                        {% endif %}
-                                    {% endfor %}
+                    <div class="hist-filtros">
+                        <div class="hist-filtro">
+                            <label for="hist-patente">Camioneta</label>
+                            <select id="hist-patente" class="form-control form-control-sm"
+                                    onchange="recargarHistorial()">
+                                <option value="">Todas</option>
+                                {% for camioneta in camionetas %}
+                                    <option value="{{ camioneta.patente }}">{{ camioneta.patente }}</option>
                                 {% endfor %}
-                            </tbody>
-                        </table>
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="hist-tecnico">Técnico</label>
+                            <select id="hist-tecnico" class="form-control form-control-sm"
+                                    onchange="recargarHistorial()">
+                                <option value="">Todos</option>
+                                {% for t in tecnicos %}
+                                    <option value="{{ t.id }}">{{ t.nombre }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="hist-tipo">Tipo</label>
+                            <select id="hist-tipo" class="form-control form-control-sm"
+                                    onchange="recargarHistorial()">
+                                <option value="">Retiro y devolución</option>
+                                <option value="RETIRO">Solo retiros</option>
+                                <option value="DEVOLUCION">Solo devoluciones</option>
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="hist-desde">Desde</label>
+                            <input type="date" id="hist-desde" class="form-control form-control-sm"
+                                   onchange="recargarHistorial()">
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="hist-hasta">Hasta</label>
+                            <input type="date" id="hist-hasta" class="form-control form-control-sm"
+                                   onchange="recargarHistorial()">
+                        </div>
+
+                        <div class="hist-filtro hist-filtro-accion">
+                            <button type="button" class="btn btn-secondary btn-sm"
+                                    onclick="limpiarFiltrosHistorial()">
+                                <i class="bi bi-x-circle"></i> Limpiar
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="hist-lista" class="hist-lista">
+                        <p class="text-muted">Cargando…</p>
+                    </div>
+
+                    <div class="hist-pie">
+                        <button type="button" class="btn btn-outline-primary btn-sm"
+                                id="hist-ver-mas" onclick="verMasHistorial()" hidden>
+                            <i class="bi bi-arrow-down-circle"></i> Ver más
+                        </button>
+                        <div class="hist-cantidad">
+                            <label for="hist-limite">Mostrar de a</label>
+                            <select id="hist-limite" class="form-control form-control-sm"
+                                    onchange="recargarHistorial()">
+                                {% for n in paginas_historial %}
+                                    <option value="{{ n }}">{{ n }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -433,22 +759,6 @@
         </div>
 
         <!-- ========================================== -->
-        <!-- SECCIÓN 6: MATERIALES (Próximamente) -->
-        <!-- ========================================== -->
-        <div id="seccion-materiales" class="seccion-content" style="display:none;">
-            <div class="seccion-header">
-                <h1><i class="bi bi-box-seam"></i> Materiales</h1>
-                <p class="text-muted">Gestión de inventario de materiales</p>
-            </div>
-            <div class="card">
-                <div class="card-body text-center py-5">
-                    <i class="bi bi-box-seam display-1 text-muted"></i>
-                    <h3 class="mt-3">Próximamente</h3>
-                    <p class="text-muted">Gestión de inventario de materiales en desarrollo.</p>
-                </div>
-            </div>
-        </div>
-
         <!-- ========================================== -->
         <!-- SECCIÓN 7: TÉCNICOS (Próximamente) -->
         <!-- ========================================== -->
@@ -511,6 +821,303 @@
             if (seccion === 'remitos') {
                 cargarRemitos();
             }
+            // El historial pega contra la API, así que se carga recién cuando
+            // se entra a la sección y no en cada apertura del panel.
+            if (seccion === 'historial' && histTotal === 0 && histCargados === 0) {
+                recargarHistorial();
+            }
+        }
+
+        // ==========================================
+        // REFRESCO DEL RESUMEN DE INICIO
+        // ==========================================
+
+        function refrescarInicio() {
+            const actual = document.getElementById('inicio-grilla');
+            // Solo vale la pena si la seccion esta a la vista.
+            if (!actual || document.getElementById('seccion-inicio').style.display === 'none') {
+                return;
+            }
+            fetch(window.location.pathname + '?seccion=inicio')
+                .then(r => r.text())
+                .then(html => {
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const nueva = doc.getElementById('inicio-grilla');
+                    if (nueva) actual.replaceWith(nueva);
+                })
+                .catch(() => { /* si falla se deja lo que ya estaba a la vista */ });
+        }
+
+        // ==========================================
+        // JUSTIFICAR UN CONTROL QUE NUNCA SE HIZO
+        // ==========================================
+
+        // Se guarda la fecha del turno para el caso "todo el dia".
+        let justFecha = '';
+
+        function justificarControl(asignacionId, patente, fecha) {
+            justFecha = fecha;
+            document.getElementById('just-asignacion-id').value = asignacionId;
+            document.getElementById('just-fecha').value = fecha;
+            document.getElementById('just-detalle').textContent =
+                patente + ' — turno del ' + fecha;
+            document.getElementById('just-todo-el-dia').checked = false;
+            document.getElementById('just-comentario').value = '';
+            cambiarAlcance();
+            revisarMotivo();
+            document.getElementById('just-fondo').hidden = false;
+            document.getElementById('just-modal').hidden = false;
+        }
+
+        function cerrarJustificar() {
+            document.getElementById('just-fondo').hidden = true;
+            document.getElementById('just-modal').hidden = true;
+        }
+
+        // Marcar "todo el dia" cambia a donde se envia el formulario: una ruta
+        // justifica un turno y la otra recorre todos los de esa fecha.
+        function cambiarAlcance() {
+            const lote = document.getElementById('just-todo-el-dia').checked;
+            const form = document.getElementById('form-justificar');
+            form.action = lote
+                ? {{ url_for('justificar_dia')|tojson }}
+                : {{ url_for('justificar_control')|tojson }};
+            document.getElementById('just-detalle').textContent = lote
+                ? 'Todos los controles sin hacer del ' + justFecha
+                : document.getElementById('just-detalle').textContent;
+        }
+
+        // Con motivo "Otro" hay que aclarar cual: si no, el registro no dice nada.
+        function revisarMotivo() {
+            const otro = document.getElementById('just-motivo').value === 'OTRO';
+            const campo = document.getElementById('just-comentario');
+            campo.required = otro;
+            document.getElementById('just-opcional').textContent =
+                otro ? '(obligatoria)' : '(opcional)';
+        }
+
+        // ==========================================
+        // HISTORIAL (tarjetas + controles de la flota)
+        // ==========================================
+
+        // Cuantos controles hay cargados ahora mismo en la lista. Sirve para
+        // que "Ver mas" pida la tanda siguiente en vez de volver a la primera.
+        let histCargados = 0;
+        let histTotal = 0;
+
+        function histFiltros() {
+            return {
+                patente: document.getElementById('hist-patente').value,
+                tecnico_id: document.getElementById('hist-tecnico').value,
+                tipo: document.getElementById('hist-tipo').value,
+                desde: document.getElementById('hist-desde').value,
+                hasta: document.getElementById('hist-hasta').value,
+                limite: document.getElementById('hist-limite').value
+            };
+        }
+
+        function histURL(offset) {
+            const params = new URLSearchParams();
+            const filtros = histFiltros();
+            Object.keys(filtros).forEach(k => {
+                if (filtros[k]) params.set(k, filtros[k]);
+            });
+            params.set('offset', offset);
+            return '/api/historial?' + params.toString();
+        }
+
+        function escapar(texto) {
+            const div = document.createElement('div');
+            div.textContent = texto === null || texto === undefined ? '' : texto;
+            return div.innerHTML;
+        }
+
+        function filaHistorial(c) {
+            const tipoClase = c.tipo_control === 'RETIRO' ? 'bg-secondary' : 'bg-info';
+            const km = c.kilometraje ? `<span><i class="bi bi-speedometer2"></i> ${c.kilometraje.toLocaleString('es-AR')} km</span>` : '';
+            const fotos = c.fotos
+                ? `<span class="hist-chip-fotos"><i class="bi bi-camera-fill"></i> ${c.fotos}</span>`
+                : '';
+            const problemas = c.problemas
+                ? `<span class="badge bg-warning text-dark">${c.problemas} con novedad</span>`
+                : '';
+            const sinTerminar = c.finalizado
+                ? ''
+                : '<span class="badge bg-danger">Sin finalizar</span>';
+            const forzado = c.forzado_por
+                ? `<span class="badge bg-dark" title="Lo hizo soporte para destrabar la camioneta">Liberado por ${escapar(c.forzado_por)}</span>`
+                : '';
+
+            return `
+                <div class="hist-item" id="hist-item-${c.id}">
+                    <button type="button" class="hist-item-cabecera"
+                            onclick="alternarControl(${c.id})">
+                        <span class="hist-item-fecha">
+                            <i class="bi bi-calendar3"></i> ${escapar(c.fecha)}
+                            <small class="text-muted">${escapar(c.jornada || '')}</small>
+                        </span>
+                        <span class="hist-item-patente">${escapar(c.patente)}</span>
+                        <span class="badge ${tipoClase}">${escapar(c.tipo_control)}</span>
+                        <span class="hist-item-tecnico">
+                            <i class="bi bi-person"></i> ${escapar(c.tecnico || '—')}
+                        </span>
+                        <span class="hist-item-chips">${km} ${fotos} ${problemas} ${sinTerminar} ${forzado}</span>
+                        <i class="bi bi-chevron-down hist-item-flecha"></i>
+                    </button>
+                    <div class="hist-item-detalle" id="hist-detalle-${c.id}" hidden></div>
+                </div>`;
+        }
+
+        function recargarHistorial() {
+            histCargados = 0;
+            const lista = document.getElementById('hist-lista');
+            lista.innerHTML = '<p class="text-muted">Cargando…</p>';
+            fetch(histURL(0))
+                .then(r => r.json())
+                .then(data => {
+                    histTotal = data.total;
+                    histCargados = data.controles.length;
+                    lista.innerHTML = data.controles.length
+                        ? data.controles.map(filaHistorial).join('')
+                        : '<p class="text-muted">No hay controles con esos filtros.</p>';
+                    actualizarPieHistorial();
+                })
+                .catch(() => {
+                    lista.innerHTML = '<p class="text-danger">No se pudo cargar el historial.</p>';
+                });
+        }
+
+        function verMasHistorial() {
+            fetch(histURL(histCargados))
+                .then(r => r.json())
+                .then(data => {
+                    histTotal = data.total;
+                    histCargados += data.controles.length;
+                    document.getElementById('hist-lista')
+                        .insertAdjacentHTML('beforeend', data.controles.map(filaHistorial).join(''));
+                    actualizarPieHistorial();
+                });
+        }
+
+        function actualizarPieHistorial() {
+            const boton = document.getElementById('hist-ver-mas');
+            boton.hidden = histCargados >= histTotal;
+            document.getElementById('hist-resumen').textContent =
+                histTotal ? `Mostrando ${histCargados} de ${histTotal}` : '';
+        }
+
+        function limpiarFiltrosHistorial() {
+            ['hist-patente', 'hist-tecnico', 'hist-tipo', 'hist-desde', 'hist-hasta']
+                .forEach(id => { document.getElementById(id).value = ''; });
+            document.querySelectorAll('.hist-tarjeta').forEach(t => t.classList.remove('activa'));
+            recargarHistorial();
+        }
+
+        // Tocar una tarjeta filtra la lista de abajo. Volver a tocar la misma
+        // tarjeta saca el filtro, que es lo que uno espera de un interruptor.
+        function filtrarHistorialPor(patente) {
+            const select = document.getElementById('hist-patente');
+            const yaEstaba = select.value === patente;
+            select.value = yaEstaba ? '' : patente;
+
+            document.querySelectorAll('.hist-tarjeta').forEach(t => {
+                t.classList.toggle('activa', !yaEstaba && t.dataset.patente === patente);
+            });
+            recargarHistorial();
+        }
+
+        // Desde el selector de la sección Reportes.
+        function verHistorialDe(patente) {
+            cambiarSeccion('historial');
+            if (patente) filtrarHistorialPor(patente);
+        }
+
+        function alternarControl(id) {
+            const detalle = document.getElementById(`hist-detalle-${id}`);
+            const item = document.getElementById(`hist-item-${id}`);
+            if (!detalle.hidden) {
+                detalle.hidden = true;
+                item.classList.remove('abierto');
+                return;
+            }
+
+            item.classList.add('abierto');
+            detalle.hidden = false;
+            if (detalle.dataset.cargado === '1') return;
+
+            detalle.innerHTML = '<p class="text-muted">Cargando…</p>';
+            fetch(`/api/historial/control/${id}`)
+                .then(r => r.json())
+                .then(data => {
+                    detalle.innerHTML = detalleControl(data);
+                    detalle.dataset.cargado = '1';
+                })
+                .catch(() => {
+                    detalle.innerHTML = '<p class="text-danger">No se pudo cargar el detalle.</p>';
+                });
+        }
+
+        function detalleControl(data) {
+            const conNovedad = data.elementos.filter(
+                e => e.estado !== 'OK' && e.estado !== 'PRESENTE');
+            const filas = (conNovedad.length ? conNovedad : data.elementos).map(e => `
+                <tr>
+                    <td>${escapar(e.elemento)}</td>
+                    <td><span class="badge ${e.estado === 'OK' || e.estado === 'PRESENTE' ? 'bg-success' : 'bg-warning text-dark'}">${escapar(e.estado)}</span></td>
+                    <td class="text-muted small">${escapar(e.observacion || '')}</td>
+                </tr>`).join('');
+
+            const aviso = conNovedad.length
+                ? `<p class="text-muted small mb-2">${conNovedad.length} elemento(s) con novedad, de ${data.elementos.length} revisados.</p>`
+                : `<p class="text-muted small mb-2">Los ${data.elementos.length} elementos salieron OK.</p>`;
+
+            let bloqueFotos = '';
+            if (data.ve_fotos) {
+                const sacadas = data.fotos.filter(f => f.url);
+                bloqueFotos = `
+                    <div class="hist-fotos">
+                        <div class="hist-fotos-titulo">
+                            <i class="bi bi-folder2-open"></i>
+                            Fotos del control
+                            <span class="badge bg-secondary">${sacadas.length}/${data.fotos.length}</span>
+                        </div>
+                        ${sacadas.length ? `
+                            <div class="hist-fotos-grilla">
+                                ${data.fotos.map(f => f.url ? `
+                                    <figure class="hist-foto">
+                                        <a href="${f.url}" target="_blank" rel="noopener">
+                                            <img src="${f.url}" alt="${escapar(f.etiqueta)}" loading="lazy">
+                                        </a>
+                                        <figcaption>
+                                            ${escapar(f.etiqueta)}
+                                            <a href="${f.url}" download
+                                               title="Descargar ${escapar(f.etiqueta)}">
+                                                <i class="bi bi-download"></i>
+                                            </a>
+                                        </figcaption>
+                                    </figure>` : `
+                                    <figure class="hist-foto hist-foto-falta">
+                                        <span><i class="bi bi-camera-off"></i></span>
+                                        <figcaption>${escapar(f.etiqueta)}</figcaption>
+                                    </figure>`).join('')}
+                            </div>` : '<p class="text-muted small mb-0">Este control no tiene fotos cargadas.</p>'}
+                    </div>`;
+            }
+
+            const observacion = data.control.observacion
+                ? `<p class="hist-observacion"><i class="bi bi-chat-left-text"></i> ${escapar(data.control.observacion)}</p>`
+                : '';
+
+            return `
+                ${observacion}
+                ${aviso}
+                <div class="table-responsive">
+                    <table class="table table-sm hist-tabla">
+                        <thead><tr><th>Elemento</th><th>Estado</th><th>Observación</th></tr></thead>
+                        <tbody>${filas || '<tr><td colspan="3" class="text-muted">Sin elementos registrados.</td></tr>'}</tbody>
+                    </table>
+                </div>
+                ${bloqueFotos}`;
         }
 
         // ==========================================
@@ -687,12 +1294,22 @@
         // INICIALIZACIÓN
         // ==========================================
         document.addEventListener('DOMContentLoaded', function() {
-            const seccionGuardada = localStorage.getItem('adminSeccion') || 'asignaciones';
+            const pedida = {{ seccion_inicial|tojson }};
+            const patentePedida = {{ patente_inicial|tojson }};
+            const seccionGuardada = pedida || localStorage.getItem('adminSeccion') || 'inicio';
             cambiarSeccion(seccionGuardada);
+            if (pedida === 'historial' && patentePedida) {
+                filtrarHistorialPor(patentePedida);
+            }
             
             // Cargar notificaciones al iniciar
             cargarAlertas();
             setInterval(cargarAlertas, REFRESCO_ALERTAS_MS);
+
+            // El resumen de Inicio se repinta solo: son numeros que cambian
+            // mientras soporte lo tiene abierto (un tecnico que cierra un
+            // control, un remito que se firma).
+            setInterval(refrescarInicio, REFRESCO_ALERTAS_MS);
 
             // Los contadores de las tarjetas se pintan con los datos que ya
             // vinieron en el render, sin esperar al primer refresco.
@@ -1130,5 +1747,63 @@
         })();
     </script>
 
+
+    {# ==========================================
+       JUSTIFICAR UN CONTROL QUE NUNCA SE HIZO
+       ==========================================
+       Cuando la camioneta no salio no hay control que hacer: obligara soporte
+       a "controlarla" para destrabarla dejaba constancia de algo que no paso. #}
+    <div class="just-fondo" id="just-fondo" hidden onclick="cerrarJustificar()"></div>
+
+    <div class="just-modal" id="just-modal" hidden role="dialog" aria-modal="true">
+        <h5 id="just-titulo">Ese día no salió</h5>
+        <p class="text-muted small" id="just-detalle"></p>
+
+        <form method="POST" id="form-justificar"
+              action="{{ url_for('justificar_control') }}">
+            <input type="hidden" name="asignacion_id" id="just-asignacion-id">
+
+            <div class="form-group">
+                <label for="just-motivo">¿Por qué?</label>
+                <select name="motivo" id="just-motivo" class="form-control" required
+                        onchange="revisarMotivo()">
+                    {% for clave, etiqueta in motivos_no_realizado.items() %}
+                        <option value="{{ clave }}">{{ etiqueta }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="just-comentario">
+                    Aclaración <span class="text-muted" id="just-opcional">(opcional)</span>
+                </label>
+                <input type="text" name="comentario" id="just-comentario"
+                       class="form-control" placeholder="Ej: feriado puente">
+            </div>
+
+            {# Un feriado deja a toda la flota sin salir: marcarlo camioneta por
+               camioneta serian diez clics para registrar un solo hecho. #}
+            <label class="just-lote">
+                <input type="checkbox" id="just-todo-el-dia" onchange="cambiarAlcance()">
+                Aplicar a todos los controles sin hacer de ese día
+            </label>
+            <input type="hidden" name="fecha" id="just-fecha">
+
+            <p class="text-muted small just-aviso">
+                <i class="bi bi-info-circle"></i>
+                La camioneta se destraba y el turno deja de figurar pendiente.
+                Se puede deshacer por 10 minutos.
+            </p>
+
+            <div class="just-botones">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> Justificar
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="cerrarJustificar()">
+                    Cancelar
+                </button>
+            </div>
+        </form>
+    </div>
 </body>
 </html>

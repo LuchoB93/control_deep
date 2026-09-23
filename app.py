@@ -29,13 +29,43 @@ for _flujo in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+BASE_DIR = Path(__file__).resolve().parent
+
+
+def cargar_env(ruta=None):
+    """Lee el .env de al lado del programa y lo vuelca en os.environ.
+
+    Sin esto el .env era decorativo: el código leía las variables con
+    os.environ.get() pero nadie las cargaba, así que CONTROL_SECRET_KEY
+    nunca tomaba efecto y las sesiones se cerraban en cada reinicio.
+
+    No pisa variables ya definidas en el entorno: si alguien exporta la
+    clave a mano o la define en Docker, esa gana.
+    """
+    ruta = Path(ruta) if ruta else (BASE_DIR / '.env')
+    try:
+        contenido = ruta.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return
+
+    for linea in contenido.splitlines():
+        linea = linea.strip()
+        if not linea or linea.startswith('#') or '=' not in linea:
+            continue
+        nombre, _, valor = linea.partition('=')
+        nombre = nombre.strip()
+        valor = valor.strip().strip('"').strip("'")
+        if nombre and nombre not in os.environ:
+            os.environ[nombre] = valor
+
+
+cargar_env()
+
 app = Flask(__name__)
 # En producción definir CONTROL_SECRET_KEY. Sin esa variable se genera una clave
 # al azar por arranque: el sistema funciona, pero las sesiones se cierran al
 # reiniciar el servidor (mejor eso que una clave pública en el repositorio).
 app.secret_key = os.environ.get('CONTROL_SECRET_KEY') or secrets.token_hex(32)
-
-BASE_DIR = Path(__file__).resolve().parent
 
 # El servidor puede correr en UTC (Docker, Codespaces). Sin esto los horarios se
 # guardaban adelantados respecto de la hora real de la jornada y los controles
@@ -238,16 +268,30 @@ ZONA_GUARDIA = 'GUARDIA'
 # El service es el único que vence por dos caminos a la vez, fecha y kilómetros:
 # manda el que llegue primero, y por eso el kilometraje es obligatorio en cada
 # control.
+# Cada vencimiento se registra distinto y pedir lo mismo para todos hacia
+# que la pantalla mintiera: al lavado no le importan los kilometros, y la VTV
+# no dura un plazo fijo. Estas claves gobiernan que campos muestra el
+# formulario y como se calcula el proximo vencimiento:
+#
+#   pide_km          -> el formulario pide (y usa) el kilometraje
+#   vigencia_variable-> la duracion la define quien registra, en meses
+#   items            -> lista de cosas que se pueden haber cambiado
 TIPOS_VENCIMIENTO = {
     'VTV': {
         'etiqueta': 'VTV',
         'icono': 'clipboard2-check',
         'color': '#0d6efd',
-        'periodicidad_dias': 365,
+        # Sin periodicidad fija: la planta te la puede dar por 6, 12 o 24
+        # meses segun la antiguedad del vehiculo y como venga la revision.
+        'periodicidad_dias': None,
         'periodicidad_km': None,
         'aviso_dias': 30,
         'aviso_km': None,
-        'ayuda': 'Verificación técnica vehicular. Vence por fecha.',
+        'pide_km': False,
+        'vigencia_variable': True,
+        'items': (),
+        'ayuda': 'Verificacion tecnica vehicular. Al registrarla se carga por '
+                 'cuantos meses te la dieron.',
     },
     'MATAFUEGO': {
         'etiqueta': 'Matafuego',
@@ -257,7 +301,11 @@ TIPOS_VENCIMIENTO = {
         'periodicidad_km': None,
         'aviso_dias': 30,
         'aviso_km': None,
-        'ayuda': 'Carga y sellado del matafuego. Vence por fecha.',
+        'pide_km': False,
+        'vigencia_variable': False,
+        'items': (),
+        'ayuda': 'Carga y sellado del matafuego. Vence al ano, sin importar '
+                 'los kilometros.',
     },
     'SERVICE': {
         'etiqueta': 'Service',
@@ -267,7 +315,13 @@ TIPOS_VENCIMIENTO = {
         'periodicidad_km': 10000,
         'aviso_dias': 30,
         'aviso_km': 1000,
-        'ayuda': 'Service de aceite y filtros: cada 10.000 km o una vez al año, '
+        'pide_km': True,
+        'vigencia_variable': False,
+        'items': ('Aceite de motor', 'Filtro de aceite', 'Filtro de aire',
+                  'Filtro de combustible', 'Filtro de habitaculo',
+                  'Correa de distribucion', 'Bujias', 'Liquido de frenos',
+                  'Refrigerante'),
+        'ayuda': 'Service de aceite y filtros: cada 10.000 km o una vez al ano, '
                  'lo que ocurra primero.',
     },
     'LAVADO': {
@@ -278,9 +332,16 @@ TIPOS_VENCIMIENTO = {
         'periodicidad_km': None,
         'aviso_dias': 3,
         'aviso_km': None,
-        'ayuda': 'Lavado de la camioneta. Se programa por fecha.',
+        'pide_km': False,
+        'vigencia_variable': False,
+        'items': (),
+        'ayuda': 'Lavado de la camioneta. Avisa cada 15 dias; los kilometros '
+                 'no cuentan.',
     },
 }
+
+# Opciones de vigencia de la VTV, en meses. Son las que entrega la planta.
+MESES_VTV = (6, 12, 24, 36)
 
 ORDEN_ESTADO = {'VENCIDO': 0, 'POR_VENCER': 1, 'SIN_DATOS': 2, 'AL_DIA': 3}
 
@@ -292,6 +353,23 @@ MOTIVOS_REPOSICION = {
     'ROTURA': 'Rotura',
     'PERDIDA': 'Pérdida',
 }
+
+# Por qué un control quedó sin hacer sin que nadie haya fallado: ese día la
+# camioneta directamente no salió. Es lo que distingue "nadie la controló" de
+# "no había nada que controlar".
+MOTIVOS_NO_REALIZADO = {
+    'FERIADO': 'Feriado',
+    'AUSENCIA': 'Ausencia del técnico',
+    'VACACIONES': 'Vacaciones',
+    'LICENCIA': 'Licencia médica',
+    'TALLER': 'Camioneta en el taller',
+    'OTRO': 'Otro',
+}
+
+# Ventana para deshacer una justificación mal cargada. Pasado ese rato queda
+# firme: si se pudiera borrar en cualquier momento, el registro de por qué una
+# camioneta estuvo sin control dejaría de ser confiable.
+PLAZO_ANULAR_JUSTIFICACION = timedelta(minutes=10)
 
 
 def horario_jornada(jornada, fecha):
@@ -919,6 +997,94 @@ PANEL_POR_ROL = {
 }
 
 
+# ============================================
+# MODULOS
+# ============================================
+
+# UltraHub agrupa varios sistemas. Camionetas es el unico terminado; los otros
+# tres figuran para que se vea hacia donde va el sistema, pero no entran a
+# ningun lado. Cuando alguno se desarrolle, se le pone su endpoint y se marca
+# disponible: la pantalla de modulos no hay que tocarla.
+MODULOS = (
+    {
+        'clave': 'camionetas',
+        'nombre': 'Camionetas',
+        'descripcion': 'Controles de retiro y devolucion, reportes, remitos, '
+                       'vencimientos y distribucion de la flota.',
+        'icono': 'truck',
+        'color': '#667eea',
+        'disponible': True,
+    },
+    {
+        'clave': 'stock',
+        'nombre': 'Stock',
+        'descripcion': 'Existencias de deposito: que hay, cuanto queda y que '
+                       'hay que reponer.',
+        'icono': 'boxes',
+        'color': '#20c997',
+        'disponible': False,
+    },
+    {
+        'clave': 'materiales',
+        'nombre': 'Materiales',
+        'descripcion': 'Entrega y seguimiento del material que usa cada '
+                       'tecnico en la calle.',
+        'icono': 'box-seam',
+        'color': '#fd7e14',
+        'disponible': False,
+    },
+    {
+        'clave': 'generadores',
+        'nombre': 'Generadores',
+        'descripcion': 'Grupos electrogenos: mantenimiento, horas de uso y '
+                       'combustible.',
+        'icono': 'lightning-charge',
+        'color': '#6f42c1',
+        'disponible': False,
+    },
+)
+
+
+def modulos_para(rol):
+    """El catalogo con el destino de cada modulo resuelto para ese rol.
+
+    Camionetas lleva al panel que le corresponde al rol; los que todavia no
+    existen no llevan a ningun lado.
+    """
+    panel = PANEL_POR_ROL.get(rol, 'tecnico')
+    salida = []
+    for modulo in MODULOS:
+        item = dict(modulo)
+        item['endpoint'] = panel if modulo['disponible'] else None
+        salida.append(item)
+    return salida
+
+
+@app.route('/modulos')
+def modulos():
+    """Pantalla intermedia entre el login y el panel: desde que sistema entra.
+
+    El tecnico no la ve: trabaja solo con camionetas y meterle un paso mas
+    antes de cada control seria ruido. Cuando tenga mas de un modulo, se le
+    saca la excepcion de abajo y listo.
+    """
+    if 'usuario_id' not in session:
+        return redirect(url_for('login'))
+
+    rol = session.get('rol')
+    if rol == 'tecnico':
+        return redirect(url_for('tecnico'))
+
+    return render_template('modulos.html', modulos=modulos_para(rol))
+
+
+def destino_tras_login(rol):
+    """A donde va alguien recien logueado: al selector, o directo a su panel."""
+    if rol == 'tecnico':
+        return url_for('tecnico')
+    return url_for('modulos')
+
+
 def autorizado(*roles):
     """True si el usuario logueado tiene alguno de esos roles.
 
@@ -1205,6 +1371,36 @@ def crear_base_de_datos():
         ON reclamos_coordinados (fecha, activo)
     ''')
 
+    # Controles que nunca se hicieron porque ese día la camioneta no salió:
+    # feriado, el técnico faltó, la camioneta estaba en el taller. No es lo
+    # mismo que un control olvidado. Mientras el hueco sigue abierto la
+    # camioneta queda trabada, y sin esta tabla la única salida era que
+    # soporte saliera a hacer el control de una camioneta que nunca se movió.
+    #
+    # Justificar NO reemplaza al control forzado por soporte (forzado_por):
+    # eso se sigue usando cuando la camioneta SÍ salió y nadie la revisó.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS controles_justificados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asignacion_id INTEGER NOT NULL,
+            motivo TEXT NOT NULL,
+            comentario TEXT,
+            justificado_por TEXT,
+            justificado_por_id INTEGER,
+            fecha_registro TEXT NOT NULL,
+            anulado INTEGER DEFAULT 0,
+            anulado_por TEXT,
+            fecha_anulacion TEXT,
+            FOREIGN KEY (asignacion_id) REFERENCES asignaciones(id)
+        )
+    ''')
+    # Una asignación se justifica una sola vez. El índice es parcial: si la
+    # justificación se anula, se puede volver a justificar.
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_justificado_asignacion
+        ON controles_justificados (asignacion_id) WHERE anulado = 0
+    ''')
+
     # Distribución semanal: qué jornada le toca a cada técnico y a cada
     # persona de soporte esa semana, y quiénes están de guardia. La carga el
     # jefe y recién cuando la publica la ve el resto.
@@ -1351,6 +1547,26 @@ def aplicar_migraciones(conexion):
         ],
         'usuarios': [
             ('firma', 'TEXT'),
+        ],
+        # El técnico ahora marca la actividad como resuelta o como no resuelta,
+        # y soporte puede corregir el mensaje. Todo va en columnas nuevas: las
+        # actividades ya cargadas quedan en PENDIENTE sin tocar nada.
+        'reclamos_coordinados': [
+            ('estado', "TEXT DEFAULT 'PENDIENTE'"),
+            ('resolucion_vista', 'INTEGER DEFAULT 0'),
+            ('resolucion_comentario', 'TEXT'),
+            ('resuelto_por', 'TEXT'),
+            ('resuelto_por_id', 'INTEGER'),
+            ('fecha_resolucion', 'TEXT'),
+            ('editado_por', 'TEXT'),
+            ('fecha_edicion', 'TEXT'),
+        ],
+        # detalle: qué se cambió en el service (aceite, filtros, etc.).
+        # meses_vigencia: por cuánto tiempo entregaron la VTV esta vez, que
+        # cambia en cada revisión y por eso no puede vivir en la configuración.
+        'vencimientos_historial': [
+            ('detalle', 'TEXT'),
+            ('meses_vigencia', 'INTEGER'),
         ],
         'asignaciones': [
             ('tecnico2_id', 'INTEGER'),
@@ -2121,6 +2337,12 @@ def controles_faltantes(conexion, momento=None, tecnico_id=None, camioneta_id=No
               WHERE ct.asignacion_id = a.id
                 AND ct.tipo_control = 'RETIRO' AND ct.finalizado = 1
           )
+          -- Justificado: ese día la camioneta no salió (feriado, ausencia,
+          -- taller). No hay hueco que reclamar ni camioneta que trabar.
+          AND NOT EXISTS (
+              SELECT 1 FROM controles_justificados cj
+              WHERE cj.asignacion_id = a.id AND cj.anulado = 0
+          )
     '''
     parametros = [momento.strftime('%Y-%m-%d')]
     if tecnico_id is not None:
@@ -2264,8 +2486,16 @@ def controles_pendientes(conexion, momento=None):
 def reclamos_de(conexion, usuario_id=None, zona=None, fecha=None, dias=1):
     """Los mensajes vigentes para alguien: los suyos y los de su zona.
 
-    `dias` mira también hacia atrás: un reclamo cargado ayer a última hora
-    tiene que seguir a la vista hoy a la mañana, si no se pierde.
+    `dias` mira tambien hacia atras: un reclamo cargado ayer a ultima hora
+    tiene que seguir a la vista hoy a la manana, si no se pierde.
+
+    Solo devuelve las pendientes. Una vez que el tecnico la resolvio (o avis&&
+    que no pudo) desaparece de su panel: ya dijo lo que tenia que decir y
+    dejarla ahi seria pedirle dos veces lo mismo. Soporte la sigue viendo en
+    el listado, con la resolucion.
+
+    Las de zona quedan por compatibilidad: ya no se cargan nuevas, pero las
+    que existian se tienen que seguir viendo.
     """
     fecha = fecha or ahora().date()
     desde = (fecha - timedelta(days=dias - 1)).strftime('%Y-%m-%d')
@@ -2273,23 +2503,48 @@ def reclamos_de(conexion, usuario_id=None, zona=None, fecha=None, dias=1):
 
     condiciones, parametros = [], [desde, hasta]
     if usuario_id is not None:
-        condiciones.append('(r.destino_tipo = \'persona\' AND r.destino_usuario_id = ?)')
+        condiciones.append("(r.destino_tipo = 'persona' AND r.destino_usuario_id = ?)")
         parametros.append(usuario_id)
     if zona:
-        condiciones.append('(r.destino_tipo = \'zona\' AND UPPER(r.destino_zona) = ?)')
+        condiciones.append("(r.destino_tipo = 'zona' AND UPPER(r.destino_zona) = ?)")
         parametros.append(zona.strip().upper())
     if not condiciones:
         return []
 
-    return [dict(f) for f in conexion.execute(f'''
+    return [dict(f) for f in conexion.execute(f"""
         SELECT r.id, r.mensaje, r.destino_tipo, r.destino_zona, r.fecha,
                r.creado_por, r.fecha_creacion, u.nombre AS destino_nombre
         FROM reclamos_coordinados r
         LEFT JOIN usuarios u ON r.destino_usuario_id = u.id
         WHERE r.activo = 1 AND r.fecha BETWEEN ? AND ?
+          AND COALESCE(r.estado, 'PENDIENTE') = 'PENDIENTE'
           AND ({' OR '.join(condiciones)})
         ORDER BY r.fecha DESC, r.id DESC
-    ''', parametros)]
+    """, parametros)]
+
+
+# Como termino una actividad coordinada.
+ESTADOS_ACTIVIDAD = {
+    'PENDIENTE': 'Pendiente',
+    'RESUELTA': 'Resuelta',
+    'NO_RESUELTA': 'No se pudo resolver',
+}
+
+
+def resoluciones_sin_ver(conexion):
+    """Cuantas actividades resolvio un tecnico que soporte todavia no miro.
+
+    Es el numero del globito al lado de Actividades coordinadas: sin eso,
+    soporte tendria que entrar a la pantalla cada tanto para enterarse de si
+    alguien resolvio algo.
+    """
+    fila = conexion.execute("""
+        SELECT COUNT(*) AS n FROM reclamos_coordinados
+        WHERE activo = 1
+          AND COALESCE(estado, 'PENDIENTE') <> 'PENDIENTE'
+          AND COALESCE(resolucion_vista, 0) = 0
+    """).fetchone()
+    return fila['n'] if fila else 0
 
 
 # ============================================
@@ -2642,11 +2897,16 @@ def proximo_vencimiento(config_dias, config_km, desde_fecha, desde_km):
     return fecha, km
 
 
-def registrar_realizado(conexion, camioneta_id, tipo, fecha, km, quien, observacion):
-    """Anota el trabajo hecho y corre el vencimiento al próximo período.
+def registrar_realizado(conexion, camioneta_id, tipo, fecha, km, quien,
+                        observacion, detalle=None, meses_vigencia=None):
+    """Anota el trabajo hecho y corre el vencimiento al proximo periodo.
 
-    Es un solo movimiento a propósito: si se registrara el lavado sin mover la
-    fecha, la alerta seguiría sonando y alguien terminaría apagándola a mano.
+    Es un solo movimiento a proposito: si se registrara el lavado sin mover la
+    fecha, la alerta seguiria sonando y alguien terminaria apagandola a mano.
+
+    `meses_vigencia` es para la VTV, que no dura un plazo fijo: la planta te la
+    da por 6, 12 o 24 meses y eso se carga cada vez. `detalle` es lo que se
+    cambio en el service.
     """
     config = TIPOS_VENCIMIENTO[tipo]
     actual = conexion.execute(
@@ -2658,31 +2918,102 @@ def registrar_realizado(conexion, camioneta_id, tipo, fecha, km, quien, observac
     aviso_dias = actual['aviso_dias'] if actual else config['aviso_dias']
     aviso_km = actual['aviso_km'] if actual else config['aviso_km']
 
-    conexion.execute('''
+    # La vigencia que se carga en el momento manda sobre cualquier periodicidad
+    # guardada: es el dato real de esta revision, no una estimacion.
+    if config['vigencia_variable'] and meses_vigencia:
+        periodicidad_dias = int(round(meses_vigencia * 30.44))
+
+    conexion.execute("""
         INSERT INTO vencimientos_historial
             (camioneta_id, tipo, fecha_realizado, km_realizado, registrado_por,
-             observacion, fecha_registro)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (camioneta_id, tipo, fecha, km, quien, observacion, ahora().isoformat()))
+             observacion, fecha_registro, detalle, meses_vigencia)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (camioneta_id, tipo, fecha, km, quien, observacion,
+          ahora().isoformat(), detalle, meses_vigencia))
 
     nueva_fecha, nuevo_km = proximo_vencimiento(
         periodicidad_dias, periodicidad_km, fecha, km)
 
     if actual:
-        conexion.execute('''
+        conexion.execute("""
             UPDATE vencimientos
-            SET fecha_vencimiento = ?, km_vencimiento = ?, activo = 1
+            SET fecha_vencimiento = ?, km_vencimiento = ?,
+                periodicidad_dias = ?, activo = 1
             WHERE id = ?
-        ''', (nueva_fecha, nuevo_km, actual['id']))
+        """, (nueva_fecha, nuevo_km, periodicidad_dias, actual['id']))
     else:
-        conexion.execute('''
+        conexion.execute("""
             INSERT INTO vencimientos
                 (camioneta_id, tipo, fecha_vencimiento, km_vencimiento,
                  periodicidad_dias, periodicidad_km, aviso_dias, aviso_km, activo)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-        ''', (camioneta_id, tipo, nueva_fecha, nuevo_km, periodicidad_dias,
+        """, (camioneta_id, tipo, nueva_fecha, nuevo_km, periodicidad_dias,
               periodicidad_km, aviso_dias, aviso_km))
 
+    return nueva_fecha, nuevo_km
+
+
+def hay_registro_ese_dia(conexion, camioneta_id, tipo, fecha, excepto_id=None):
+    """True si esa camioneta ya tiene ese trabajo anotado ese mismo dia.
+
+    Dos matafuegos cargados el mismo dia son siempre el mismo trabajo cargado
+    dos veces, y cada uno corre la fecha de vencimiento: quedaba un historial
+    con registros repetidos y un proximo vencimiento calculado de mas.
+    """
+    sql = """
+        SELECT 1 FROM vencimientos_historial
+        WHERE camioneta_id = ? AND tipo = ? AND fecha_realizado = ?
+    """
+    parametros = [camioneta_id, tipo, fecha]
+    if excepto_id is not None:
+        sql += ' AND id <> ?'
+        parametros.append(excepto_id)
+    return conexion.execute(sql, parametros).fetchone() is not None
+
+
+def recalcular_vencimiento(conexion, camioneta_id, tipo):
+    """Rehace el proximo vencimiento a partir del ultimo registro que quedo.
+
+    Hace falta cada vez que se borra o se edita un registro: si no, borrar el
+    ultimo service dejaria el vencimiento corrido como si se hubiera hecho.
+    """
+    config = TIPOS_VENCIMIENTO[tipo]
+    actual = conexion.execute(
+        'SELECT * FROM vencimientos WHERE camioneta_id = ? AND tipo = ?',
+        (camioneta_id, tipo)).fetchone()
+
+    ultimo = conexion.execute("""
+        SELECT * FROM vencimientos_historial
+        WHERE camioneta_id = ? AND tipo = ?
+        ORDER BY fecha_realizado DESC, id DESC LIMIT 1
+    """, (camioneta_id, tipo)).fetchone()
+
+    if ultimo is None:
+        # No quedo ningun registro: la camioneta vuelve a no tener fecha, que
+        # es distinto de estar al dia. La pantalla lo muestra como SIN_DATOS.
+        if actual:
+            conexion.execute("""
+                UPDATE vencimientos SET fecha_vencimiento = NULL, km_vencimiento = NULL
+                WHERE id = ?
+            """, (actual['id'],))
+        return None, None
+
+    periodicidad_dias = (actual['periodicidad_dias'] if actual
+                         else config['periodicidad_dias'])
+    periodicidad_km = actual['periodicidad_km'] if actual else config['periodicidad_km']
+    if config['vigencia_variable'] and ultimo['meses_vigencia']:
+        periodicidad_dias = int(round(ultimo['meses_vigencia'] * 30.44))
+
+    nueva_fecha, nuevo_km = proximo_vencimiento(
+        periodicidad_dias, periodicidad_km,
+        ultimo['fecha_realizado'], ultimo['km_realizado'])
+
+    if actual:
+        conexion.execute("""
+            UPDATE vencimientos
+            SET fecha_vencimiento = ?, km_vencimiento = ?, periodicidad_dias = ?
+            WHERE id = ?
+        """, (nueva_fecha, nuevo_km, periodicidad_dias, actual['id']))
     return nueva_fecha, nuevo_km
 
 
@@ -2847,7 +3178,7 @@ def verificar_password(conexion, usuario, password):
 @app.route('/')
 def login():
     if 'usuario_id' in session:
-        return redirect(url_for(PANEL_POR_ROL.get(session.get('rol'), 'tecnico')))
+        return redirect(destino_tras_login(session.get('rol')))
     return render_template('login.html')
 
 @app.route('/login', methods=['POST'])
@@ -2874,7 +3205,7 @@ def procesar_login():
     session['nombre'] = user['nombre']
     session['rol'] = user['rol']
     
-    return redirect(url_for(PANEL_POR_ROL.get(user['rol'], 'tecnico')))
+    return redirect(destino_tras_login(user['rol']))
 
 def consultar_reportes(conexion):
     """Todos los reportes con su camioneta y su técnico."""
@@ -2924,6 +3255,94 @@ def agrupar_reportes(conexion, reportes):
 
 
 # ============================================
+# INICIO DE SOPORTE
+# ============================================
+
+def resumen_inicio(conexion, momento=None):
+    """Lo que soporte necesita ver apenas entra, en un solo lugar.
+
+    Antes el panel abria en Asignaciones, que es la planilla de carga: para
+    saber si habia algo urgente habia que recorrer cuatro pantallas. Esto
+    junta los numeros y deja el detalle donde ya estaba.
+
+    Cada bloque trae el conteo y una muestra corta: lo que entra en la
+    tarjeta sin scrollear. Para ver todo se entra a la seccion que
+    corresponde, que es la que sabe filtrar y ordenar.
+    """
+    momento = momento or ahora()
+    hoy = momento.strftime('%Y-%m-%d')
+
+    pendientes = controles_pendientes(conexion, momento)
+    # Un hueco de retiro traba la camioneta: nadie mas deberia sacarla hasta
+    # que se controle, se libere o se justifique.
+    trabadas = sorted({p['patente'] for p in pendientes if p['tipo'] == 'RETIRO'})
+
+    vencimientos = vencimientos_alerta(conexion, momento)
+    vencidos = [v for v in vencimientos if v['estado'] == 'VENCIDO']
+
+    # Faltantes vigentes de toda la flota, sin repetir elemento por camioneta.
+    faltantes = conexion.execute("""
+        SELECT c.patente, r.elemento, MIN(r.fecha_hora) AS desde
+        FROM reportes r
+        JOIN controles co ON r.control_id = co.id
+        JOIN asignaciones a ON co.asignacion_id = a.id
+        JOIN camionetas c ON a.camioneta_id = c.id
+        WHERE r.estado IN ('FALLA', 'FALTANTE', 'OBSERVACION')
+          AND r.fecha_resolucion IS NULL
+        GROUP BY c.patente, r.elemento
+        ORDER BY desde
+    """).fetchall()
+
+    remitos = conexion.execute("""
+        SELECT sr.estado, sr.patente, sr.elemento
+        FROM seguimiento_remitos sr
+        WHERE sr.estado <> 'FINALIZADO'
+        ORDER BY sr.fecha_generacion DESC
+    """).fetchall()
+    espera_tecnico = [r for r in remitos if r['estado'] == 'PENDIENTE_FIRMA_TECNICO']
+    espera_soporte = [r for r in remitos if r['estado'] == 'PENDIENTE_FIRMA_SOPORTE']
+
+    actividades = conexion.execute("""
+        SELECT COALESCE(estado, 'PENDIENTE') AS estado, COUNT(*) AS n
+        FROM reclamos_coordinados
+        WHERE activo = 1
+        GROUP BY COALESCE(estado, 'PENDIENTE')
+    """).fetchall()
+    conteo_actividades = {fila['estado']: fila['n'] for fila in actividades}
+
+    # Cuantas camionetas tienen tecnico asignado hoy, para ver de un vistazo
+    # si la planilla del dia esta cargada.
+    asignadas = conexion.execute("""
+        SELECT COUNT(DISTINCT camioneta_id) AS n FROM asignaciones
+        WHERE fecha = ? AND tecnico_id IS NOT NULL AND estado = 'ASIGNADA'
+    """, (hoy,)).fetchone()['n']
+    activas = conexion.execute(
+        'SELECT COUNT(*) AS n FROM camionetas WHERE activa = 1').fetchone()['n']
+
+    return {
+        'fecha': hoy,
+        'pendientes': pendientes[:6],
+        'pendientes_total': len(pendientes),
+        'trabadas': trabadas,
+        'faltantes': [dict(f) for f in faltantes[:6]],
+        'faltantes_total': len(faltantes),
+        'vencidos': [dict(v) for v in vencidos[:6]],
+        'vencidos_total': len(vencidos),
+        'por_vencer_total': len(vencimientos) - len(vencidos),
+        'remitos_tecnico': len(espera_tecnico),
+        'remitos_soporte': len(espera_soporte),
+        'remitos_muestra': [dict(r) for r in espera_soporte[:4]] or
+                           [dict(r) for r in espera_tecnico[:4]],
+        'actividades_pendientes': conteo_actividades.get('PENDIENTE', 0),
+        'actividades_sin_ver': resoluciones_sin_ver(conexion),
+        'guardias': guardias_vigentes(conexion, momento),
+        'asignadas_hoy': asignadas,
+        'camionetas_activas': activas,
+        'justificaciones': justificaciones_vigentes(conexion, limite=5),
+    }
+
+
+# ============================================
 # RUTAS DE ADMINISTRADOR
 # ============================================
 
@@ -2970,6 +3389,12 @@ def admin():
             pendientes_control = controles_pendientes(conexion)
             # VTV, matafuego, service y lavado vencidos o por vencer.
             vencimientos = vencimientos_alerta(conexion)
+            # Una tarjeta por camioneta para la sección Historial.
+            resumen_historial = resumen_historial_flota(conexion)
+            # Actividades que un técnico cerró y soporte todavía no miró.
+            actividades_sin_ver = resoluciones_sin_ver(conexion)
+            # Tarjetas de la pantalla de Inicio.
+            inicio = resumen_inicio(conexion)
             
         except sqlite3.OperationalError as e:
             # Antes faltaba inicializar `reportes`, y este except terminaba
@@ -2981,6 +3406,9 @@ def admin():
             faltantes_por_patente = {}
             pendientes_control = []
             vencimientos = []
+            resumen_historial = []
+            actividades_sin_ver = 0
+            inicio = None
         
     finally:
         conexion.close()
@@ -3006,6 +3434,13 @@ def admin():
         })
     
     return render_template('admin.html',
+                         inicio=inicio,
+                         resumen_historial=resumen_historial,
+                         actividades_sin_ver=actividades_sin_ver,
+                         motivos_no_realizado=MOTIVOS_NO_REALIZADO,
+                         paginas_historial=PAGINAS_HISTORIAL,
+                         seccion_inicial=request.args.get('seccion', ''),
+                         patente_inicial=request.args.get('patente', ''),
                          pendientes_control=pendientes_control,
                          vencimientos=vencimientos,
                          zonas=zonas,
@@ -4261,7 +4696,7 @@ def guardar_control_rapido():
                 patente_camioneta,
                 elemento,
                 'admin',
-                f'/historial-camioneta/{patente_camioneta}',
+                f'/admin?seccion=historial&patente={patente_camioneta}',
                 conexion=conexion
             )
 
@@ -4360,149 +4795,245 @@ def jefe():
 # RUTAS DE HISTORIAL
 # ============================================
 
-@app.route('/historial-camioneta/<string:patente>')
-def historial_camioneta(patente):
-    if not autorizado('soporte', 'jefe'):
-        return redirect(url_for('login'))
-    
-    conexion = get_db()
-    
-    camioneta = conexion.execute('''
-        SELECT id, patente FROM camionetas WHERE patente = ? AND activa = 1
-    ''', (patente,)).fetchone()
-    
-    if not camioneta:
-        conexion.close()
-        destino = 'jefe' if session.get('rol') == 'jefe' else 'admin'
-        return redirect(url_for(destino, error='Camioneta no encontrada'))
-    
-    controles = conexion.execute('''
-        SELECT 
-            ct.id,
-            ct.asignacion_id,
-            ct.fecha,
-            ct.jornada,
-            ct.tipo_control,
-            ct.fecha_hora_inicio,
-            ct.fecha_hora_fin,
-            ct.finalizado,
-            ct.kilometraje,
-            ct.forzado_por,
-            ct.observacion,
-            u.nombre as tecnico_nombre
-        FROM controles_tecnicos ct
-        JOIN asignaciones a ON ct.asignacion_id = a.id
-        JOIN usuarios u ON a.tecnico_id = u.id
-        WHERE a.camioneta_id = ?
-        ORDER BY ct.fecha DESC, ct.fecha_hora_inicio DESC
-    ''', (camioneta['id'],)).fetchall()
-    
-    historial_detallado = []
-    for control in controles:
-        # Se consulta por el id del control en vez de reconstruirlo desde
-        # camioneta+fecha+jornada. La versión anterior cruzaba los reportes solo
-        # por nombre de elemento, así que cada ítem aparecía una vez por cada
-        # control de esa asignación (41 ítems -> 82, 123, 164 filas...).
-        # El GROUP BY garantiza una fila por ítem.
-        elementos = conexion.execute('''
-            SELECT 
-                ic.elemento, 
-                ic.categoria, 
-                ic.estado, 
-                ic.observacion, 
-                ic.fecha_hora,
-                MAX(r.entregado_por) as entregado_por,
-                MAX(r.recibido_por) as recibido_por,
-                MAX(r.fecha_entrega) as fecha_entrega
-            FROM items_control_tecnico ic
-            LEFT JOIN reportes r 
-                   ON r.elemento = ic.elemento 
-                  AND r.tipo = ?
-                  AND r.control_id IN (
-                        SELECT id FROM controles WHERE asignacion_id = ?
-                      )
-            WHERE ic.control_tecnico_id = ?
-            GROUP BY ic.id
-            ORDER BY ic.categoria, ic.elemento
-        ''', (control['tipo_control'], control['asignacion_id'], control['id'])).fetchall()
-        
-        historial_detallado.append({
-            'control': dict(control),
-            'elementos': [dict(e) for e in elementos]
+# Cuantos controles trae el historial de entrada. Los demas se piden con
+# "ver mas": cargar la flota entera de un saque son miles de filas que nadie
+# mira, y en el celular se nota.
+PAGINAS_HISTORIAL = (15, 20, 50)
+
+
+def resumen_historial_flota(conexion):
+    """Una tarjeta por camioneta: ultimo control, km y pendientes.
+
+    Es lo que se ve antes de elegir: sirve para darse cuenta de un vistazo
+    cual camioneta hace rato que no se controla, sin entrar a cada una.
+    """
+    filas = conexion.execute("""
+        SELECT c.id AS camioneta_id, c.patente,
+               COUNT(ct.id) AS total_controles,
+               MAX(ct.fecha) AS ultima_fecha
+        FROM camionetas c
+        LEFT JOIN asignaciones a ON a.camioneta_id = c.id
+        LEFT JOIN controles_tecnicos ct ON ct.asignacion_id = a.id
+        WHERE c.activa = 1
+        GROUP BY c.id, c.patente
+        ORDER BY c.patente
+    """).fetchall()
+
+    hoy = ahora().date()
+    resumen = []
+    for fila in filas:
+        camioneta_id = fila['camioneta_id']
+
+        ultimo = conexion.execute("""
+            SELECT ct.fecha, ct.jornada, ct.tipo_control, ct.finalizado,
+                   ct.kilometraje, u.nombre AS tecnico
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            LEFT JOIN usuarios u ON a.tecnico_id = u.id
+            WHERE a.camioneta_id = ?
+            ORDER BY ct.fecha DESC, ct.fecha_hora_inicio DESC
+            LIMIT 1
+        """, (camioneta_id,)).fetchone()
+
+        # Elementos que siguen sin estar bien: lo mismo que muestra el panel
+        # de reportes, para que las dos pantallas no se contradigan.
+        pendientes = conexion.execute("""
+            SELECT COUNT(DISTINCT r.elemento) AS n
+            FROM reportes r
+            JOIN controles co ON r.control_id = co.id
+            JOIN asignaciones a ON co.asignacion_id = a.id
+            WHERE a.camioneta_id = ?
+              AND r.estado IN ('FALLA', 'FALTANTE', 'OBSERVACION')
+              AND r.fecha_resolucion IS NULL
+        """, (camioneta_id,)).fetchone()
+
+        dias = None
+        if ultimo is not None:
+            fecha = _fecha_iso(ultimo['fecha'])
+            if fecha is not None:
+                dias = (hoy - fecha).days
+
+        resumen.append({
+            'camioneta_id': camioneta_id,
+            'patente': fila['patente'],
+            'total_controles': fila['total_controles'] or 0,
+            'km_actual': ultimo_kilometraje(conexion, camioneta_id),
+            'pendientes': pendientes['n'] if pendientes else 0,
+            'dias_sin_control': dias,
+            'ultimo': dict(ultimo) if ultimo is not None else None,
         })
+    return resumen
 
-    # Kilómetros recorridos entre un control y el anterior. La lista viene del
-    # más nuevo al más viejo, así que el "anterior" es el siguiente de la lista.
-    for indice, item in enumerate(historial_detallado):
-        km = item['control']['kilometraje']
-        item['km_recorridos'] = None
-        if km is None:
-            continue
-        for previo in historial_detallado[indice + 1:]:
-            anterior = previo['control']['kilometraje']
-            if anterior is not None:
-                item['km_recorridos'] = km - anterior
-                break
-    
-    historial_elementos = conexion.execute('''
-        SELECT
-            r.id,
-            r.elemento,
-            r.estado,
-            r.descripcion,
-            r.fecha_hora,
-            r.fecha_resolucion,
-            r.resuelto_por,
-            r.comentario_resolucion,
-            r.entregado_por,
-            r.recibido_por,
-            r.fecha_entrega,
-            r.ruta_remito,
-            r.material_entregado,
-            r.motivo_reposicion,
-            r.firma_tecnico,
-            r.firma_soporte,
-            r.creado_por,
-            c.patente,
-            u.nombre as tecnico_nombre,
-            r.tipo as tipo_control,
-            sr.estado as estado_remito,
-            COALESCE(ec.categoria, 'CAMIONETA') as categoria
-        FROM reportes r
-        JOIN controles co ON r.control_id = co.id
-        JOIN asignaciones a ON co.asignacion_id = a.id
-        JOIN camionetas c ON a.camioneta_id = c.id
-        JOIN usuarios u ON a.tecnico_id = u.id
-        LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = r.id
-        LEFT JOIN elementos_catalogo ec ON ec.nombre = r.elemento
-        WHERE c.patente = ?
-        ORDER BY r.elemento, r.fecha_hora DESC
-    ''', (patente,)).fetchall()
 
-    # Los elementos se agrupan por categoría para mostrarlos en las mismas tres
-    # solapas que la vista por fecha.
-    historial_por_elemento = {}
-    categoria_de_elemento = {}
-    for item in historial_elementos:
-        elemento = item['elemento']
-        historial_por_elemento.setdefault(elemento, []).append(dict(item))
-        categoria_de_elemento[elemento] = item['categoria']
+def _filtros_historial():
+    """Lee los filtros del querystring y los deja listos para el SQL."""
+    def texto(nombre):
+        valor = (request.args.get(nombre) or '').strip()
+        return valor or None
 
-    elementos_por_categoria = {c: [] for c in CATEGORIAS}
-    for elemento in historial_por_elemento:
-        elementos_por_categoria.setdefault(
-            categoria_de_elemento[elemento], []).append(elemento)
-    for lista in elementos_por_categoria.values():
-        lista.sort()
-    
-    conexion.close()
-    
-    return render_template('historial_camioneta.html',
-                         patente=patente,
-                         historial_detallado=historial_detallado,
-                         historial_por_elemento=historial_por_elemento,
-                         elementos_por_categoria=elementos_por_categoria,
-                         etiqueta_categoria=ETIQUETA_CATEGORIA)
+    try:
+        limite = int(request.args.get('limite') or PAGINAS_HISTORIAL[0])
+    except (TypeError, ValueError):
+        limite = PAGINAS_HISTORIAL[0]
+    # Se acota a los tamanos de la pantalla: sin esto, cualquiera puede pedir
+    # limite=999999 por la URL y traerse la base entera.
+    if limite not in PAGINAS_HISTORIAL:
+        limite = PAGINAS_HISTORIAL[0]
+
+    try:
+        offset = max(0, int(request.args.get('offset') or 0))
+    except (TypeError, ValueError):
+        offset = 0
+
+    tipo = texto('tipo')
+    if tipo not in ('RETIRO', 'DEVOLUCION'):
+        tipo = None
+
+    try:
+        tecnico_id = int(request.args.get('tecnico_id'))
+    except (TypeError, ValueError):
+        tecnico_id = None
+
+    return {
+        'patente': texto('patente'),
+        'tecnico_id': tecnico_id,
+        'desde': texto('desde') if _fecha_iso(texto('desde') or '') else None,
+        'hasta': texto('hasta') if _fecha_iso(texto('hasta') or '') else None,
+        'tipo': tipo,
+        'limite': limite,
+        'offset': offset,
+    }
+
+
+def _sql_historial(filtros):
+    """(where, parametros) comunes al listado y al total."""
+    where = ['1 = 1']
+    parametros = []
+    if filtros['patente']:
+        where.append('c.patente = ?')
+        parametros.append(filtros['patente'])
+    if filtros['tecnico_id'] is not None:
+        where.append('a.tecnico_id = ?')
+        parametros.append(filtros['tecnico_id'])
+    if filtros['desde']:
+        where.append('ct.fecha >= ?')
+        parametros.append(filtros['desde'])
+    if filtros['hasta']:
+        where.append('ct.fecha <= ?')
+        parametros.append(filtros['hasta'])
+    if filtros['tipo']:
+        where.append('ct.tipo_control = ?')
+        parametros.append(filtros['tipo'])
+    return ' AND '.join(where), parametros
+
+
+@app.route('/api/historial')
+def api_historial():
+    """Controles de toda la flota, filtrados y de a tandas."""
+    if not autorizado('soporte', 'jefe'):
+        return jsonify({'error': 'No autorizado'}), 401
+
+    filtros = _filtros_historial()
+    where, parametros = _sql_historial(filtros)
+
+    conexion = get_db()
+    try:
+        total = conexion.execute(f"""
+            SELECT COUNT(*) AS n
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            WHERE {where}
+        """, parametros).fetchone()['n']
+
+        filas = conexion.execute(f"""
+            SELECT ct.id, ct.fecha, ct.jornada, ct.tipo_control, ct.finalizado,
+                   ct.kilometraje, ct.forzado_por, ct.observacion,
+                   c.patente, u.nombre AS tecnico,
+                   (SELECT COUNT(*) FROM fotos f WHERE f.control_id = ct.id) AS fotos,
+                   (SELECT COUNT(*) FROM items_control_tecnico ic
+                     WHERE ic.control_tecnico_id = ct.id
+                       AND ic.estado IN ('FALLA', 'FALTANTE', 'OBSERVACION')) AS problemas
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            LEFT JOIN usuarios u ON a.tecnico_id = u.id
+            WHERE {where}
+            ORDER BY ct.fecha DESC, ct.fecha_hora_inicio DESC, ct.id DESC
+            LIMIT ? OFFSET ?
+        """, parametros + [filtros['limite'], filtros['offset']]).fetchall()
+    finally:
+        conexion.close()
+
+    return jsonify({
+        'total': total,
+        'offset': filtros['offset'],
+        'limite': filtros['limite'],
+        'controles': [dict(f) for f in filas],
+    })
+
+
+@app.route('/api/historial/control/<int:control_id>')
+def api_historial_control(control_id):
+    """Detalle de un control: que se reviso y las fotos que se sacaron."""
+    if not autorizado('soporte', 'jefe'):
+        return jsonify({'error': 'No autorizado'}), 401
+
+    # Las fotos son la constancia de como estaba la camioneta. El jefe ve el
+    # detalle de los elementos pero no la carpeta de fotos: se acordo que la
+    # miran soporte y administracion.
+    ve_fotos = session.get('rol') in ('soporte', 'admin')
+
+    conexion = get_db()
+    try:
+        control = conexion.execute("""
+            SELECT ct.*, c.patente, a.camioneta_id, u.nombre AS tecnico
+            FROM controles_tecnicos ct
+            JOIN asignaciones a ON ct.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            LEFT JOIN usuarios u ON a.tecnico_id = u.id
+            WHERE ct.id = ?
+        """, (control_id,)).fetchone()
+        if control is None:
+            return jsonify({'error': 'Control no encontrado'}), 404
+
+        elementos = conexion.execute("""
+            SELECT ic.elemento, ic.categoria, ic.estado, ic.observacion
+            FROM items_control_tecnico ic
+            WHERE ic.control_tecnico_id = ?
+            ORDER BY ic.categoria, ic.elemento
+        """, (control_id,)).fetchall()
+
+        carpeta = []
+        if ve_fotos:
+            for posicion in fotos_del_control(conexion, control_id):
+                carpeta.append({
+                    'posicion': posicion['posicion'],
+                    'etiqueta': posicion['etiqueta'],
+                    'url': (url_for('servir_foto', ruta=posicion['foto']['ruta'])
+                            if posicion['foto'] else None),
+                })
+    finally:
+        conexion.close()
+
+    return jsonify({
+        'control': {
+            'id': control['id'],
+            'patente': control['patente'],
+            'fecha': control['fecha'],
+            'jornada': control['jornada'],
+            'tipo_control': control['tipo_control'],
+            'finalizado': control['finalizado'],
+            'kilometraje': control['kilometraje'],
+            'tecnico': control['tecnico'],
+            'forzado_por': control['forzado_por'],
+            'observacion': control['observacion'],
+        },
+        'elementos': [dict(e) for e in elementos],
+        've_fotos': ve_fotos,
+        'fotos': carpeta,
+    })
+
 
 # ============================================
 # RUTAS DE REPORTES Y REMITOS
@@ -5482,21 +6013,81 @@ def config_elementos():
 
 @app.route('/reclamos')
 def reclamos():
-    """Los carga soporte; el técnico los lee desde su panel."""
+    """Los carga soporte; el tecnico los lee y los resuelve desde su panel."""
     if not autorizado('soporte', 'admin', 'jefe'):
         return redirect(url_for('login'))
 
+    # Filtros. Vacio = sin filtrar, que es lo que se ve al entrar.
+    filtro_tecnico = (request.args.get('f_tecnico') or '').strip()
+    filtro_zona = (request.args.get('f_zona') or '').strip()
+    filtro_estado = (request.args.get('f_estado') or '').strip().upper()
+    filtro_desde = (request.args.get('f_desde') or '').strip()
+    filtro_hasta = (request.args.get('f_hasta') or '').strip()
+    if filtro_estado not in ESTADOS_ACTIVIDAD:
+        filtro_estado = ''
+
+    where = ['r.activo = 1']
+    parametros = []
+    if filtro_tecnico:
+        try:
+            where.append('r.destino_usuario_id = ?')
+            parametros.append(int(filtro_tecnico))
+        except (TypeError, ValueError):
+            where.pop()
+    if filtro_zona:
+        # La zona puede venir del destino viejo (actividades de zona) o de la
+        # zona en la que trabaja el tecnico al que va dirigida.
+        where.append("""(UPPER(COALESCE(r.destino_zona, '')) = ?
+                         OR EXISTS (SELECT 1 FROM asignaciones a
+                                     WHERE a.tecnico_id = r.destino_usuario_id
+                                       AND UPPER(COALESCE(a.zona, '')) = ?
+                                       AND a.fecha = r.fecha))""")
+        parametros.extend([filtro_zona.upper(), filtro_zona.upper()])
+    if filtro_estado:
+        where.append("COALESCE(r.estado, 'PENDIENTE') = ?")
+        parametros.append(filtro_estado)
+    if _fecha_iso(filtro_desde):
+        where.append('r.fecha >= ?')
+        parametros.append(filtro_desde)
+    if _fecha_iso(filtro_hasta):
+        where.append('r.fecha <= ?')
+        parametros.append(filtro_hasta)
+
     conexion = get_db()
     try:
-        vigentes = [dict(f) for f in conexion.execute('''
-            SELECT r.id, r.mensaje, r.destino_tipo, r.destino_zona, r.fecha,
-                   r.creado_por, r.fecha_creacion, u.nombre AS destino_nombre
+        vigentes = [dict(f) for f in conexion.execute(f"""
+            SELECT r.id, r.mensaje, r.destino_tipo, r.destino_usuario_id,
+                   r.destino_zona, r.fecha, r.creado_por, r.fecha_creacion,
+                   COALESCE(r.estado, 'PENDIENTE') AS estado,
+                   r.resolucion_comentario, r.resuelto_por, r.fecha_resolucion,
+                   r.editado_por, r.fecha_edicion,
+                   u.nombre AS destino_nombre
             FROM reclamos_coordinados r
             LEFT JOIN usuarios u ON r.destino_usuario_id = u.id
-            WHERE r.activo = 1
+            WHERE {' AND '.join(where)}
             ORDER BY r.fecha DESC, r.id DESC
             LIMIT 200
-        ''')]
+        """, parametros)]
+
+        for actividad in vigentes:
+            actividad['estado_etiqueta'] = ESTADOS_ACTIVIDAD.get(
+                actividad['estado'], actividad['estado'])
+
+        conteo = {estado: 0 for estado in ESTADOS_ACTIVIDAD}
+        for fila in conexion.execute("""
+            SELECT COALESCE(estado, 'PENDIENTE') AS estado, COUNT(*) AS n
+            FROM reclamos_coordinados WHERE activo = 1
+            GROUP BY COALESCE(estado, 'PENDIENTE')
+        """):
+            conteo[fila['estado']] = fila['n']
+
+        # Entrar a la pantalla es haberse enterado: se apaga el globito.
+        conexion.execute("""
+            UPDATE reclamos_coordinados SET resolucion_vista = 1
+            WHERE activo = 1 AND COALESCE(estado, 'PENDIENTE') <> 'PENDIENTE'
+        """)
+        conexion.commit()
+
         tecnicos = obtener_tecnicos()
         zonas = zonas_activas(conexion)
     finally:
@@ -5506,6 +6097,15 @@ def reclamos():
                            reclamos=vigentes,
                            tecnicos=tecnicos,
                            zonas=zonas,
+                           estados=ESTADOS_ACTIVIDAD,
+                           conteo=conteo,
+                           filtros={
+                               'tecnico': filtro_tecnico,
+                               'zona': filtro_zona,
+                               'estado': filtro_estado,
+                               'desde': filtro_desde,
+                               'hasta': filtro_hasta,
+                           },
                            hoy=ahora().strftime('%Y-%m-%d'),
                            mensaje=request.args.get('mensaje', ''),
                            error=request.args.get('error', ''))
@@ -5515,8 +6115,28 @@ def _volver_reclamos(mensaje=None, error=None):
     return redirect(url_for('reclamos', mensaje=mensaje or '', error=error or ''))
 
 
+def _tecnico_destino(conexion):
+    """(id, error) del tecnico al que va dirigida la actividad."""
+    try:
+        destino_usuario_id = int(request.form.get('destino_usuario_id', ''))
+    except (TypeError, ValueError):
+        return None, 'Elegí a qué técnico va dirigida.'
+
+    existe = conexion.execute(
+        "SELECT id FROM usuarios WHERE id = ? AND activo = 1 AND rol = 'tecnico'",
+        (destino_usuario_id,)).fetchone()
+    if not existe:
+        return None, 'Ese técnico no existe o está dado de baja.'
+    return destino_usuario_id, None
+
+
 @app.route('/reclamos/crear', methods=['POST'])
 def reclamos_crear():
+    """Carga una actividad para un tecnico puntual.
+
+    Ya no se manda a una zona entera: no habia forma de saber quien la tenia
+    que resolver, y la resolucion se pisaba entre los tecnicos de la zona.
+    """
     if not autorizado('soporte', 'admin', 'jefe'):
         return redirect(url_for('login'))
 
@@ -5524,38 +6144,23 @@ def reclamos_crear():
     if not mensaje:
         return _volver_reclamos(error='El mensaje no puede estar vacío.')
 
-    destino_tipo = (request.form.get('destino_tipo') or '').strip()
-    if destino_tipo not in ('persona', 'zona'):
-        return _volver_reclamos(error='Elegí si va para una persona o para una zona.')
-
     fecha = (request.form.get('fecha') or '').strip() or ahora().strftime('%Y-%m-%d')
     if _fecha_iso(fecha) is None:
         return _volver_reclamos(error='La fecha no es válida.')
 
     conexion = get_db()
     try:
-        destino_usuario_id, destino_zona = None, None
-        if destino_tipo == 'persona':
-            try:
-                destino_usuario_id = int(request.form.get('destino_usuario_id', ''))
-            except (TypeError, ValueError):
-                return _volver_reclamos(error='Elegí a quién va dirigido.')
-            existe = conexion.execute(
-                "SELECT id FROM usuarios WHERE id = ? AND activo = 1 AND rol = 'tecnico'",
-                (destino_usuario_id,)).fetchone()
-            if not existe:
-                return _volver_reclamos(error='Ese técnico no existe o está dado de baja.')
-        else:
-            destino_zona = (request.form.get('destino_zona') or '').strip().upper()
-            if not destino_zona:
-                return _volver_reclamos(error='Elegí la zona.')
+        destino_usuario_id, error = _tecnico_destino(conexion)
+        if error:
+            return _volver_reclamos(error=error)
 
-        conexion.execute('''
+        conexion.execute("""
             INSERT INTO reclamos_coordinados
                 (mensaje, destino_tipo, destino_usuario_id, destino_zona,
-                 fecha, creado_por, fecha_creacion, activo)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-        ''', (mensaje, destino_tipo, destino_usuario_id, destino_zona, fecha,
+                 fecha, creado_por, fecha_creacion, activo, estado,
+                 resolucion_vista)
+            VALUES (?, 'persona', ?, NULL, ?, ?, ?, 1, 'PENDIENTE', 1)
+        """, (mensaje, destino_usuario_id, fecha,
               session.get('nombre'), ahora().isoformat()))
         conexion.commit()
     finally:
@@ -5564,9 +6169,122 @@ def reclamos_crear():
     return _volver_reclamos(mensaje='Actividad cargada.')
 
 
+@app.route('/reclamos/editar', methods=['POST'])
+def reclamos_editar():
+    """Corrige una actividad ya cargada: mensaje, destinatario o dia.
+
+    Solo mientras siga pendiente. Editar una que el tecnico ya resolvio seria
+    cambiarle la pregunta despues de la respuesta: la resolucion quedaria
+    contestando otra cosa.
+    """
+    if not autorizado('soporte', 'admin', 'jefe'):
+        return redirect(url_for('login'))
+
+    try:
+        reclamo_id = int(request.form.get('reclamo_id', ''))
+    except (TypeError, ValueError):
+        return _volver_reclamos(error='Actividad inválida.')
+
+    mensaje = (request.form.get('mensaje') or '').strip()
+    if not mensaje:
+        return _volver_reclamos(error='El mensaje no puede estar vacío.')
+
+    fecha = (request.form.get('fecha') or '').strip()
+    if _fecha_iso(fecha) is None:
+        return _volver_reclamos(error='La fecha no es válida.')
+
+    conexion = get_db()
+    try:
+        actual = conexion.execute(
+            'SELECT * FROM reclamos_coordinados WHERE id = ? AND activo = 1',
+            (reclamo_id,)).fetchone()
+        if actual is None:
+            return _volver_reclamos(error='Esa actividad no existe.')
+        if (actual['estado'] or 'PENDIENTE') != 'PENDIENTE':
+            return _volver_reclamos(
+                error='Esa actividad ya fue resuelta: no se puede editar.')
+
+        destino_usuario_id, error = _tecnico_destino(conexion)
+        if error:
+            return _volver_reclamos(error=error)
+
+        conexion.execute("""
+            UPDATE reclamos_coordinados
+            SET mensaje = ?, destino_tipo = 'persona', destino_usuario_id = ?,
+                destino_zona = NULL, fecha = ?, editado_por = ?, fecha_edicion = ?
+            WHERE id = ?
+        """, (mensaje, destino_usuario_id, fecha, session.get('nombre'),
+              ahora().isoformat(), reclamo_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_reclamos(mensaje='Actividad actualizada.')
+
+
+@app.route('/reclamos/resolver', methods=['POST'])
+def reclamos_resolver():
+    """El tecnico cierra la actividad: la resolvio, o no pudo y explica por que."""
+    if 'usuario_id' not in session or session.get('rol') != 'tecnico':
+        return redirect(url_for('login'))
+
+    try:
+        reclamo_id = int(request.form.get('reclamo_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('tecnico', error='Actividad inválida.'))
+
+    estado = (request.form.get('estado') or '').strip().upper()
+    if estado not in ('RESUELTA', 'NO_RESUELTA'):
+        return redirect(url_for('tecnico', error='Elegí si la pudiste resolver o no.'))
+
+    # El comentario es obligatorio en los dos casos: soporte necesita saber
+    # que se hizo, o por que no se pudo, sin tener que llamar por telefono.
+    comentario = (request.form.get('comentario') or '').strip()
+    if not comentario:
+        return redirect(url_for('tecnico',
+                                error='Conta qué hiciste (o por qué no se pudo) '
+                                      'antes de cerrarla.'))
+
+    conexion = get_db()
+    try:
+        usuario_id = session['usuario_id']
+        # Solo puede cerrar las suyas. Sin esta verificacion, cambiando el id
+        # del formulario un tecnico cerraba la actividad de otro.
+        actividad = conexion.execute("""
+            SELECT * FROM reclamos_coordinados
+            WHERE id = ? AND activo = 1 AND destino_usuario_id = ?
+        """, (reclamo_id, usuario_id)).fetchone()
+        if actividad is None:
+            return redirect(url_for('tecnico',
+                                    error='Esa actividad no es tuya o ya no está vigente.'))
+        if (actividad['estado'] or 'PENDIENTE') != 'PENDIENTE':
+            return redirect(url_for('tecnico', error='Esa actividad ya estaba cerrada.'))
+
+        conexion.execute("""
+            UPDATE reclamos_coordinados
+            SET estado = ?, resolucion_comentario = ?, resuelto_por = ?,
+                resuelto_por_id = ?, fecha_resolucion = ?, resolucion_vista = 0
+            WHERE id = ?
+        """, (estado, comentario, session.get('nombre'), usuario_id,
+              ahora().isoformat(), reclamo_id))
+
+        # Soporte se entera sin tener que estar mirando la pantalla.
+        aviso = 'resolvió' if estado == 'RESUELTA' else 'no pudo resolver'
+        crear_notificacion(
+            'ACTIVIDAD_RESUELTA',
+            f'\U0001f4cb {session.get("nombre")} {aviso} una actividad coordinada: {comentario}',
+            None, None, 'admin', '/reclamos', conexion=conexion)
+
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('tecnico', mensaje='Actividad cerrada. Soporte ya lo ve.'))
+
+
 @app.route('/reclamos/borrar', methods=['POST'])
 def reclamos_borrar():
-    """Baja lógica: el mensaje deja de mostrarse pero queda el registro."""
+    """Baja logica: el mensaje deja de mostrarse pero queda el registro."""
     if not autorizado('soporte', 'admin', 'jefe'):
         return redirect(url_for('login'))
 
@@ -5584,6 +6302,204 @@ def reclamos_borrar():
         conexion.close()
 
     return _volver_reclamos(mensaje='Actividad dada de baja.')
+
+
+
+# ============================================
+# CONTROLES JUSTIFICADOS
+# ============================================
+
+def justificacion_de(conexion, asignacion_id):
+    """La justificacion vigente de esa asignacion, o None."""
+    return conexion.execute("""
+        SELECT * FROM controles_justificados
+        WHERE asignacion_id = ? AND anulado = 0
+    """, (asignacion_id,)).fetchone()
+
+
+def puede_anularse(justificacion, momento=None):
+    """True si todavia esta dentro de los minutos para deshacerla."""
+    if justificacion is None:
+        return False
+    try:
+        registro = datetime.fromisoformat(justificacion['fecha_registro'])
+    except (TypeError, ValueError):
+        return False
+    return (momento or ahora()) - registro <= PLAZO_ANULAR_JUSTIFICACION
+
+
+def justificaciones_vigentes(conexion, limite=50):
+    """Ultimas justificaciones, con el dato de si todavia se pueden deshacer."""
+    momento = ahora()
+    filas = conexion.execute("""
+        SELECT cj.*, a.fecha AS fecha_turno, a.jornada, c.patente,
+               u.nombre AS tecnico
+        FROM controles_justificados cj
+        JOIN asignaciones a ON cj.asignacion_id = a.id
+        JOIN camionetas c ON a.camioneta_id = c.id
+        LEFT JOIN usuarios u ON a.tecnico_id = u.id
+        WHERE cj.anulado = 0
+        ORDER BY cj.fecha_registro DESC
+        LIMIT ?
+    """, (limite,)).fetchall()
+
+    salida = []
+    for fila in filas:
+        registro = dict(fila)
+        registro['motivo_etiqueta'] = MOTIVOS_NO_REALIZADO.get(fila['motivo'], fila['motivo'])
+        registro['anulable'] = puede_anularse(fila, momento)
+        salida.append(registro)
+    return salida
+
+
+def _leer_motivo():
+    """(motivo, comentario, error) del formulario de justificacion."""
+    motivo = (request.form.get('motivo') or '').strip().upper()
+    if motivo not in MOTIVOS_NO_REALIZADO:
+        return None, None, 'Elegí un motivo válido.'
+    comentario = (request.form.get('comentario') or '').strip()
+    if motivo == 'OTRO' and not comentario:
+        return None, None, 'Si el motivo es "Otro" hace falta que aclares cuál.'
+    return motivo, comentario, None
+
+
+@app.route('/controles/justificar', methods=['POST'])
+def justificar_control():
+    """Marca que ese turno no tuvo control porque la camioneta no salio.
+
+    Destraba la camioneta sin inventar un control: no hay constancia del
+    estado porque nadie la uso. Distinto de forzar el control (forzado_por),
+    que se usa cuando la camioneta SI salio y hay que revisarla igual.
+    """
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        asignacion_id = int(request.form.get('asignacion_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('admin', error='Turno inválido.'))
+
+    motivo, comentario, error = _leer_motivo()
+    if error:
+        return redirect(url_for('admin', error=error))
+
+    conexion = get_db()
+    try:
+        asignacion = conexion.execute("""
+            SELECT a.id, c.patente FROM asignaciones a
+            JOIN camionetas c ON a.camioneta_id = c.id
+            WHERE a.id = ?
+        """, (asignacion_id,)).fetchone()
+        if asignacion is None:
+            return redirect(url_for('admin', error='Ese turno no existe.'))
+
+        if justificacion_de(conexion, asignacion_id) is not None:
+            return redirect(url_for('admin', error='Ese turno ya estaba justificado.'))
+
+        conexion.execute("""
+            INSERT INTO controles_justificados
+                (asignacion_id, motivo, comentario, justificado_por,
+                 justificado_por_id, fecha_registro, anulado)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+        """, (asignacion_id, motivo, comentario, session.get('nombre'),
+              session.get('usuario_id'), ahora().isoformat()))
+        conexion.commit()
+        patente = asignacion['patente']
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin',
+                            mensaje=f'{patente}: turno justificado por '
+                                    f'{MOTIVOS_NO_REALIZADO[motivo].lower()}. '
+                                    f'Se puede deshacer por 10 minutos.'))
+
+
+@app.route('/controles/justificar-dia', methods=['POST'])
+def justificar_dia():
+    """Justifica de una todos los turnos sin control de una fecha.
+
+    Un feriado deja a la flota entera sin salir: hacerlo camioneta por
+    camioneta serian diez clics para registrar un solo hecho.
+    """
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    fecha = (request.form.get('fecha') or '').strip()
+    if _fecha_iso(fecha) is None:
+        return redirect(url_for('admin', error='La fecha no es válida.'))
+
+    motivo, comentario, error = _leer_motivo()
+    if error:
+        return redirect(url_for('admin', error=error))
+
+    conexion = get_db()
+    try:
+        # Solo los turnos de esa fecha que hoy figuran como hueco: si el
+        # control se hizo, no hay nada que justificar.
+        pendientes = [f for f in controles_faltantes(conexion)
+                      if f['fecha'] == fecha]
+        if not pendientes:
+            return redirect(url_for('admin',
+                                    error=f'No hay controles sin hacer el {fecha}.'))
+
+        momento = ahora().isoformat()
+        nuevos = 0
+        for falta in pendientes:
+            if justificacion_de(conexion, falta['asignacion_id']) is not None:
+                continue
+            conexion.execute("""
+                INSERT INTO controles_justificados
+                    (asignacion_id, motivo, comentario, justificado_por,
+                     justificado_por_id, fecha_registro, anulado)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+            """, (falta['asignacion_id'], motivo, comentario,
+                  session.get('nombre'), session.get('usuario_id'), momento))
+            nuevos += 1
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin',
+                            mensaje=f'{nuevos} turno(s) del {fecha} justificados '
+                                    f'por {MOTIVOS_NO_REALIZADO[motivo].lower()}.'))
+
+
+@app.route('/controles/justificar/anular', methods=['POST'])
+def anular_justificacion():
+    """Deshace una justificacion cargada por error, dentro del plazo."""
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        justificacion_id = int(request.form.get('justificacion_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('admin', error='Justificación inválida.'))
+
+    conexion = get_db()
+    try:
+        fila = conexion.execute("""
+            SELECT * FROM controles_justificados WHERE id = ? AND anulado = 0
+        """, (justificacion_id,)).fetchone()
+        if fila is None:
+            return redirect(url_for('admin',
+                                    error='Esa justificación ya no está vigente.'))
+
+        if not puede_anularse(fila):
+            return redirect(url_for('admin',
+                                    error='Pasaron más de 10 minutos: la justificación '
+                                          'ya no se puede deshacer.'))
+
+        conexion.execute("""
+            UPDATE controles_justificados
+            SET anulado = 1, anulado_por = ?, fecha_anulacion = ?
+            WHERE id = ?
+        """, (session.get('nombre'), ahora().isoformat(), justificacion_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin', mensaje='Justificación deshecha: el turno '
+                                             'vuelve a figurar como pendiente.'))
 
 
 # ============================================
@@ -5811,8 +6727,9 @@ def calendario():
         camionetas = obtener_camionetas()
 
         historial = [dict(f) for f in conexion.execute('''
-            SELECT h.id, h.tipo, h.fecha_realizado, h.km_realizado,
-                   h.registrado_por, h.observacion, c.patente
+            SELECT h.id, h.camioneta_id, h.tipo, h.fecha_realizado,
+                   h.km_realizado, h.registrado_por, h.observacion,
+                   h.detalle, h.meses_vigencia, c.patente
             FROM vencimientos_historial h
             JOIN camionetas c ON h.camioneta_id = c.id
             ORDER BY h.fecha_realizado DESC, h.id DESC
@@ -5860,6 +6777,15 @@ def calendario():
                            historial=historial,
                            camionetas=camionetas,
                            tipos=TIPOS_VENCIMIENTO,
+                           tipos_js={clave: {
+                               'etiqueta': cfg['etiqueta'],
+                               'ayuda': cfg['ayuda'],
+                               'pide_km': cfg['pide_km'],
+                               'periodicidad_km': cfg['periodicidad_km'],
+                               'vigencia_variable': cfg['vigencia_variable'],
+                               'items': list(cfg['items']),
+                           } for clave, cfg in TIPOS_VENCIMIENTO.items()},
+                           meses_vtv=MESES_VTV,
                            anio=anio,
                            mes=mes,
                            nombre_mes=MESES[mes - 1],
@@ -5894,9 +6820,72 @@ def _leer_camioneta_y_tipo(conexion):
     return camioneta, tipo, None
 
 
+def _leer_registro(conexion, tipo, camioneta_id, excepto_id=None):
+    """(datos, error) del formulario de un trabajo, segun lo que pida el tipo."""
+    config = TIPOS_VENCIMIENTO[tipo]
+
+    fecha = (request.form.get('fecha') or '').strip()
+    if _fecha_iso(fecha) is None:
+        return None, 'La fecha en que se hizo el trabajo es obligatoria.'
+    if _fecha_iso(fecha) > ahora().date():
+        return None, 'No se puede registrar un trabajo con fecha futura.'
+
+    # Un mismo trabajo dos veces el mismo dia es siempre una carga repetida.
+    if hay_registro_ese_dia(conexion, camioneta_id, tipo, fecha, excepto_id):
+        return None, (f'Ya hay un {config["etiqueta"].lower()} registrado para '
+                      f'esa camioneta el {fecha}. Si te equivocaste, editá o '
+                      f'borrá el que ya está cargado.')
+
+    # El kilometraje solo se pide donde cuenta. Al lavado y al matafuego no les
+    # importa, y pedirlo hacia que la pantalla pareciera decir que si.
+    km = None
+    if config['pide_km']:
+        km_texto = (request.form.get('kilometraje') or '').strip()
+        if km_texto:
+            km, error_km = validar_kilometraje(km_texto, None)
+            if error_km:
+                return None, error_km
+        elif config['periodicidad_km']:
+            km = ultimo_kilometraje(conexion, camioneta_id)
+            if km is None:
+                return None, (f'El {config["etiqueta"].lower()} vence por '
+                              'kilómetros y esta camioneta todavía no tiene '
+                              'ninguno registrado. Cargá el kilometraje del trabajo.')
+
+    # La VTV no dura un plazo fijo: se carga por cuanto te la dieron.
+    meses = None
+    if config['vigencia_variable']:
+        try:
+            meses = int(request.form.get('meses_vigencia', ''))
+        except (TypeError, ValueError):
+            return None, 'Elegí por cuántos meses te dieron la VTV.'
+        if meses not in MESES_VTV:
+            return None, 'Esa vigencia no es una de las opciones.'
+
+    # Que se cambio en el service. Se guarda como texto separado por comas:
+    # es para leer, no para consultar.
+    detalle = None
+    if config['items']:
+        elegidos = [i for i in request.form.getlist('items') if i in config['items']]
+        otros = (request.form.get('otros') or '').strip()
+        if otros:
+            elegidos.append(otros)
+        if not elegidos:
+            return None, (f'Marcá qué se cambió en el {config["etiqueta"].lower()}.')
+        detalle = ', '.join(elegidos)
+
+    return {
+        'fecha': fecha,
+        'km': km,
+        'meses': meses,
+        'detalle': detalle,
+        'observacion': (request.form.get('observacion') or '').strip(),
+    }, None
+
+
 @app.route('/calendario/registrar', methods=['POST'])
 def calendario_registrar():
-    """Marca un trabajo como hecho y corre el vencimiento al próximo período."""
+    """Marca un trabajo como hecho y corre el vencimiento al proximo periodo."""
     if not autorizado('soporte', 'admin'):
         return redirect(url_for('login'))
 
@@ -5906,32 +6895,14 @@ def calendario_registrar():
         if error:
             return _volver_calendario(error=error)
 
-        fecha = (request.form.get('fecha') or '').strip()
-        if _fecha_iso(fecha) is None:
-            return _volver_calendario(error='La fecha en que se hizo el trabajo es obligatoria.')
-        if _fecha_iso(fecha) > ahora().date():
-            return _volver_calendario(error='No se puede registrar un trabajo con fecha futura.')
+        datos, error = _leer_registro(conexion, tipo, camioneta['id'])
+        if error:
+            return _volver_calendario(error=error)
 
-        # El kilometraje solo se pide donde sirve: el service vence por km, el
-        # lavado no. Igual se guarda si lo cargan, queda como dato del historial.
-        km_texto = (request.form.get('kilometraje') or '').strip()
-        km = None
-        if km_texto:
-            km, error_km = validar_kilometraje(km_texto, None)
-            if error_km:
-                return _volver_calendario(error=error_km)
-        elif TIPOS_VENCIMIENTO[tipo]['periodicidad_km']:
-            km = ultimo_kilometraje(conexion, camioneta['id'])
-            if km is None:
-                return _volver_calendario(
-                    error=f'El {TIPOS_VENCIMIENTO[tipo]["etiqueta"].lower()} vence por '
-                          'kilómetros y esta camioneta todavía no tiene ninguno '
-                          'registrado. Cargá el kilometraje del trabajo.')
-
-        observacion = (request.form.get('observacion') or '').strip()
         nueva_fecha, nuevo_km = registrar_realizado(
-            conexion, camioneta['id'], tipo, fecha, km,
-            session.get('nombre'), observacion)
+            conexion, camioneta['id'], tipo, datos['fecha'], datos['km'],
+            session.get('nombre'), datos['observacion'],
+            detalle=datos['detalle'], meses_vigencia=datos['meses'])
         conexion.commit()
     finally:
         conexion.close()
@@ -5945,8 +6916,87 @@ def calendario_registrar():
     proximo = ' o '.join(partes) if partes else 'sin fecha (configurá la periodicidad)'
 
     return _volver_calendario(
-        mensaje=f'✅ {etiqueta} de {camioneta["patente"]} registrado. '
+        mensaje=f'\u2705 {etiqueta} de {camioneta["patente"]} registrado. '
                 f'El próximo vence {proximo}.')
+
+
+@app.route('/calendario/editar', methods=['POST'])
+def calendario_editar():
+    """Corrige un registro ya cargado y recalcula el proximo vencimiento."""
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        registro_id = int(request.form.get('registro_id', ''))
+    except (TypeError, ValueError):
+        return _volver_calendario(error='Registro inválido.')
+
+    conexion = get_db()
+    try:
+        registro = conexion.execute(
+            'SELECT * FROM vencimientos_historial WHERE id = ?',
+            (registro_id,)).fetchone()
+        if registro is None:
+            return _volver_calendario(error='Ese registro ya no existe.')
+
+        tipo = registro['tipo']
+        if tipo not in TIPOS_VENCIMIENTO:
+            return _volver_calendario(error='Tipo de vencimiento desconocido.')
+
+        datos, error = _leer_registro(conexion, tipo, registro['camioneta_id'],
+                                      excepto_id=registro_id)
+        if error:
+            return _volver_calendario(error=error)
+
+        conexion.execute("""
+            UPDATE vencimientos_historial
+            SET fecha_realizado = ?, km_realizado = ?, observacion = ?,
+                detalle = ?, meses_vigencia = ?
+            WHERE id = ?
+        """, (datos['fecha'], datos['km'], datos['observacion'],
+              datos['detalle'], datos['meses'], registro_id))
+
+        # Sin esto el proximo vencimiento quedaria calculado sobre la fecha
+        # vieja, y la alerta sonaria cuando no corresponde.
+        recalcular_vencimiento(conexion, registro['camioneta_id'], tipo)
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_calendario(mensaje='Registro corregido y vencimiento recalculado.')
+
+
+@app.route('/calendario/borrar', methods=['POST'])
+def calendario_borrar():
+    """Borra un registro cargado por error y recalcula el vencimiento."""
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        registro_id = int(request.form.get('registro_id', ''))
+    except (TypeError, ValueError):
+        return _volver_calendario(error='Registro inválido.')
+
+    conexion = get_db()
+    try:
+        registro = conexion.execute(
+            'SELECT * FROM vencimientos_historial WHERE id = ?',
+            (registro_id,)).fetchone()
+        if registro is None:
+            return _volver_calendario(error='Ese registro ya no existe.')
+
+        conexion.execute('DELETE FROM vencimientos_historial WHERE id = ?',
+                         (registro_id,))
+        nueva_fecha, _ = recalcular_vencimiento(
+            conexion, registro['camioneta_id'], registro['tipo'])
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    etiqueta = TIPOS_VENCIMIENTO.get(registro['tipo'], {}).get('etiqueta', registro['tipo'])
+    detalle = (f'El próximo vence el {nueva_fecha}.' if nueva_fecha
+               else 'La camioneta queda sin fecha cargada para ese trabajo.')
+    return _volver_calendario(mensaje=f'Registro de {etiqueta} borrado. {detalle}')
 
 
 @app.route('/calendario/configurar', methods=['POST'])

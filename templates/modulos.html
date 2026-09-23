@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UltraHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="modulos-body">
+
+<div class="modulos-container">
+
+    <header class="modulos-header">
+        <div>
+            <h1>UltraHub</h1>
+            <p>Hola {{ session.nombre }}, ¿con qué módulo vas a trabajar?</p>
+        </div>
+        <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm">
+            <i class="bi bi-box-arrow-right"></i> Salir
+        </a>
+    </header>
+
+    <div class="modulos-grilla">
+        {% for m in modulos %}
+            {% if m.disponible %}
+                <a href="{{ url_for(m.endpoint) }}" class="modulo-card"
+                   style="--modulo-color: {{ m.color }};">
+                    <span class="modulo-icono"><i class="bi bi-{{ m.icono }}"></i></span>
+                    <span class="modulo-nombre">{{ m.nombre }}</span>
+                    <span class="modulo-descripcion">{{ m.descripcion }}</span>
+                    <span class="modulo-entrar">Entrar <i class="bi bi-arrow-right"></i></span>
+                </a>
+            {% else %}
+                {# Sin desarrollar: se ve, explica para qué va a servir, y no entra
+                   a ningún lado. Es un div y no un <a> a propósito, así no queda
+                   un link que no lleva a nada. #}
+                <div class="modulo-card modulo-card-inactivo">
+                    <span class="modulo-icono"><i class="bi bi-{{ m.icono }}"></i></span>
+                    <span class="modulo-nombre">{{ m.nombre }}</span>
+                    <span class="modulo-descripcion">{{ m.descripcion }}</span>
+                    <span class="badge badge-proximamente">Próximamente</span>
+                </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+</div>
+
+</body>
+</html>

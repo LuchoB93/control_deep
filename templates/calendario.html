@@ -303,7 +303,7 @@
                                     </span>
                                     {% if session.rol in ('soporte', 'admin') %}
                                         <button class="btn btn-sm btn-success"
-                                                onclick='abrirRegistrar({{ f.camioneta_id }}, "{{ f.tipo }}", "{{ f.patente }}", "{{ f.etiqueta }}", {{ f.km_actual if f.km_actual is not none else "null" }}, {{ 'true' if f.periodicidad_km else 'false' }})'>
+                                                onclick='abrirRegistrar({{ f.camioneta_id }}, "{{ f.tipo }}", "{{ f.patente }}", "{{ f.etiqueta }}", {{ f.km_actual if f.km_actual is not none else "null" }})'>
                                             <i class="bi bi-check2"></i> Registrar
                                         </button>
                                         <button class="btn btn-sm btn-outline-secondary" title="Configurar"
@@ -330,7 +330,8 @@
                 <thead class="table-light">
                     <tr>
                         <th>Fecha</th><th>Camioneta</th><th>Trabajo</th>
-                        <th>Km</th><th>Registró</th><th>Observación</th>
+                        <th>Detalle</th><th>Registró</th>
+                        {% if session.rol in ('soporte', 'admin') %}<th></th>{% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -339,9 +340,40 @@
                             <td>{{ h.fecha_realizado }}</td>
                             <td><strong>{{ h.patente }}</strong></td>
                             <td>{{ tipos[h.tipo].etiqueta if h.tipo in tipos else h.tipo }}</td>
-                            <td>{{ h.km_realizado|miles }}</td>
+                            <td class="text-muted small">
+                                {# Cada tipo muestra lo suyo: al lavado no le
+                                   importan los km y a la VTV le importa por
+                                   cuánto te la dieron. #}
+                                {% if h.detalle %}{{ h.detalle }}{% endif %}
+                                {% if h.meses_vigencia %}
+                                    <span class="badge bg-primary">{{ h.meses_vigencia }} meses</span>
+                                {% endif %}
+                                {% if h.km_realizado and h.tipo in tipos and tipos[h.tipo].pide_km %}
+                                    · {{ h.km_realizado|miles }} km
+                                {% endif %}
+                                {% if h.observacion %}
+                                    <br>{{ h.observacion }}
+                                {% endif %}
+                            </td>
                             <td>{{ h.registrado_por or '—' }}</td>
-                            <td class="text-muted small">{{ h.observacion or '' }}</td>
+                            {% if session.rol in ('soporte', 'admin') %}
+                                <td class="text-nowrap">
+                                    <button type="button" class="btn btn-sm btn-outline-primary"
+                                            title="Editar"
+                                            onclick="abrirEditar({{ h|tojson }})">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <form method="POST" class="d-inline"
+                                          action="{{ url_for('calendario_borrar') }}"
+                                          onsubmit="return confirm('¿Borrar este registro? El próximo vencimiento se vuelve a calcular.');">
+                                        <input type="hidden" name="registro_id" value="{{ h.id }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger"
+                                                title="Borrar">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            {% endif %}
                         </tr>
                     {% else %}
                         <tr><td colspan="6" class="text-center text-muted py-4">
@@ -368,30 +400,116 @@
                 <input type="hidden" name="tipo" id="reg-tipo">
                 <p class="mb-3">
                     <strong id="reg-titulo"></strong><br>
-                    <small class="text-muted">
-                        Al registrarlo, el próximo vencimiento se corre solo según la periodicidad.
-                    </small>
+                    <small class="text-muted" id="reg-ayuda"></small>
                 </p>
+
                 <div class="mb-3">
                     <label class="form-label">¿Qué día se hizo?</label>
                     <input type="date" class="form-control" name="fecha" id="reg-fecha"
                            max="{{ hoy }}" required>
                 </div>
-                <div class="mb-3" id="reg-km-campo">
+
+                {# Solo para la VTV: la planta te la da por 6, 12 o 24 meses y
+                   eso cambia en cada revisión, así que se carga cada vez. #}
+                <div class="mb-3" id="reg-vigencia-campo" hidden>
+                    <label class="form-label">¿Por cuánto tiempo te la dieron?</label>
+                    <select class="form-control" name="meses_vigencia" id="reg-vigencia">
+                        {% for m in meses_vtv %}
+                            <option value="{{ m }}">{{ m }} meses</option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">
+                        De acá sale la fecha del próximo vencimiento.
+                    </small>
+                </div>
+
+                {# Solo donde el vencimiento se cuenta por kilómetros. #}
+                <div class="mb-3" id="reg-km-campo" hidden>
                     <label class="form-label">Kilometraje al hacerlo</label>
                     <input type="number" class="form-control" name="kilometraje" id="reg-km"
                            min="0" step="1">
                     <small class="text-muted" id="reg-km-ayuda"></small>
                 </div>
+
+                {# Solo para el service: qué se cambió. #}
+                <div class="mb-3" id="reg-items-campo" hidden>
+                    <label class="form-label">¿Qué se cambió?</label>
+                    <div class="reg-items" id="reg-items"></div>
+                    <input type="text" class="form-control mt-2" name="otros" id="reg-otros"
+                           placeholder="Otra cosa que se haya cambiado">
+                </div>
+
                 <div class="mb-0">
-                    <label class="form-label">Observación <span class="text-muted">(opcional)</span></label>
-                    <input type="text" class="form-control" name="observacion"
-                           placeholder="Taller, número de oblea, qué se cambió...">
+                    <label class="form-label">
+                        Observación <span class="text-muted">(opcional)</span>
+                    </label>
+                    <input type="text" class="form-control" name="observacion" id="reg-obs"
+                           placeholder="Taller, número de oblea...">
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                 <button type="submit" class="btn btn-success">Registrar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Editar un registro ya cargado -->
+<div class="modal fade" id="modal-editar" tabindex="-1">
+    <div class="modal-dialog">
+        <form class="modal-content" method="POST" action="{{ url_for('calendario_editar') }}">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil"></i> Editar registro</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="registro_id" id="ed-registro">
+                <p class="mb-3"><strong id="ed-titulo"></strong></p>
+
+                <div class="mb-3">
+                    <label class="form-label">¿Qué día se hizo?</label>
+                    <input type="date" class="form-control" name="fecha" id="ed-fecha"
+                           max="{{ hoy }}" required>
+                </div>
+
+                <div class="mb-3" id="ed-vigencia-campo" hidden>
+                    <label class="form-label">¿Por cuánto tiempo te la dieron?</label>
+                    <select class="form-control" name="meses_vigencia" id="ed-vigencia">
+                        {% for m in meses_vtv %}
+                            <option value="{{ m }}">{{ m }} meses</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="mb-3" id="ed-km-campo" hidden>
+                    <label class="form-label">Kilometraje al hacerlo</label>
+                    <input type="number" class="form-control" name="kilometraje" id="ed-km"
+                           min="0" step="1">
+                </div>
+
+                <div class="mb-3" id="ed-items-campo" hidden>
+                    <label class="form-label">¿Qué se cambió?</label>
+                    <div class="reg-items" id="ed-items"></div>
+                    <input type="text" class="form-control mt-2" name="otros" id="ed-otros"
+                           placeholder="Otra cosa que se haya cambiado">
+                </div>
+
+                <div class="mb-0">
+                    <label class="form-label">
+                        Observación <span class="text-muted">(opcional)</span>
+                    </label>
+                    <input type="text" class="form-control" name="observacion" id="ed-obs">
+                </div>
+
+                <p class="text-muted small mt-3 mb-0">
+                    <i class="bi bi-info-circle"></i>
+                    Al guardar se vuelve a calcular el próximo vencimiento.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Guardar cambios</button>
             </div>
         </form>
     </div>
@@ -615,22 +733,94 @@
             detalles.some(d => d.hidden) ? 'Desplegar todas' : 'Plegar todas';
     }
 
-    function abrirRegistrar(camionetaId, tipo, patente, etiqueta, kmActual, venceporKm) {
+    // Que pide cada tipo de vencimiento. Viene del servidor para no repetir
+    // aca la misma tabla que ya vive en app.py.
+    const TIPOS = {{ tipos_js|tojson }};
+
+    // Arma las casillas de "que se cambio" (solo el service las usa).
+    function pintarItems(contenedorId, items, marcados) {
+        const contenedor = document.getElementById(contenedorId);
+        contenedor.innerHTML = items.map((item, i) => `
+            <label class="reg-item">
+                <input type="checkbox" name="items" value="${item}"
+                       ${marcados.includes(item) ? 'checked' : ''}>
+                <span>${item}</span>
+            </label>`).join('');
+    }
+
+    // Muestra u oculta los campos segun el tipo, en el modal que se le pase.
+    // Lo comparten registrar y editar: un solo lugar decide que se pide.
+    function armarCampos(prefijo, tipo, opciones) {
+        const config = TIPOS[tipo] || {};
+        opciones = opciones || {};
+
+        const vigencia = document.getElementById(prefijo + '-vigencia-campo');
+        vigencia.hidden = !config.vigencia_variable;
+        document.getElementById(prefijo + '-vigencia').required = !!config.vigencia_variable;
+        if (config.vigencia_variable && opciones.meses) {
+            document.getElementById(prefijo + '-vigencia').value = opciones.meses;
+        }
+
+        const km = document.getElementById(prefijo + '-km-campo');
+        km.hidden = !config.pide_km;
+        const campoKm = document.getElementById(prefijo + '-km');
+        campoKm.required = !!(config.pide_km && config.periodicidad_km);
+        if (!config.pide_km) campoKm.value = '';
+
+        const items = document.getElementById(prefijo + '-items-campo');
+        const tieneItems = (config.items || []).length > 0;
+        items.hidden = !tieneItems;
+        if (tieneItems) {
+            // Lo que ya estaba cargado y no esta en la lista va a "otros":
+            // asi editar no pierde lo que alguien escribio a mano.
+            const previos = opciones.detalle
+                ? opciones.detalle.split(',').map(t => t.trim()).filter(Boolean)
+                : [];
+            const conocidos = previos.filter(t => config.items.includes(t));
+            const otros = previos.filter(t => !config.items.includes(t));
+            pintarItems(prefijo + '-items', config.items, conocidos);
+            document.getElementById(prefijo + '-otros').value = otros.join(', ');
+        }
+    }
+
+    function abrirRegistrar(camionetaId, tipo, patente, etiqueta, kmActual) {
         document.getElementById('reg-camioneta').value = camionetaId;
         document.getElementById('reg-tipo').value = tipo;
         document.getElementById('reg-titulo').textContent = `${etiqueta} de ${patente}`;
         document.getElementById('reg-fecha').value = HOY;
+        document.getElementById('reg-obs').value = '';
 
-        // El kilometraje solo hace falta donde el vencimiento se cuenta por km.
-        // En el resto se ofrece igual, pero sin insistir.
-        const km = document.getElementById('reg-km');
-        km.value = kmActual !== null ? kmActual : '';
-        km.required = venceporKm;
-        document.getElementById('reg-km-ayuda').textContent = venceporKm
-            ? 'Obligatorio: de acá sale el próximo vencimiento por kilómetros.'
-            : 'Opcional, queda como dato del historial.';
+        const config = TIPOS[tipo] || {};
+        document.getElementById('reg-ayuda').textContent = config.ayuda || '';
+
+        armarCampos('reg', tipo, {});
+
+        if (config.pide_km) {
+            document.getElementById('reg-km').value = kmActual !== null ? kmActual : '';
+            document.getElementById('reg-km-ayuda').textContent = config.periodicidad_km
+                ? 'Obligatorio: de acá sale el próximo vencimiento por kilómetros.'
+                : 'Opcional, queda como dato del historial.';
+        }
 
         new bootstrap.Modal(document.getElementById('modal-registrar')).show();
+    }
+
+    function abrirEditar(registro) {
+        const config = TIPOS[registro.tipo] || {};
+        document.getElementById('ed-registro').value = registro.id;
+        document.getElementById('ed-titulo').textContent =
+            `${config.etiqueta || registro.tipo} de ${registro.patente}`;
+        document.getElementById('ed-fecha').value = registro.fecha_realizado || '';
+        document.getElementById('ed-obs').value = registro.observacion || '';
+        document.getElementById('ed-km').value =
+            registro.km_realizado !== null ? registro.km_realizado : '';
+
+        armarCampos('ed', registro.tipo, {
+            meses: registro.meses_vigencia,
+            detalle: registro.detalle
+        });
+
+        new bootstrap.Modal(document.getElementById('modal-editar')).show();
     }
 
     function abrirConfigurar(f) {

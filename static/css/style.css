@@ -1969,7 +1969,13 @@ section h2 {
     top: 0;
     left: 0;
     width: 270px;
+    /* 100vh en el celular mide MAS que la pantalla visible: no descuenta la
+       barra de direcciones del navegador. Con eso el pie (nombre + Salir) y
+       los ultimos links quedaban abajo del corte y no habia forma de llegar.
+       100dvh sigue el alto real que se ve en cada momento. El 100vh queda
+       arriba como respaldo para navegadores viejos que no entienden dvh. */
     height: 100vh;
+    height: 100dvh;
     background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
     color: white;
     z-index: 1000;
@@ -1977,7 +1983,7 @@ section h2 {
     flex-direction: column;
     transition: transform 0.3s ease;
     box-shadow: 2px 0 10px rgba(0,0,0,0.2);
-    overflow-y: hidden;  /* ✅ Elimina scroll lateral */
+    overflow: hidden;  /* el scroll vive en .sidebar-nav, no acá */
 }
 
 .admin-sidebar .sidebar-header {
@@ -1999,9 +2005,12 @@ section h2 {
 
 .sidebar-nav {
     flex: 1;
+    min-height: 0;  /* sin esto un hijo flex no se encoge y el scroll no aparece */
     padding: 10px 0;
-    overflow-y: auto;  /* ✅ Scroll solo en el nav si es necesario */
-    overflow-x: hidden;  /* ✅ Elimina scroll horizontal */
+    overflow-y: auto;  /* el encabezado y el pie quedan fijos; scrollea solo la lista */
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;  /* scroll con inercia en iOS */
+    overscroll-behavior: contain;  /* llegar al final no arrastra la página de atrás */
 }
 
 /* ✅ Ocultar scrollbar pero permitir scroll (opcional) */
@@ -2927,4 +2936,716 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
     color: #868e96;
     font-weight: 400;
     font-style: italic;
+}
+
+/* ============================================
+   SELECTOR DE MODULOS (entre el login y el panel)
+   ============================================ */
+.modulos-body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: linear-gradient(160deg, #1a1a2e 0%, #16213e 55%, #0f3460 100%);
+}
+
+.modulos-container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 40px 16px 60px 16px;
+}
+
+.modulos-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 32px;
+}
+
+.modulos-header h1 {
+    margin: 0;
+    color: #fff;
+    font-size: 2rem;
+    letter-spacing: -0.5px;
+}
+
+.modulos-header p {
+    margin: 6px 0 0 0;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.modulos-grilla {
+    display: grid;
+    /* auto-fit + minmax: 4 columnas en escritorio, 2 en tablet y 1 en celular,
+       sin escribir un media query por cada corte. */
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px;
+}
+
+.modulo-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 22px 20px;
+    border-radius: 14px;
+    background: #fff;
+    border-top: 4px solid var(--modulo-color, #667eea);
+    text-decoration: none;
+    color: #222;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+}
+
+.modulo-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+    text-decoration: none;
+    color: #222;
+}
+
+.modulo-icono {
+    font-size: 2rem;
+    line-height: 1;
+    color: var(--modulo-color, #667eea);
+}
+
+.modulo-nombre {
+    font-size: 1.15rem;
+    font-weight: 600;
+}
+
+.modulo-descripcion {
+    font-size: 0.85rem;
+    color: #666;
+    flex: 1;  /* empuja el pie de la tarjeta abajo: todas quedan parejas */
+}
+
+.modulo-entrar {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--modulo-color, #667eea);
+}
+
+/* Modulo sin desarrollar: se ve, pero se nota que no se entra. */
+.modulo-card-inactivo {
+    background: #ebebef;
+    border-top-color: #b8b8c2;
+    box-shadow: none;
+    cursor: default;
+}
+
+.modulo-card-inactivo:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.modulo-card-inactivo .modulo-icono,
+.modulo-card-inactivo .modulo-nombre {
+    color: #8b8b96;
+}
+
+.modulo-card-inactivo .badge-proximamente {
+    align-self: flex-start;
+    background: #ffc107;
+    color: #000;
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 10px;
+}
+
+/* Volver al selector desde adentro de un modulo. */
+.sidebar-volver {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin-top: 6px;
+    padding-top: 6px;
+}
+
+/* ============================================
+   HISTORIAL - TARJETAS Y LISTA DE CONTROLES
+   ============================================ */
+.hist-tarjetas {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 14px;
+    margin-bottom: 8px;
+}
+
+.hist-tarjeta {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 15px 16px;
+    border: 1px solid #e3e3ea;
+    border-left: 4px solid #667eea;
+    border-radius: 10px;
+    background: #fff;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.hist-tarjeta:hover {
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+
+/* La camioneta cuyo historial se esta mirando abajo. */
+.hist-tarjeta.activa {
+    border-color: #667eea;
+    border-left-width: 6px;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.25);
+}
+
+.hist-tarjeta-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.hist-patente {
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.hist-tarjeta-dato {
+    font-size: 0.83rem;
+    color: #555;
+}
+
+.hist-tarjeta-pie {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid #f0f0f4;
+    font-size: 0.78rem;
+    color: #777;
+}
+
+/* ---------- Filtros ---------- */
+.hist-filtros {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    margin-bottom: 16px;
+}
+
+.hist-filtro {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 130px;
+    flex: 1 1 130px;
+}
+
+.hist-filtro label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #666;
+    margin: 0;
+}
+
+.hist-filtro-accion {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+/* ---------- Lista de controles ---------- */
+.hist-lista {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.hist-item {
+    border: 1px solid #e6e6ec;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.hist-item.abierto {
+    border-color: #667eea;
+}
+
+.hist-item-cabecera {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    padding: 11px 14px;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+}
+
+.hist-item-cabecera:hover {
+    background: #f7f8fc;
+}
+
+.hist-item-fecha {
+    font-weight: 600;
+    min-width: 140px;
+}
+
+.hist-item-patente {
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}
+
+.hist-item-tecnico {
+    color: #666;
+    font-size: 0.88rem;
+}
+
+.hist-item-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.hist-chip-fotos {
+    color: #0d6efd;
+}
+
+.hist-item-flecha {
+    transition: transform 0.2s ease;
+    color: #999;
+}
+
+.hist-item.abierto .hist-item-flecha {
+    transform: rotate(180deg);
+}
+
+.hist-item-detalle {
+    padding: 4px 14px 14px 14px;
+    border-top: 1px solid #f0f0f4;
+    background: #fbfbfd;
+}
+
+.hist-observacion {
+    font-size: 0.87rem;
+    color: #444;
+    background: #fff8e1;
+    border-left: 3px solid #ffc107;
+    padding: 7px 10px;
+    border-radius: 4px;
+}
+
+.hist-tabla {
+    margin-bottom: 0;
+}
+
+.hist-pie {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.hist-cantidad {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.hist-cantidad label {
+    margin: 0;
+    white-space: nowrap;
+}
+
+.hist-cantidad select {
+    width: auto;
+}
+
+/* ---------- Carpeta de fotos del control ---------- */
+.hist-fotos {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px dashed #dcdce4;
+}
+
+.hist-fotos-titulo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+}
+
+.hist-fotos-grilla {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+}
+
+.hist-foto {
+    margin: 0;
+    border: 1px solid #e3e3ea;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.hist-foto img {
+    display: block;
+    width: 100%;
+    height: 100px;
+    object-fit: cover;
+}
+
+.hist-foto figcaption {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    color: #555;
+}
+
+/* Posicion obligatoria que nunca se saco: se muestra igual para que se note
+   el hueco, en vez de desaparecer de la carpeta. */
+.hist-foto-falta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 132px;
+    background: #f3f3f7;
+    color: #a0a0ad;
+    border-style: dashed;
+}
+
+.hist-foto-falta figcaption {
+    justify-content: center;
+}
+
+/* ============================================
+   ACTIVIDADES COORDINADAS - LISTADO DE SOPORTE
+   ============================================ */
+.act-resumen {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-bottom: 16px;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+.act-resumen-item strong {
+    font-size: 1.2rem;
+    color: #333;
+}
+
+.act-resumen-item.act-ok strong { color: #198754; }
+.act-resumen-item.act-mal strong { color: #dc3545; }
+
+.act-filtros {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.act-filtro {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 130px;
+    flex: 1 1 130px;
+}
+
+.act-filtro label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #666;
+    margin: 0;
+}
+
+.act-filtro-acciones {
+    flex: 0 0 auto;
+    min-width: 0;
+    flex-direction: row;
+    gap: 8px;
+}
+
+.act-item {
+    padding: 12px 14px;
+    border: 1px solid #e6e6ec;
+    border-left: 4px solid #adb5bd;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    background: #fff;
+}
+
+.act-item.act-resuelta { border-left-color: #198754; }
+.act-item.act-no_resuelta { border-left-color: #dc3545; }
+.act-item.act-pendiente { border-left-color: #0d6efd; }
+
+.act-item-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.act-fecha {
+    font-weight: 600;
+    font-size: 0.88rem;
+}
+
+.act-acciones {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.act-mensaje {
+    white-space: pre-wrap;  /* respeta los saltos de linea que escribio soporte */
+    font-size: 0.93rem;
+    color: #222;
+}
+
+.act-meta {
+    font-size: 0.76rem;
+    color: #888;
+    margin-top: 4px;
+}
+
+/* La respuesta del tecnico, para que se lea distinto del pedido original. */
+.act-resolucion {
+    margin-top: 10px;
+    padding: 9px 12px;
+    background: #f1f8f4;
+    border-left: 3px solid #198754;
+    border-radius: 4px;
+    font-size: 0.88rem;
+}
+
+.act-item.act-no_resuelta .act-resolucion {
+    background: #fdf1f2;
+    border-left-color: #dc3545;
+}
+
+.act-editar {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed #dcdce4;
+}
+
+/* Globito de avisos en el sidebar (actividades resueltas sin mirar). */
+.sidebar-link .sidebar-badge {
+    margin-left: auto;
+    flex-shrink: 0;
+    background: #dc3545;
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+}
+
+/* ============================================
+   JUSTIFICAR UN CONTROL QUE NUNCA SE HIZO
+   ============================================ */
+.just-fondo {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 1060;
+}
+
+.just-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1070;
+    width: min(440px, calc(100vw - 32px));
+    max-height: 90dvh;
+    overflow-y: auto;
+    background: #fff;
+    border-radius: 12px;
+    padding: 22px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.just-modal h5 {
+    margin: 0 0 4px 0;
+}
+
+.just-lote {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 0.88rem;
+    margin: 4px 0 12px 0;
+    cursor: pointer;
+}
+
+.just-lote input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.just-aviso {
+    background: #eef3ff;
+    border-left: 3px solid #667eea;
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 16px;
+}
+
+.just-botones {
+    display: flex;
+    gap: 8px;
+}
+
+/* ============================================
+   INICIO DE SOPORTE
+   ============================================ */
+.inicio-grilla {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.inicio-tarjeta {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 18px;
+    background: #fff;
+    border: 1px solid #e6e6ec;
+    border-left: 4px solid #adb5bd;
+    border-radius: 10px;
+}
+
+/* Rojo: traba la operacion ahora. Amarillo: hay que resolverlo, no urge. */
+.inicio-tarjeta.inicio-alerta { border-left-color: #dc3545; }
+.inicio-tarjeta.inicio-aviso { border-left-color: #ffc107; }
+
+.inicio-tarjeta-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.inicio-titulo {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.inicio-numero {
+    font-size: 1.7rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.inicio-numero small {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #999;
+}
+
+.inicio-alerta .inicio-numero { color: #dc3545; }
+.inicio-aviso .inicio-numero { color: #b8860b; }
+
+.inicio-lista {
+    list-style: none;
+    margin: 0 0 8px 0;
+    padding: 0;
+    font-size: 0.83rem;
+    color: #555;
+}
+
+.inicio-lista li {
+    padding: 4px 0;
+    border-bottom: 1px solid #f4f4f8;
+}
+
+.inicio-lista li:last-child {
+    border-bottom: none;
+}
+
+.inicio-pie {
+    font-size: 0.82rem;
+    color: #666;
+    margin: 0 0 8px 0;
+}
+
+.inicio-pie-alerta {
+    color: #b02a37;
+    font-weight: 500;
+}
+
+.inicio-vacio {
+    font-size: 0.85rem;
+    color: #198754;
+    margin: 0 0 8px 0;
+}
+
+/* Empuja el "ir a" al pie: todas las tarjetas lo tienen a la misma altura. */
+.inicio-ir {
+    margin-top: auto;
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: #667eea;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.inicio-ir:hover {
+    text-decoration: underline;
+    color: #4c5bd4;
+}
+
+/* Casillas de "que se cambio" en el service. */
+.reg-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+    gap: 6px 12px;
+}
+
+.reg-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.85rem;
+    margin: 0;
+    cursor: pointer;
+}
+
+.reg-item input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
 }

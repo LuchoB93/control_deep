@@ -13,8 +13,8 @@
     <div class="seccion-header">
         <h1><i class="bi bi-chat-left-text"></i> Actividades coordinadas</h1>
         <p class="text-muted">
-            Reclamos y trabajos que hay que avisarle a un técnico o a toda una zona.
-            El técnico los ve en su panel.
+            Reclamos y trabajos que hay que avisarle a un técnico. Él los ve en su
+            panel y los cierra contando qué hizo.
         </p>
         <a href="{{ url_for('admin') }}" class="btn btn-secondary btn-sm">
             <i class="bi bi-arrow-left"></i> Volver al panel
@@ -24,66 +24,118 @@
     {% if mensaje %}<div class="alert alert-success">{{ mensaje }}</div>{% endif %}
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
 
+    <div class="act-resumen">
+        <span class="act-resumen-item">
+            <strong>{{ conteo['PENDIENTE'] }}</strong> pendientes
+        </span>
+        <span class="act-resumen-item act-ok">
+            <strong>{{ conteo['RESUELTA'] }}</strong> resueltas
+        </span>
+        <span class="act-resumen-item act-mal">
+            <strong>{{ conteo['NO_RESUELTA'] }}</strong> sin resolver
+        </span>
+    </div>
+
     <!-- Alta -->
     <div class="card mb-3">
         <div class="card-header"><strong><i class="bi bi-plus-circle"></i> Nueva actividad</strong></div>
         <div class="card-body">
             <form method="POST" action="{{ url_for('reclamos_crear') }}" class="reclamo-form">
-    <div class="reclamo-fila">
-        <div class="reclamo-campo">
-            <label for="destino_tipo">¿Para quién?</label>
-            <select name="destino_tipo" id="destino_tipo" onchange="cambiarDestino()">
-                <option value="persona">Un técnico</option>
-                <option value="zona">Una zona</option>
-            </select>
-        </div>
+                <div class="reclamo-fila">
+                    <div class="reclamo-campo">
+                        <label for="destino_usuario_id">Técnico</label>
+                        <select name="destino_usuario_id" id="destino_usuario_id" required>
+                            {% for t in tecnicos %}
+                                <option value="{{ t.id }}">{{ t.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
 
-        <div class="reclamo-campo" id="campo-persona">
-            <label for="destino_usuario_id">Técnico</label>
-            <select name="destino_usuario_id" id="destino_usuario_id">
-                {% for t in tecnicos %}
-                    <option value="{{ t.id }}">{{ t.nombre }}</option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <div class="reclamo-campo" id="campo-zona" hidden>
-            <label for="destino_zona">Zona</label>
-            <select name="destino_zona" id="destino_zona">
-                {% for z in zonas %}
-                    <option value="{{ z.nombre }}">{{ z.nombre }}</option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <div class="reclamo-campo">
-            <label for="fecha">Día</label>
-            <input type="date" name="fecha" id="fecha" value="{{ hoy }}">
-        </div>
-    </div>
-
-    <div class="reclamo-campo">
-        <label for="mensaje">Mensaje</label>
-        <textarea name="mensaje" id="mensaje" rows="4" required
-                  placeholder="Ej: OL: Nap final muerta. Cambiar f8 unos 150 mts de nap anterior final. Calle Córdoba 245."></textarea>
-    </div>
-
-    <div>
-        <button type="submit" class="btn btn-primary">
-            <i class="bi bi-send"></i> Cargar actividad
-        </button>
-    </div>
-</form>
+                    <div class="reclamo-campo">
+                        <label for="fecha">Día</label>
+                        <input type="date" name="fecha" id="fecha" value="{{ hoy }}">
+                    </div>
+                </div>
 
                 <div class="reclamo-campo">
                     <label for="mensaje">Mensaje</label>
-                    <textarea name="mensaje" id="mensaje" class="form-control" rows="3" required
+                    <textarea name="mensaje" id="mensaje" rows="4" required
                               placeholder="Ej: OL: Nap final muerta. Cambiar f8 unos 150 mts de nap anterior final. Calle Córdoba 245."></textarea>
                 </div>
 
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-send"></i> Cargar actividad
-                </button>
+                <div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-send"></i> Cargar actividad
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="card mb-3">
+        <div class="card-header"><strong><i class="bi bi-funnel"></i> Filtrar</strong></div>
+        <div class="card-body">
+            <form method="GET" action="{{ url_for('reclamos') }}" class="act-filtros">
+                <div class="act-filtro">
+                    <label for="f_tecnico">Técnico</label>
+                    <select name="f_tecnico" id="f_tecnico" class="form-control form-control-sm">
+                        <option value="">Todos</option>
+                        {% for t in tecnicos %}
+                            <option value="{{ t.id }}"
+                                    {% if filtros.tecnico == t.id|string %}selected{% endif %}>
+                                {{ t.nombre }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="act-filtro">
+                    <label for="f_zona">Zona</label>
+                    <select name="f_zona" id="f_zona" class="form-control form-control-sm">
+                        <option value="">Todas</option>
+                        {% for z in zonas %}
+                            <option value="{{ z.nombre }}"
+                                    {% if filtros.zona == z.nombre %}selected{% endif %}>
+                                {{ z.nombre }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="act-filtro">
+                    <label for="f_estado">Estado</label>
+                    <select name="f_estado" id="f_estado" class="form-control form-control-sm">
+                        <option value="">Todos</option>
+                        {% for clave, etiqueta in estados.items() %}
+                            <option value="{{ clave }}"
+                                    {% if filtros.estado == clave %}selected{% endif %}>
+                                {{ etiqueta }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="act-filtro">
+                    <label for="f_desde">Desde</label>
+                    <input type="date" name="f_desde" id="f_desde"
+                           class="form-control form-control-sm" value="{{ filtros.desde }}">
+                </div>
+
+                <div class="act-filtro">
+                    <label for="f_hasta">Hasta</label>
+                    <input type="date" name="f_hasta" id="f_hasta"
+                           class="form-control form-control-sm" value="{{ filtros.hasta }}">
+                </div>
+
+                <div class="act-filtro act-filtro-acciones">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-search"></i> Filtrar
+                    </button>
+                    <a href="{{ url_for('reclamos') }}" class="btn btn-secondary btn-sm">
+                        <i class="bi bi-x-circle"></i> Limpiar
+                    </a>
+                </div>
             </form>
         </div>
     </div>
@@ -91,57 +143,116 @@
     <!-- Listado -->
     <div class="card">
         <div class="card-header"><strong><i class="bi bi-list-ul"></i> Cargadas</strong></div>
-        <div class="table-responsive">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Día</th><th>Para</th><th>Mensaje</th><th>Cargó</th><th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for r in reclamos %}
-                        <tr>
-                            <td>{{ r.fecha }}</td>
-                            <td>
-                                {% if r.destino_tipo == 'zona' %}
-                                    <span class="badge badge-info">Zona {{ r.destino_zona }}</span>
-                                {% else %}
-                                    <span class="badge badge-primary">{{ r.destino_nombre }}</span>
-                                {% endif %}
-                            </td>
-                            <td class="reclamo-mensaje">{{ r.mensaje }}</td>
-                            <td>{{ r.creado_por or '—' }}</td>
-                            <td>
-                                <form method="POST" action="{{ url_for('reclamos_borrar') }}"
-                                      onsubmit="return confirm('¿Dar de baja esta actividad?');">
-                                    <input type="hidden" name="reclamo_id" value="{{ r.id }}">
-                                    <button type="submit" class="btn btn-danger btn-sm" title="Dar de baja">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
-                                </form>
-                            </td>
-                        </tr>
-                    {% else %}
-                        <tr>
-                            <td colspan="5" class="text-center text-muted reclamo-vacio">
-                                Todavía no hay actividades cargadas.
-                            </td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="card-body">
+            {% for r in reclamos %}
+                <div class="act-item act-{{ r.estado|lower }}">
+                    <div class="act-item-top">
+                        <span class="act-fecha"><i class="bi bi-calendar3"></i> {{ r.fecha }}</span>
+
+                        {% if r.destino_tipo == 'zona' %}
+                            {# Actividades viejas, de cuando se mandaban a una zona
+                               entera. Ya no se cargan nuevas, pero se siguen viendo. #}
+                            <span class="badge badge-info">Zona {{ r.destino_zona }}</span>
+                        {% else %}
+                            <span class="badge badge-primary">{{ r.destino_nombre }}</span>
+                        {% endif %}
+
+                        {% if r.estado == 'RESUELTA' %}
+                            <span class="badge bg-success"><i class="bi bi-check-lg"></i> Resuelta</span>
+                        {% elif r.estado == 'NO_RESUELTA' %}
+                            <span class="badge bg-danger"><i class="bi bi-x-lg"></i> No se pudo</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Pendiente</span>
+                        {% endif %}
+
+                        <span class="act-acciones">
+                            {% if r.estado == 'PENDIENTE' %}
+                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                        onclick="abrirEdicion({{ r.id }})" title="Editar">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            {% endif %}
+                            <form method="POST" action="{{ url_for('reclamos_borrar') }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('¿Dar de baja esta actividad?');">
+                                <input type="hidden" name="reclamo_id" value="{{ r.id }}">
+                                <button type="submit" class="btn btn-danger btn-sm" title="Dar de baja">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </span>
+                    </div>
+
+                    <div class="act-mensaje">{{ r.mensaje }}</div>
+
+                    <div class="act-meta">
+                        Cargó {{ r.creado_por or '—' }}
+                        {% if r.editado_por %}
+                            · editada por {{ r.editado_por }}
+                        {% endif %}
+                    </div>
+
+                    {% if r.estado != 'PENDIENTE' %}
+                        <div class="act-resolucion">
+                            <i class="bi bi-chat-right-quote"></i>
+                            <strong>{{ r.resuelto_por }}:</strong> {{ r.resolucion_comentario }}
+                            <span class="act-meta">
+                                {{ r.fecha_resolucion[:16]|replace('T', ' ') if r.fecha_resolucion }}
+                            </span>
+                        </div>
+                    {% endif %}
+
+                    {# Edición en línea: se despliega sobre la misma actividad, así
+                       no hay que ir a otra pantalla para corregir una palabra. #}
+                    {% if r.estado == 'PENDIENTE' %}
+                        <form method="POST" action="{{ url_for('reclamos_editar') }}"
+                              class="act-editar" id="act-editar-{{ r.id }}" hidden>
+                            <input type="hidden" name="reclamo_id" value="{{ r.id }}">
+                            <div class="reclamo-fila">
+                                <div class="reclamo-campo">
+                                    <label for="edit-tecnico-{{ r.id }}">Técnico</label>
+                                    <select name="destino_usuario_id" id="edit-tecnico-{{ r.id }}" required>
+                                        {% for t in tecnicos %}
+                                            <option value="{{ t.id }}"
+                                                    {% if r.destino_usuario_id == t.id %}selected{% endif %}>
+                                                {{ t.nombre }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="reclamo-campo">
+                                    <label for="edit-fecha-{{ r.id }}">Día</label>
+                                    <input type="date" name="fecha" id="edit-fecha-{{ r.id }}"
+                                           value="{{ r.fecha }}" required>
+                                </div>
+                            </div>
+                            <div class="reclamo-campo">
+                                <label for="edit-mensaje-{{ r.id }}">Mensaje</label>
+                                <textarea name="mensaje" id="edit-mensaje-{{ r.id }}"
+                                          rows="3" required>{{ r.mensaje }}</textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="bi bi-check-lg"></i> Guardar cambios
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm"
+                                    onclick="abrirEdicion({{ r.id }})">Cancelar</button>
+                        </form>
+                    {% endif %}
+                </div>
+            {% else %}
+                <p class="text-center text-muted reclamo-vacio">
+                    No hay actividades con esos filtros.
+                </p>
+            {% endfor %}
         </div>
     </div>
 </div>
 
 <script>
-    // Persona y zona son excluyentes: se muestra solo el campo que aplica.
-    function cambiarDestino() {
-        const tipo = document.getElementById('destino_tipo').value;
-        document.getElementById('campo-persona').hidden = tipo !== 'persona';
-        document.getElementById('campo-zona').hidden = tipo !== 'zona';
+    function abrirEdicion(id) {
+        const form = document.getElementById('act-editar-' + id);
+        if (form) form.hidden = !form.hidden;
     }
-    document.addEventListener('DOMContentLoaded', cambiarDestino);
 </script>
 </body>
 </html>

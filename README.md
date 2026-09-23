@@ -53,6 +53,45 @@ ambos al principio de `app.py`.
 | `CONTROL_PORT` | `5000` | Puerto |
 | `CONTROL_DEBUG` | `0` | `1` activa el modo debug. **Nunca en producción**: expone una consola que permite ejecutar código en el servidor |
 
+## Varias personas a la vez
+
+**Una sola maquina corre el servidor.** El resto entra por el navegador a la
+direccion de esa maquina; no ejecutan nada. Es la unica forma de que todos vean
+la misma informacion: `database.db` esta en `.gitignore` y no se versiona, asi
+que si cada uno corre `python app.py` en su PC, cada uno se crea una base vacia
+propia y nunca ven lo mismo.
+
+En la maquina que hace de servidor:
+
+```
+servidor.bat
+```
+
+Ese script levanta waitress y muestra la direccion de la red (algo como
+`http://192.168.1.147:5000`). Los demas la abren en el navegador del celular o
+de la otra compu, estando en la misma red Wi-Fi.
+
+La primera vez, Windows pregunta si permite el acceso: hay que aceptar para la
+red **privada** y la **publica**, si no el firewall corta las conexiones de los
+otros dispositivos.
+
+Si desde otro dispositivo no carga:
+
+| Sintoma | Causa habitual |
+|---|---|
+| No carga / tarda y corta | Firewall de Windows, o el router tiene aislamiento de clientes activado |
+| Carga pero los datos son distintos | La otra persona esta corriendo su propia copia del servidor |
+| Los saca a todos cada tanto | `CONTROL_SECRET_KEY` cambio: cada reinicio con clave nueva cierra las sesiones |
+
+La clave de sesion vive en `.env`, que no se versiona. Si no existe, se genera
+una al azar en cada arranque y las sesiones se cierran en cada reinicio:
+
+```
+CONTROL_SECRET_KEY=<clave larga y aleatoria>
+```
+
+Se genera con `python -c "import secrets; print(secrets.token_hex(32))"`.
+
 ## Desarrollo
 
 ```bash

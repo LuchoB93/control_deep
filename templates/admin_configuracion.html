@@ -137,7 +137,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            <a href="{{ url_for('historial_camioneta', patente=c.patente) }}"
+                            <a href="{{ url_for('admin', seccion='historial', patente=c.patente) }}"
                                class="btn btn-sm btn-outline-info">Historial</a>
                             <form method="POST" action="{{ url_for('config_camionetas') }}" class="d-inline"
                                   onsubmit="return confirm('¿Cambiar el estado de {{ c.patente }}?')">

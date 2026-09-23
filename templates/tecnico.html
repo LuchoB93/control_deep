@@ -155,35 +155,7 @@
                         avisa a soporte.
                     </p>
 
-                    {% if camionetas_urgencia %}
-                        <form method="POST" action="{{ url_for('retiro_urgencia') }}"
-                              class="urgencia-form"
-                              onsubmit="return confirm('¿Retirar esta camioneta de urgencia? Se le avisa a soporte.');">
-                            <div class="urgencia-campo">
-                                <label for="camioneta_urgencia">Camioneta</label>
-                                <select name="camioneta_id" id="camioneta_urgencia"
-                                        class="form-select" required>
-                                    <option value="">Elegí una</option>
-                                    {% for c in camionetas_urgencia %}
-                                        {% if not c.ya_la_tengo %}
-                                            <option value="{{ c.id }}">
-                                                {{ c.patente }}{% if c.asignada_a %} — asignada a {{ c.asignada_a }} en este turno{% endif %}
-                                            </option>
-                                        {% endif %}
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="urgencia-campo">
-                                <label for="motivo_urgencia">¿Para qué la necesitás?</label>
-                                <input type="text" name="motivo" id="motivo_urgencia"
-                                       class="form-control" required
-                                       placeholder="Ej: reclamo urgente en Córdoba 245">
-                            </div>
-                            <button type="submit" class="btn btn-dark">
-                                <i class="bi bi-box-arrow-right"></i> Retirar de urgencia
-                            </button>
-                        </form>
-                    {% else %}
+                    {% if not camionetas_urgencia %}
                         <div class="alert alert-warning mb-0">
                             <i class="bi bi-exclamation-triangle"></i>
                             Ahora mismo no hay camionetas libres: están todas retiradas por
@@ -204,21 +176,61 @@
                         <span class="badge bg-light text-primary">{{ actividades|length }}</span>
                     </h5>
                 </div>
-                <div class="card-body">
+                                <div class="card-body">
                     {% for a in actividades %}
                         <div class="actividad-item {{ 'actividad-zona' if a.destino_tipo == 'zona' }}">{{ a.mensaje }}<span class="actividad-meta">
-                                {{ a.fecha }} ·
+                                {{ a.fecha }} &middot;
                                 {% if a.destino_tipo == 'zona' %}
                                     para toda la zona {{ a.destino_zona }}
                                 {% else %}
                                     para vos
                                 {% endif %}
-                                {% if a.creado_por %}· cargó {{ a.creado_por }}{% endif %}
+                                {% if a.creado_por %}&middot; cargó {{ a.creado_por }}{% endif %}
                             </span>
+
+                            {# Cerrarla es obligatorio para que desaparezca: soporte
+                               necesita saber si se hizo, y el comentario es lo que
+                               le evita tener que llamar para preguntar. #}
+                            <div class="actividad-acciones">
+                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                        onclick="abrirCierre({{ a.id }})">
+                                    <i class="bi bi-check2-square"></i> Cerrar actividad
+                                </button>
+                            </div>
+
+                            <form method="POST" action="{{ url_for('reclamos_resolver') }}"
+                                  class="actividad-cierre" id="cierre-{{ a.id }}" hidden>
+                                <input type="hidden" name="reclamo_id" value="{{ a.id }}">
+
+                                <div class="actividad-cierre-opciones">
+                                    <label>
+                                        <input type="radio" name="estado" value="RESUELTA" required>
+                                        La resolví
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="estado" value="NO_RESUELTA">
+                                        No la pude resolver
+                                    </label>
+                                </div>
+
+                                <label for="comentario-{{ a.id }}" class="actividad-cierre-label">
+                                    Contá qué hiciste, o por qué no se pudo
+                                </label>
+                                <textarea name="comentario" id="comentario-{{ a.id }}"
+                                          class="form-control" rows="2" required
+                                          placeholder="Ej: cambiado el f8, cliente con señal OK"></textarea>
+
+                                <div class="actividad-cierre-botones">
+                                    <button type="submit" class="btn btn-primary btn-sm">
+                                        <i class="bi bi-send"></i> Enviar a soporte
+                                    </button>
+                                    <button type="button" class="btn btn-secondary btn-sm"
+                                            onclick="abrirCierre({{ a.id }})">Cancelar</button>
+                                </div>
+                            </form>
                         </div>
                     {% endfor %}
                 </div>
-            </div>
         {% endif %}
 
         {# Retiros que quedaron sin completar. Van fuera del if de asignación:
@@ -570,6 +582,69 @@
             </div>
         {% endif %}
 
+        {# Retiro de urgencia: vive al pie porque es la excepción, no la tarea
+           del día. El botón abre una hoja desde abajo para que se pueda
+           completar con el pulgar, sin scrollear hasta la tarjeta de guardia. #}
+        {% if de_guardia and camionetas_urgencia %}
+            <div class="urgencia-pie">
+                <button type="button" class="btn btn-dark urgencia-abrir"
+                        onclick="abrirUrgencia()">
+                    <i class="bi bi-box-arrow-right"></i>
+                    Retirar una camioneta de urgencia
+                </button>
+                <p class="urgencia-pie-ayuda">
+                    Salís de guardia y necesitás una camioneta que no tenés asignada.
+                </p>
+            </div>
+
+            <div class="urgencia-fondo" id="urgencia-fondo" hidden
+                 onclick="cerrarUrgencia()"></div>
+
+            <div class="urgencia-hoja" id="urgencia-hoja" hidden
+                 role="dialog" aria-modal="true" aria-labelledby="urgencia-titulo">
+                <div class="urgencia-hoja-barra"></div>
+
+                <div class="urgencia-hoja-header">
+                    <h5 id="urgencia-titulo" class="mb-0">
+                        <i class="bi bi-shield-check"></i> Retiro de urgencia
+                    </h5>
+                    <button type="button" class="urgencia-cerrar" aria-label="Cerrar"
+                            onclick="cerrarUrgencia()">&times;</button>
+                </div>
+
+                <form method="POST" action="{{ url_for('retiro_urgencia') }}"
+                      class="urgencia-form"
+                      onsubmit="return confirm('¿Retirar esta camioneta de urgencia? Se le avisa a soporte.');">
+                    <p class="text-muted small">
+                        Queda registrado como salida de guardia y se le avisa a soporte.
+                    </p>
+                    <div class="urgencia-campo">
+                        <label for="camioneta_urgencia">Camioneta</label>
+                        <select name="camioneta_id" id="camioneta_urgencia"
+                                class="form-select" required>
+                            <option value="">Elegí una</option>
+                            {% for c in camionetas_urgencia %}
+                                {% if not c.ya_la_tengo %}
+                                    <option value="{{ c.id }}">
+                                        {{ c.patente }}{% if c.asignada_a %} — asignada a {{ c.asignada_a }} en este turno{% endif %}
+                                    </option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="urgencia-campo">
+                        <label for="motivo_urgencia">¿Para qué la necesitás?</label>
+                        <input type="text" name="motivo" id="motivo_urgencia"
+                               class="form-control" required
+                               placeholder="Ej: reclamo urgente en Córdoba 245">
+                    </div>
+                    <button type="submit" class="btn btn-dark btn-block">
+                        <i class="bi bi-box-arrow-right"></i> Retirar de urgencia
+                    </button>
+                </form>
+            </div>
+        {% endif %}
+
         <!-- Botón Volver al Inicio (adicional) -->
         <div class="text-center mt-4">
             <a href="{{ url_for('distribucion') }}" class="btn btn-outline-primary">
@@ -586,6 +661,53 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // ==========================================
+        // CIERRE DE ACTIVIDADES COORDINADAS
+        // ==========================================
+
+        function abrirCierre(id) {
+            const form = document.getElementById('cierre-' + id);
+            if (form) form.hidden = !form.hidden;
+        }
+
+        // ==========================================
+        // RETIRO DE URGENCIA (hoja deslizante)
+        // ==========================================
+
+        function abrirUrgencia() {
+            const hoja = document.getElementById('urgencia-hoja');
+            const fondo = document.getElementById('urgencia-fondo');
+            if (!hoja || !fondo) return;
+            fondo.hidden = false;
+            hoja.hidden = false;
+            // El reflow fuerza a que el navegador dibuje la hoja abajo antes de
+            // agregar la clase: sin esto aparece de golpe, sin animacion.
+            void hoja.offsetHeight;
+            fondo.classList.add('visible');
+            hoja.classList.add('visible');
+            document.body.classList.add('sin-scroll');
+        }
+
+        function cerrarUrgencia() {
+            const hoja = document.getElementById('urgencia-hoja');
+            const fondo = document.getElementById('urgencia-fondo');
+            if (!hoja || !fondo) return;
+            hoja.classList.remove('visible');
+            fondo.classList.remove('visible');
+            document.body.classList.remove('sin-scroll');
+            // Se oculta recién cuando terminó de bajar, para no cortar la animación.
+            setTimeout(function () {
+                if (!hoja.classList.contains('visible')) {
+                    hoja.hidden = true;
+                    fondo.hidden = true;
+                }
+            }, 300);
+        }
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') cerrarUrgencia();
+        });
+
         // ==========================================
         // FUNCIONES DE NOTIFICACIONES - TÉCNICO
         // ==========================================

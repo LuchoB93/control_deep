@@ -84,6 +84,16 @@
                             onclick="forzarControl({{ p.camioneta_id }}, '{{ p.tipo }}', '{{ p.patente }}', '{{ p.tecnico }}')">
                         <i class="bi bi-unlock"></i> Liberar
                     </button>
+                    {# Distinto de Liberar: aca la camioneta NO salio (feriado,
+                       ausencia, taller), asi que no hay nada que controlar.
+                       Solo aplica al retiro: una devolucion pendiente significa
+                       que la camioneta si salio y alguien la tiene. #}
+                    {% if p.tipo == 'RETIRO' and p.asignacion_id %}
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="justificarControl({{ p.asignacion_id }}, '{{ p.patente }}', '{{ p.fecha }}')">
+                            <i class="bi bi-calendar-x"></i> No salió
+                        </button>
+                    {% endif %}
                     <button type="button" class="alerta-cerrar" title="Descartar alerta"
                             onclick="descartarControl(this)">&times;</button>
                 </div>
