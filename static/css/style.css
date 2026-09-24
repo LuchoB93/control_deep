@@ -1,4 +1,17 @@
 /* ============================================
+   BASE
+   ============================================ */
+
+/* El atributo hidden tiene que ganar siempre. El navegador lo aplica con
+   display:none desde su hoja base, que es lo mas debil que hay: alcanza con
+   que una regla propia defina display para que el elemento vuelva a
+   aparecer. Paso con el visor de fotos, que tenia display:flex y quedaba
+   invisible pero tapando la pantalla entera y bloqueando todos los clics. */
+[hidden] {
+    display: none !important;
+}
+
+/* ============================================
    SISTEMA DE CONTROL DE CAMIONETAS
    Estilos principales
    ============================================ */

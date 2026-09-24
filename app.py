@@ -1139,6 +1139,24 @@ def autorizado(*roles):
     return rol == 'admin' or rol in roles
 
 
+
+@app.url_defaults
+def versionar_estaticos(endpoint, valores):
+    """Le agrega ?v=<fecha del archivo> a las URL de /static.
+
+    Sin esto, despues de cambiar el CSS habia que recargar con Ctrl+F5 para
+    ver el cambio, y quien no lo supiera seguia viendo la pantalla vieja.
+    """
+    if endpoint != 'static' or 'filename' not in valores:
+        return
+    try:
+        archivo = Path(app.static_folder) / valores['filename']
+        valores['v'] = int(archivo.stat().st_mtime)
+    except (OSError, TypeError):
+        # Si el archivo no esta, se deja la URL como venia: es preferible
+        # servirlo sin version que romper el render de la pagina entera.
+        pass
+
 @app.after_request
 def no_guardar_en_cache(respuesta):
     """Evita que el botón "atrás" muestre una pantalla de una sesión cerrada.
