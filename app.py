@@ -290,8 +290,9 @@ TIPOS_VENCIMIENTO = {
         'pide_km': False,
         'vigencia_variable': True,
         'items': (),
-        'ayuda': 'Verificacion tecnica vehicular. Al registrarla se carga por '
-                 'cuantos meses te la dieron.',
+        'solo_registro': False,
+        'ayuda': 'Verificación técnica vehicular. Al registrarla se carga por '
+                 'cuántos meses te la dieron.',
     },
     'MATAFUEGO': {
         'etiqueta': 'Matafuego',
@@ -304,8 +305,9 @@ TIPOS_VENCIMIENTO = {
         'pide_km': False,
         'vigencia_variable': False,
         'items': (),
-        'ayuda': 'Carga y sellado del matafuego. Vence al ano, sin importar '
-                 'los kilometros.',
+        'solo_registro': False,
+        'ayuda': 'Carga y sellado del matafuego. Vence al año, sin importar '
+                 'los kilómetros.',
     },
     'SERVICE': {
         'etiqueta': 'Service',
@@ -318,10 +320,11 @@ TIPOS_VENCIMIENTO = {
         'pide_km': True,
         'vigencia_variable': False,
         'items': ('Aceite de motor', 'Filtro de aceite', 'Filtro de aire',
-                  'Filtro de combustible', 'Filtro de habitaculo',
-                  'Correa de distribucion', 'Bujias', 'Liquido de frenos',
+                  'Filtro de combustible', 'Filtro de habitáculo',
+                  'Correa de distribución', 'Bujías', 'Líquido de frenos',
                   'Refrigerante'),
-        'ayuda': 'Service de aceite y filtros: cada 10.000 km o una vez al ano, '
+        'solo_registro': False,
+        'ayuda': 'Service de aceite y filtros: cada 10.000 km o una vez al año, '
                  'lo que ocurra primero.',
     },
     'LAVADO': {
@@ -335,13 +338,49 @@ TIPOS_VENCIMIENTO = {
         'pide_km': False,
         'vigencia_variable': False,
         'items': (),
-        'ayuda': 'Lavado de la camioneta. Avisa cada 15 dias; los kilometros '
+        'solo_registro': False,
+        'ayuda': 'Lavado de la camioneta. Avisa cada 15 días; los kilómetros '
                  'no cuentan.',
+    },
+    'EVENTO': {
+        'etiqueta': 'Evento',
+        'icono': 'tools',
+        'color': '#6f42c1',
+        # solo_registro: se anota y queda en el historial, pero no vence ni
+        # genera alertas. Un parabrisas roto no se cambia cada X meses: pasa
+        # cuando pasa. Por eso tampoco aparece como fila en la grilla de
+        # vencimientos de cada camioneta.
+        'solo_registro': True,
+        'periodicidad_dias': None,
+        'periodicidad_km': None,
+        'aviso_dias': None,
+        'aviso_km': None,
+        'pide_km': True,
+        'vigencia_variable': False,
+        'items': (),
+        'ayuda': 'Arreglos y cambios sueltos: parabrisas, cubiertas, batería, '
+                 'chapa y pintura. Queda en el historial, no vence.',
     },
 }
 
-# Opciones de vigencia de la VTV, en meses. Son las que entrega la planta.
-MESES_VTV = (6, 12, 24, 36)
+# Qué se hizo en un evento. Es lista fija para que el historial se pueda leer
+# de un vistazo; lo que no entra en la lista va en "Otro" con la aclaración.
+TIPOS_EVENTO = (
+    'Parabrisas',
+    'Cubiertas',
+    'Batería',
+    'Frenos',
+    'Chapa y pintura',
+    'Escape',
+    'Embrague',
+    'Suspensión',
+    'Electricidad',
+    'Otro',
+)
+
+# Opciones de vigencia de la VTV, en meses. Son las que entrega la planta:
+# cuando sale observada la dan por 1 o 2 meses hasta que se corrige la falla.
+MESES_VTV = (1, 2, 6, 12, 24, 36)
 
 ORDEN_ESTADO = {'VENCIDO': 0, 'POR_VENCER': 1, 'SIN_DATOS': 2, 'AL_DIA': 3}
 
@@ -1009,8 +1048,8 @@ MODULOS = (
     {
         'clave': 'camionetas',
         'nombre': 'Camionetas',
-        'descripcion': 'Controles de retiro y devolucion, reportes, remitos, '
-                       'vencimientos y distribucion de la flota.',
+        'descripcion': 'Controles de retiro y devolución, reportes, remitos, '
+                       'vencimientos y distribución de la flota.',
         'icono': 'truck',
         'color': '#667eea',
         'disponible': True,
@@ -1018,7 +1057,7 @@ MODULOS = (
     {
         'clave': 'stock',
         'nombre': 'Stock',
-        'descripcion': 'Existencias de deposito: que hay, cuanto queda y que '
+        'descripcion': 'Existencias de depósito: qué hay, cuánto queda y qué '
                        'hay que reponer.',
         'icono': 'boxes',
         'color': '#20c997',
@@ -1028,7 +1067,7 @@ MODULOS = (
         'clave': 'materiales',
         'nombre': 'Materiales',
         'descripcion': 'Entrega y seguimiento del material que usa cada '
-                       'tecnico en la calle.',
+                       'técnico en la calle.',
         'icono': 'box-seam',
         'color': '#fd7e14',
         'disponible': False,
@@ -1036,7 +1075,7 @@ MODULOS = (
     {
         'clave': 'generadores',
         'nombre': 'Generadores',
-        'descripcion': 'Grupos electrogenos: mantenimiento, horas de uso y '
+        'descripcion': 'Grupos electrógenos: mantenimiento, horas de uso y '
                        'combustible.',
         'icono': 'lightning-charge',
         'color': '#6f42c1',
@@ -1056,6 +1095,9 @@ def modulos_para(rol):
     for modulo in MODULOS:
         item = dict(modulo)
         item['endpoint'] = panel if modulo['disponible'] else None
+        # Entrar al modulo tiene que caer en Inicio, no en la ultima seccion
+        # que quedo abierta la vez pasada: el resumen es el punto de partida.
+        item['params'] = {'seccion': 'inicio'} if item['endpoint'] == 'admin' else {}
         salida.append(item)
     return salida
 
@@ -1554,6 +1596,7 @@ def aplicar_migraciones(conexion):
         'reclamos_coordinados': [
             ('estado', "TEXT DEFAULT 'PENDIENTE'"),
             ('resolucion_vista', 'INTEGER DEFAULT 0'),
+            ('ediciones', 'INTEGER DEFAULT 0'),
             ('resolucion_comentario', 'TEXT'),
             ('resuelto_por', 'TEXT'),
             ('resuelto_por_id', 'INTEGER'),
@@ -2528,7 +2571,16 @@ ESTADOS_ACTIVIDAD = {
     'PENDIENTE': 'Pendiente',
     'RESUELTA': 'Resuelta',
     'NO_RESUELTA': 'No se pudo resolver',
+    'CANCELADA': 'Cancelada',
 }
+
+# Cuantas veces se puede corregir una actividad ya cargada. El mensaje no se
+# toca nunca: el técnico puede haberlo leído y salido a la calle con eso, y
+# cambiarle el texto por atras es mandarlo a hacer algo distinto de lo que
+# vio. Si el texto salió mal, se cancela y se carga de nuevo. Lo que sí se
+# corrige es a quién va y para qué día, y eso tiene tope para que una
+# actividad no ande cambiando de dueño indefinidamente.
+MAX_EDICIONES_ACTIVIDAD = 2
 
 
 def resoluciones_sin_ver(conexion):
@@ -2541,7 +2593,7 @@ def resoluciones_sin_ver(conexion):
     fila = conexion.execute("""
         SELECT COUNT(*) AS n FROM reclamos_coordinados
         WHERE activo = 1
-          AND COALESCE(estado, 'PENDIENTE') <> 'PENDIENTE'
+          AND COALESCE(estado, 'PENDIENTE') NOT IN ('PENDIENTE', 'CANCELADA')
           AND COALESCE(resolucion_vista, 0) = 0
     """).fetchone()
     return fila['n'] if fila else 0
@@ -2829,6 +2881,10 @@ def estado_flota(conexion, momento=None, camioneta_id=None):
     for camioneta in camionetas:
         km_actual = ultimo_kilometraje(conexion, camioneta['id'])
         for tipo, config in TIPOS_VENCIMIENTO.items():
+            # Los eventos no vencen: mostrarlos acá los dejaría para siempre
+            # en SIN_DATOS, como si faltara cargarles una fecha.
+            if config.get('solo_registro'):
+                continue
             guardado = cargados.get((camioneta['id'], tipo))
             vencimiento = guardado if guardado is not None else {
                 'fecha_vencimiento': None, 'km_vencimiento': None,
@@ -2931,6 +2987,10 @@ def registrar_realizado(conexion, camioneta_id, tipo, fecha, km, quien,
     """, (camioneta_id, tipo, fecha, km, quien, observacion,
           ahora().isoformat(), detalle, meses_vigencia))
 
+    # Un evento se anota y listo: no corre ninguna fecha de vencimiento.
+    if config.get('solo_registro'):
+        return None, None
+
     nueva_fecha, nuevo_km = proximo_vencimiento(
         periodicidad_dias, periodicidad_km, fecha, km)
 
@@ -2978,6 +3038,9 @@ def recalcular_vencimiento(conexion, camioneta_id, tipo):
     ultimo service dejaria el vencimiento corrido como si se hubiera hecho.
     """
     config = TIPOS_VENCIMIENTO[tipo]
+    if config.get('solo_registro'):
+        return None, None
+
     actual = conexion.execute(
         'SELECT * FROM vencimientos WHERE camioneta_id = ? AND tipo = ?',
         (camioneta_id, tipo)).fetchone()
@@ -3395,6 +3458,14 @@ def admin():
             actividades_sin_ver = resoluciones_sin_ver(conexion)
             # Tarjetas de la pantalla de Inicio.
             inicio = resumen_inicio(conexion)
+            # Turnos justificados, con sus filtros.
+            justificados = justificaciones_vigentes(
+                conexion, limite=200,
+                patente=request.args.get('j_patente'),
+                motivo=(request.args.get('j_motivo') or '').upper(),
+                desde=request.args.get('j_desde'),
+                hasta=request.args.get('j_hasta'),
+                incluir_anuladas=request.args.get('j_anuladas') == '1')
             
         except sqlite3.OperationalError as e:
             # Antes faltaba inicializar `reportes`, y este except terminaba
@@ -3409,6 +3480,7 @@ def admin():
             resumen_historial = []
             actividades_sin_ver = 0
             inicio = None
+            justificados = []
         
     finally:
         conexion.close()
@@ -3435,6 +3507,14 @@ def admin():
     
     return render_template('admin.html',
                          inicio=inicio,
+                         justificados=justificados,
+                         filtros_justificados={
+                             'patente': request.args.get('j_patente', ''),
+                             'motivo': (request.args.get('j_motivo') or '').upper(),
+                             'desde': request.args.get('j_desde', ''),
+                             'hasta': request.args.get('j_hasta', ''),
+                             'anuladas': request.args.get('j_anuladas') == '1',
+                         },
                          resumen_historial=resumen_historial,
                          actividades_sin_ver=actividades_sin_ver,
                          motivos_no_realizado=MOTIVOS_NO_REALIZADO,
@@ -4973,6 +5053,83 @@ def api_historial():
     })
 
 
+
+@app.route('/api/historial/elementos')
+def api_historial_elementos():
+    """Linea de tiempo de cada elemento: cuando estuvo OK y cuando falto.
+
+    Es lo que hacia el "Rastrear Elemento" de la pagina vieja de historial.
+    Responde la pregunta que la vista por fecha no responde: este elemento,
+    ¿cuantas veces falto?, ¿desde cuando?, ¿quien lo repuso?
+
+    Sin patente rastrea toda la flota. Con patente, solo esa camioneta, que
+    es como funcionaba antes.
+    """
+    if not autorizado('soporte', 'jefe'):
+        return jsonify({'error': 'No autorizado'}), 401
+
+    patente = (request.args.get('patente') or '').strip() or None
+
+    where = ['1 = 1']
+    parametros = []
+    if patente:
+        where.append('c.patente = ?')
+        parametros.append(patente)
+
+    conexion = get_db()
+    try:
+        filas = conexion.execute(f"""
+            SELECT r.id, r.elemento, r.estado, r.descripcion, r.fecha_hora,
+                   r.fecha_resolucion, r.resuelto_por, r.comentario_resolucion,
+                   r.entregado_por, r.recibido_por, r.fecha_entrega,
+                   r.material_entregado, r.motivo_reposicion,
+                   c.patente, u.nombre AS tecnico,
+                   COALESCE(ec.categoria, 'CAMIONETA') AS categoria
+            FROM reportes r
+            JOIN controles co ON r.control_id = co.id
+            JOIN asignaciones a ON co.asignacion_id = a.id
+            JOIN camionetas c ON a.camioneta_id = c.id
+            LEFT JOIN usuarios u ON a.tecnico_id = u.id
+            LEFT JOIN elementos_catalogo ec ON ec.nombre = r.elemento
+            WHERE {' AND '.join(where)}
+            ORDER BY r.elemento, r.fecha_hora DESC
+        """, parametros).fetchall()
+    finally:
+        conexion.close()
+
+    # Un elemento por entrada, con todos sus movimientos del mas nuevo al mas
+    # viejo. Sin patente el mismo elemento puede venir de varias camionetas:
+    # se separan por (categoria, elemento, patente) para no mezclar la
+    # historia de dos camionetas distintas en una sola linea de tiempo.
+    por_elemento = {}
+    for fila in filas:
+        clave = (fila['categoria'], fila['elemento'],
+                 fila['patente'] if not patente else '')
+        entrada = por_elemento.setdefault(clave, {
+            'elemento': fila['elemento'],
+            'categoria': fila['categoria'],
+            'patente': fila['patente'] if not patente else None,
+            'registros': [],
+        })
+        entrada['registros'].append(dict(fila))
+
+    salida = []
+    for entrada in por_elemento.values():
+        registros = entrada['registros']
+        entrada['ultimo'] = registros[0]
+        entrada['faltantes'] = sum(1 for r in registros if r['estado'] == 'FALTANTE')
+        entrada['resueltos'] = sum(1 for r in registros if r['estado'] == 'RESUELTO')
+        entrada['total'] = len(registros)
+        salida.append(entrada)
+
+    # Primero lo que mas problemas dio: es lo que uno viene a buscar.
+    salida.sort(key=lambda e: (-e['faltantes'], e['categoria'], e['elemento']))
+
+    return jsonify({
+        'elementos': salida,
+        'categorias': {c: ETIQUETA_CATEGORIA.get(c, c) for c in CATEGORIAS},
+    })
+
 @app.route('/api/historial/control/<int:control_id>')
 def api_historial_control(control_id):
     """Detalle de un control: que se reviso y las fotos que se sacaron."""
@@ -6061,6 +6218,7 @@ def reclamos():
                    COALESCE(r.estado, 'PENDIENTE') AS estado,
                    r.resolucion_comentario, r.resuelto_por, r.fecha_resolucion,
                    r.editado_por, r.fecha_edicion,
+                   COALESCE(r.ediciones, 0) AS ediciones,
                    u.nombre AS destino_nombre
             FROM reclamos_coordinados r
             LEFT JOIN usuarios u ON r.destino_usuario_id = u.id
@@ -6098,6 +6256,7 @@ def reclamos():
                            tecnicos=tecnicos,
                            zonas=zonas,
                            estados=ESTADOS_ACTIVIDAD,
+                           max_ediciones=MAX_EDICIONES_ACTIVIDAD,
                            conteo=conteo,
                            filtros={
                                'tecnico': filtro_tecnico,
@@ -6171,11 +6330,12 @@ def reclamos_crear():
 
 @app.route('/reclamos/editar', methods=['POST'])
 def reclamos_editar():
-    """Corrige una actividad ya cargada: mensaje, destinatario o dia.
+    """Corrige a quién va dirigida una actividad y para qué día.
 
-    Solo mientras siga pendiente. Editar una que el tecnico ya resolvio seria
-    cambiarle la pregunta despues de la respuesta: la resolucion quedaria
-    contestando otra cosa.
+    El mensaje no se edita: el técnico pudo haberlo leído y salido con eso.
+    Si el texto está mal, se cancela la actividad y se carga otra.
+
+    Solo mientras siga pendiente, y hasta MAX_EDICIONES_ACTIVIDAD veces.
     """
     if not autorizado('soporte', 'admin', 'jefe'):
         return redirect(url_for('login'))
@@ -6184,10 +6344,6 @@ def reclamos_editar():
         reclamo_id = int(request.form.get('reclamo_id', ''))
     except (TypeError, ValueError):
         return _volver_reclamos(error='Actividad inválida.')
-
-    mensaje = (request.form.get('mensaje') or '').strip()
-    if not mensaje:
-        return _volver_reclamos(error='El mensaje no puede estar vacío.')
 
     fecha = (request.form.get('fecha') or '').strip()
     if _fecha_iso(fecha) is None:
@@ -6202,7 +6358,14 @@ def reclamos_editar():
             return _volver_reclamos(error='Esa actividad no existe.')
         if (actual['estado'] or 'PENDIENTE') != 'PENDIENTE':
             return _volver_reclamos(
-                error='Esa actividad ya fue resuelta: no se puede editar.')
+                error='Esa actividad ya está cerrada: no se puede editar.')
+
+        hechas = actual['ediciones'] or 0
+        if hechas >= MAX_EDICIONES_ACTIVIDAD:
+            return _volver_reclamos(
+                error=f'Esta actividad ya se editó {MAX_EDICIONES_ACTIVIDAD} veces, '
+                      f'que es el máximo. Si sigue sin estar bien, cancelala y '
+                      f'cargá una nueva.')
 
         destino_usuario_id, error = _tecnico_destino(conexion)
         if error:
@@ -6210,16 +6373,67 @@ def reclamos_editar():
 
         conexion.execute("""
             UPDATE reclamos_coordinados
-            SET mensaje = ?, destino_tipo = 'persona', destino_usuario_id = ?,
-                destino_zona = NULL, fecha = ?, editado_por = ?, fecha_edicion = ?
+            SET destino_tipo = 'persona', destino_usuario_id = ?,
+                destino_zona = NULL, fecha = ?, editado_por = ?,
+                fecha_edicion = ?, ediciones = ?
             WHERE id = ?
-        """, (mensaje, destino_usuario_id, fecha, session.get('nombre'),
-              ahora().isoformat(), reclamo_id))
+        """, (destino_usuario_id, fecha, session.get('nombre'),
+              ahora().isoformat(), hechas + 1, reclamo_id))
         conexion.commit()
     finally:
         conexion.close()
 
-    return _volver_reclamos(mensaje='Actividad actualizada.')
+    quedan = MAX_EDICIONES_ACTIVIDAD - (hechas + 1)
+    aviso = ('Queda 1 edición.' if quedan == 1
+             else f'Quedan {quedan} ediciones.' if quedan else
+             'Era la última edición permitida.')
+    return _volver_reclamos(mensaje=f'Actividad actualizada. {aviso}')
+
+
+@app.route('/reclamos/cancelar', methods=['POST'])
+def reclamos_cancelar():
+    """Soporte cancela un trabajo que no se hizo y no se va a hacer.
+
+    Es distinto de darla de baja: la baja la saca de la lista como si nunca
+    hubiera existido, y esto deja constancia de que se pidió, de que no se
+    hizo y de por qué. El técnico deja de verla en el panel.
+    """
+    if not autorizado('soporte', 'admin', 'jefe'):
+        return redirect(url_for('login'))
+
+    try:
+        reclamo_id = int(request.form.get('reclamo_id', ''))
+    except (TypeError, ValueError):
+        return _volver_reclamos(error='Actividad inválida.')
+
+    # El motivo es obligatorio: una actividad que desaparece sin explicación
+    # deja al técnico sin saber si tenía que hacerla o no.
+    motivo = (request.form.get('motivo') or '').strip()
+    if not motivo:
+        return _volver_reclamos(error='Contá por qué se cancela la actividad.')
+
+    conexion = get_db()
+    try:
+        actual = conexion.execute(
+            'SELECT * FROM reclamos_coordinados WHERE id = ? AND activo = 1',
+            (reclamo_id,)).fetchone()
+        if actual is None:
+            return _volver_reclamos(error='Esa actividad no existe.')
+        if (actual['estado'] or 'PENDIENTE') != 'PENDIENTE':
+            return _volver_reclamos(
+                error='Esa actividad ya está cerrada: no se puede cancelar.')
+
+        conexion.execute("""
+            UPDATE reclamos_coordinados
+            SET estado = 'CANCELADA', resolucion_comentario = ?,
+                resuelto_por = ?, fecha_resolucion = ?, resolucion_vista = 1
+            WHERE id = ?
+        """, (motivo, session.get('nombre'), ahora().isoformat(), reclamo_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return _volver_reclamos(mensaje='Actividad cancelada. El técnico deja de verla.')
 
 
 @app.route('/reclamos/resolver', methods=['POST'])
@@ -6328,20 +6542,44 @@ def puede_anularse(justificacion, momento=None):
     return (momento or ahora()) - registro <= PLAZO_ANULAR_JUSTIFICACION
 
 
-def justificaciones_vigentes(conexion, limite=50):
-    """Ultimas justificaciones, con el dato de si todavia se pueden deshacer."""
+def justificaciones_vigentes(conexion, limite=50, patente=None, motivo=None,
+                             desde=None, hasta=None, incluir_anuladas=False):
+    """Turnos justificados, con el dato de si todavía se pueden deshacer.
+
+    Al justificar un turno desaparece de las alertas, que es lo que se busca,
+    pero antes no quedaba ningún lado donde verlo: el registro existía y no
+    se podía mirar ni corregir. Esto es ese lado.
+    """
     momento = ahora()
-    filas = conexion.execute("""
+
+    where = ['1 = 1']
+    parametros = []
+    if not incluir_anuladas:
+        where.append('cj.anulado = 0')
+    if patente:
+        where.append('c.patente = ?')
+        parametros.append(patente)
+    if motivo in MOTIVOS_NO_REALIZADO:
+        where.append('cj.motivo = ?')
+        parametros.append(motivo)
+    if _fecha_iso(desde or ''):
+        where.append('a.fecha >= ?')
+        parametros.append(desde)
+    if _fecha_iso(hasta or ''):
+        where.append('a.fecha <= ?')
+        parametros.append(hasta)
+
+    filas = conexion.execute(f"""
         SELECT cj.*, a.fecha AS fecha_turno, a.jornada, c.patente,
                u.nombre AS tecnico
         FROM controles_justificados cj
         JOIN asignaciones a ON cj.asignacion_id = a.id
         JOIN camionetas c ON a.camioneta_id = c.id
         LEFT JOIN usuarios u ON a.tecnico_id = u.id
-        WHERE cj.anulado = 0
+        WHERE {' AND '.join(where)}
         ORDER BY cj.fecha_registro DESC
         LIMIT ?
-    """, (limite,)).fetchall()
+    """, parametros + [limite]).fetchall()
 
     salida = []
     for fila in filas:
@@ -6464,6 +6702,52 @@ def justificar_dia():
                                     f'por {MOTIVOS_NO_REALIZADO[motivo].lower()}.'))
 
 
+@app.route('/controles/justificar/editar', methods=['POST'])
+def editar_justificacion():
+    """Corrige el motivo o la aclaración de un turno ya justificado.
+
+    Sin límite de tiempo, al revés que deshacer. Corregir "ausencia" por
+    "feriado" arregla el registro y no cambia nada más; deshacer vuelve a
+    trabar la camioneta, que sí es una decisión operativa y por eso tiene
+    los diez minutos.
+
+    La fecha y la camioneta no se tocan: eso es el turno, no la
+    justificación. Si el turno estaba mal, se deshace y se justifica el
+    correcto.
+    """
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        justificacion_id = int(request.form.get('justificacion_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('admin', error='Justificación inválida.'))
+
+    motivo, comentario, error = _leer_motivo()
+    if error:
+        return redirect(url_for('admin', error=error))
+
+    conexion = get_db()
+    try:
+        fila = conexion.execute("""
+            SELECT * FROM controles_justificados WHERE id = ? AND anulado = 0
+        """, (justificacion_id,)).fetchone()
+        if fila is None:
+            return redirect(url_for('admin',
+                                    error='Esa justificación ya no está vigente.'))
+
+        conexion.execute("""
+            UPDATE controles_justificados SET motivo = ?, comentario = ?
+            WHERE id = ?
+        """, (motivo, comentario, justificacion_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin', seccion='justificados',
+                            mensaje='Justificación corregida.'))
+
+
 @app.route('/controles/justificar/anular', methods=['POST'])
 def anular_justificacion():
     """Deshace una justificacion cargada por error, dentro del plazo."""
@@ -6498,8 +6782,9 @@ def anular_justificacion():
     finally:
         conexion.close()
 
-    return redirect(url_for('admin', mensaje='Justificación deshecha: el turno '
-                                             'vuelve a figurar como pendiente.'))
+    return redirect(url_for('admin', seccion='justificados',
+                            mensaje='Justificación deshecha: el turno '
+                                    'vuelve a figurar como pendiente.'))
 
 
 # ============================================
@@ -6784,8 +7069,10 @@ def calendario():
                                'periodicidad_km': cfg['periodicidad_km'],
                                'vigencia_variable': cfg['vigencia_variable'],
                                'items': list(cfg['items']),
+                               'solo_registro': cfg.get('solo_registro', False),
                            } for clave, cfg in TIPOS_VENCIMIENTO.items()},
                            meses_vtv=MESES_VTV,
+                           tipos_evento=TIPOS_EVENTO,
                            anio=anio,
                            mes=mes,
                            nombre_mes=MESES[mes - 1],
@@ -6830,8 +7117,11 @@ def _leer_registro(conexion, tipo, camioneta_id, excepto_id=None):
     if _fecha_iso(fecha) > ahora().date():
         return None, 'No se puede registrar un trabajo con fecha futura.'
 
-    # Un mismo trabajo dos veces el mismo dia es siempre una carga repetida.
-    if hay_registro_ese_dia(conexion, camioneta_id, tipo, fecha, excepto_id):
+    # Un mismo trabajo dos veces el mismo día es siempre una carga repetida.
+    # Con los eventos no aplica: el mismo día se pueden cambiar las cubiertas
+    # y arreglar el parabrisas, y son dos cosas distintas.
+    if not config.get('solo_registro') and hay_registro_ese_dia(
+            conexion, camioneta_id, tipo, fecha, excepto_id):
         return None, (f'Ya hay un {config["etiqueta"].lower()} registrado para '
                       f'esa camioneta el {fecha}. Si te equivocaste, editá o '
                       f'borrá el que ya está cargado.')
@@ -6845,7 +7135,7 @@ def _leer_registro(conexion, tipo, camioneta_id, excepto_id=None):
             km, error_km = validar_kilometraje(km_texto, None)
             if error_km:
                 return None, error_km
-        elif config['periodicidad_km']:
+        elif config['periodicidad_km']:  # los eventos no tienen: queda opcional
             km = ultimo_kilometraje(conexion, camioneta_id)
             if km is None:
                 return None, (f'El {config["etiqueta"].lower()} vence por '
@@ -6861,6 +7151,23 @@ def _leer_registro(conexion, tipo, camioneta_id, excepto_id=None):
             return None, 'Elegí por cuántos meses te dieron la VTV.'
         if meses not in MESES_VTV:
             return None, 'Esa vigencia no es una de las opciones.'
+
+    # Qué se hizo en el evento: una sola cosa de la lista, más la aclaración.
+    if config.get('solo_registro'):
+        que = (request.form.get('evento') or '').strip()
+        if que not in TIPOS_EVENTO:
+            return None, 'Elegí qué se hizo.'
+        aclaracion = (request.form.get('otros') or '').strip()
+        if que == 'Otro' and not aclaracion:
+            return None, 'Si elegís "Otro", aclará qué se hizo.'
+        detalle = f'{que}: {aclaracion}' if aclaracion else que
+        return {
+            'fecha': fecha,
+            'km': km,
+            'meses': None,
+            'detalle': detalle,
+            'observacion': (request.form.get('observacion') or '').strip(),
+        }, None
 
     # Que se cambio en el service. Se guarda como texto separado por comas:
     # es para leer, no para consultar.

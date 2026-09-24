@@ -34,54 +34,214 @@ body {
 /* ============================================
    LOGIN
    ============================================ */
+/* ============================================
+   LOGIN - UltraHub
+   ============================================
+   Se conservan los dos colores que ya tenia la pantalla: el verde y el azul
+   del degradado. El resto es negro, blanco y gris, que es lo que deja leer
+   bien un formulario a la intemperie y en el celular.                      */
+
+:root {
+    --ultra-verde: #06b406;
+    --ultra-azul: #0522a5;
+    --ultra-negro: #0d0d12;
+    --ultra-gris: #6b7280;
+    --ultra-gris-claro: #e6e6ec;
+}
+
+.login-body {
+    margin: 0;
+    background: var(--ultra-negro);
+}
+
 .login-container {
+    position: relative;
     min-height: 100vh;
+    min-height: 100dvh;  /* en el celular, 100vh mide mas que lo que se ve */
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
-    background: linear-gradient(135deg, #06b406 0%, #0522a5 100%);
-    padding: 20px;
+    gap: 22px;
+    padding: 24px 16px;
+    background:
+        radial-gradient(circle at 15% 12%, rgba(6, 180, 6, 0.30), transparent 42%),
+        radial-gradient(circle at 85% 88%, rgba(5, 34, 165, 0.45), transparent 45%),
+        linear-gradient(150deg, #06b406 0%, #0522a5 100%);
+    overflow: hidden;
+}
+
+/* Velo oscuro: sin esto el degradado pleno compite con la tarjeta blanca y
+   el texto gris del formulario pierde contraste. */
+.login-container::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(13, 13, 18, 0.34);
 }
 
 .login-box {
-    background: white;
-    padding: 40px;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    position: relative;  /* por encima del velo */
     width: 100%;
     max-width: 400px;
+    background: #fff;
+    border-radius: 16px;
+    padding: 36px 32px 32px 32px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- Marca ---------- */
+.login-marca {
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.login-logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    margin-bottom: 14px;
+    border-radius: 15px;
+    background: linear-gradient(135deg, var(--ultra-verde) 0%, var(--ultra-azul) 100%);
+    color: #fff;
+    font-size: 1.5rem;
 }
 
 .login-box h1 {
+    margin: 0;
+    font-size: 1.85rem;
+    font-weight: 700;
+    letter-spacing: -0.8px;
+    color: var(--ultra-negro);
+}
+
+.login-box h1 span {
+    color: var(--ultra-verde);
+}
+
+.login-bajada {
+    margin: 5px 0 0 0;
+    font-size: 0.82rem;
+    color: var(--ultra-gris);
+}
+
+/* ---------- Formulario ---------- */
+.login-campo {
+    margin-bottom: 16px;
+}
+
+.login-campo label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #3f3f49;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.login-input {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+    border: 1.5px solid var(--ultra-gris-claro);
+    border-radius: 10px;
+    background: #fafafc;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.login-input:focus-within {
+    border-color: var(--ultra-azul);
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(5, 34, 165, 0.12);
+}
+
+.login-input > i {
+    color: var(--ultra-gris);
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.login-input input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: none;
+    /* 16px: por debajo de eso, iOS hace zoom solo al tocar el campo. */
+    font-size: 16px;
+    padding: 13px 0;
+    color: var(--ultra-negro);
+}
+
+.login-ojo {
+    background: none;
+    border: none;
+    padding: 6px;
+    color: var(--ultra-gris);
+    cursor: pointer;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.login-ojo:hover {
+    color: var(--ultra-negro);
+}
+
+.login-entrar {
+    width: 100%;
+    margin-top: 8px;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--ultra-verde) 0%, var(--ultra-azul) 100%);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.login-entrar:hover {
+    filter: brightness(1.08);
+}
+
+.login-entrar:active {
+    transform: translateY(1px);
+}
+
+.login-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 18px;
+    padding: 11px 13px;
+    border-radius: 9px;
+    background: #fdf1f2;
+    border-left: 3px solid #dc3545;
+    color: #8c1c26;
+    font-size: 0.88rem;
+}
+
+.login-pie {
+    position: relative;
+    margin: 0;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.75);
     text-align: center;
-    color: #333;
-    margin-bottom: 5px;
-    font-size: 28px;
 }
 
-.login-box h2 {
-    text-align: center;
-    color: #666;
-    font-size: 18px;
-    font-weight: normal;
-    margin-bottom: 30px;
-}
-
-.login-info {
-    margin-top: 20px;
-    padding: 15px;
-    background: #f8f9fa;
-    border-radius: 4px;
-    font-size: 14px;
-    border: 1px solid #e9ecef;
-}
-
-.login-info p {
-    margin: 5px 0;
-}
-
-.login-info strong {
-    color: #495057;
+@media (max-width: 380px) {
+    .login-box {
+        padding: 28px 22px;
+    }
 }
 
 /* ============================================
@@ -513,15 +673,6 @@ section h2 {
     
     .user-info {
         justify-content: space-between;
-    }
-    
-    .login-box {
-        padding: 20px;
-        margin: 10px;
-    }
-    
-    .login-box h1 {
-        font-size: 24px;
     }
     
     .form-inline {
@@ -3648,4 +3799,519 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
     width: 17px;
     height: 17px;
     flex-shrink: 0;
+}
+
+/* Tu propia fila en la distribucion semanal. En una grilla con toda la gente
+   de la semana, encontrarse a uno mismo lleva su tiempo. */
+.dist-persona-vos {
+    background: #eef3ff;
+    border-color: #667eea;
+    border-left: 4px solid #667eea;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.dist-vos {
+    background: #667eea;
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    flex-shrink: 0;
+}
+
+/* Actividad cancelada: se pidio, no se hizo, y quedo el motivo. */
+.act-resumen-item.act-cancel strong { color: #343a40; }
+.act-item.act-cancelada { border-left-color: #343a40; }
+
+.act-item.act-cancelada .act-mensaje {
+    /* Tachado suave: se lee, pero se nota que ya no hay que hacerlo. */
+    text-decoration: line-through;
+    text-decoration-color: rgba(0, 0, 0, 0.35);
+    color: #6c757d;
+}
+
+.act-item.act-cancelada .act-resolucion {
+    background: #f1f1f4;
+    border-left-color: #343a40;
+}
+
+.act-editar-aviso {
+    font-size: 0.8rem;
+    color: #6c757d;
+    background: #f6f7fb;
+    border-left: 3px solid #adb5bd;
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 12px;
+}
+
+.act-cancelar {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed #dcdce4;
+}
+
+.act-cancelar label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #555;
+    margin-bottom: 4px;
+}
+
+.act-cancelar-botones {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+/* El boton de editar apagado al llegar al tope de ediciones. */
+.act-acciones .btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ============================================
+   TURNOS JUSTIFICADOS
+   ============================================ */
+.just-lista {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.just-item {
+    padding: 12px 14px;
+    background: #fff;
+    border: 1px solid #e6e6ec;
+    border-left: 4px solid #6c757d;
+    border-radius: 8px;
+}
+
+/* Deshecha: se ve, pero se nota que ya no cuenta. */
+.just-item-anulado {
+    background: #fafafc;
+    border-left-color: #c8c8d0;
+    opacity: 0.72;
+}
+
+.just-item-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 6px;
+}
+
+.just-patente {
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}
+
+.just-turno {
+    font-size: 0.88rem;
+    color: #555;
+}
+
+.just-acciones {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.just-meta {
+    font-size: 0.78rem;
+    color: #888;
+}
+
+.just-comentario {
+    margin-top: 7px;
+    padding: 7px 10px;
+    background: #f6f7fb;
+    border-left: 3px solid #adb5bd;
+    border-radius: 4px;
+    font-size: 0.86rem;
+    color: #444;
+}
+
+.just-editar {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed #dcdce4;
+}
+
+.just-ver-anuladas {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.82rem;
+    color: #555;
+    margin: 0;
+    white-space: nowrap;
+}
+
+.just-ver-anuladas input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+}
+
+/* ============================================
+   DETALLE DE UN REGISTRO DEL CALENDARIO
+   ============================================ */
+.det-datos {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 16px;
+    margin: 0 0 16px 0;
+    font-size: 0.9rem;
+}
+
+.det-datos dt {
+    color: #777;
+    font-weight: 500;
+}
+
+.det-datos dd {
+    margin: 0;
+    font-weight: 600;
+    color: #222;
+}
+
+.det-bloque {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: #f7f8fc;
+    border-radius: 8px;
+    border-left: 3px solid #667eea;
+}
+
+.det-bloque-titulo {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: #667eea;
+    margin-bottom: 8px;
+}
+
+/* Cada cosa que se cambio, como etiqueta suelta: en un service son seis o
+   siete y en una linea corrida no se leen. */
+.det-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.det-item {
+    background: #fff;
+    border: 1px solid #dcdce4;
+    border-radius: 20px;
+    padding: 4px 11px;
+    font-size: 0.83rem;
+    color: #333;
+}
+
+/* Fila del evento, al pie del detalle de cada camioneta. */
+.venc-fila-evento {
+    border-top: 1px dashed #dcdce4;
+    margin-top: 6px;
+    padding-top: 10px;
+}
+
+/* ============================================
+   BLOQUES DESPLEGABLES DEL HISTORIAL
+   ============================================ */
+.bloque-cabecera {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    border: none;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+}
+
+.bloque-flecha {
+    color: #6c757d;
+    margin-right: 6px;
+}
+
+/* ============================================
+   RASTREAR ELEMENTO
+   ============================================ */
+.rastreo-buscador {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    max-width: 380px;
+    margin-bottom: 16px;
+    padding: 0 12px;
+    border: 1px solid #dcdce4;
+    border-radius: 8px;
+    background: #fafafc;
+}
+
+.rastreo-buscador i {
+    color: #999;
+}
+
+.rastreo-buscador input {
+    border: none;
+    background: none;
+    box-shadow: none;
+    padding: 9px 0;
+}
+
+.rastreo-buscador input:focus {
+    outline: none;
+    box-shadow: none;
+}
+
+.rastreo-categoria {
+    margin-bottom: 20px;
+}
+
+.rastreo-categoria-titulo {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: #444;
+    padding-bottom: 7px;
+    margin-bottom: 9px;
+    border-bottom: 2px solid #ececf2;
+}
+
+.rastreo-elemento {
+    border: 1px solid #e9e9ef;
+    border-radius: 8px;
+    margin-bottom: 7px;
+    background: #fff;
+}
+
+.rastreo-elemento-cabecera {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 13px;
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+}
+
+.rastreo-elemento-cabecera:hover {
+    background: #f7f8fc;
+}
+
+.rastreo-nombre {
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.rastreo-flecha {
+    color: #999;
+}
+
+.rastreo-chips {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-left: auto;
+    font-size: 0.8rem;
+}
+
+.rastreo-ultimo {
+    color: #777;
+}
+
+/* Estado del ultimo movimiento, para leerlo sin desplegar. */
+.est-ok { color: #198754; font-weight: 600; }
+.est-resuelto { color: #0d6efd; font-weight: 600; }
+.est-faltante { color: #dc3545; font-weight: 600; }
+.est-observacion { color: #b8860b; font-weight: 600; }
+
+/* ---------- Linea de tiempo ---------- */
+.rastreo-linea {
+    padding: 4px 13px 13px 13px;
+    border-top: 1px solid #f0f0f4;
+    background: #fbfbfd;
+}
+
+.rastreo-evento {
+    position: relative;
+    padding: 9px 12px;
+    margin-top: 8px;
+    border-radius: 6px;
+    background: #fff;
+    border-left: 3px solid #adb5bd;
+}
+
+.rastreo-evento.ok { border-left-color: #198754; }
+.rastreo-evento.resuelto { border-left-color: #0d6efd; }
+.rastreo-evento.faltante { border-left-color: #dc3545; }
+.rastreo-evento.observacion { border-left-color: #ffc107; }
+
+.rastreo-evento-top {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 9px;
+    font-size: 0.83rem;
+}
+
+.rastreo-fecha {
+    font-weight: 600;
+}
+
+.rastreo-pat {
+    background: #eceff6;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.rastreo-tecnico {
+    color: #777;
+    margin-left: auto;
+}
+
+.rastreo-texto {
+    margin-top: 5px;
+    font-size: 0.83rem;
+    color: #555;
+}
+
+.rastreo-resuelto {
+    color: #0a6e3d;
+}
+
+/* ============================================
+   VISOR DE FOTOS
+   ============================================ */
+.hist-foto-abrir {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: zoom-in;
+}
+
+.visor-fondo {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.88);
+    z-index: 1080;
+}
+
+.visor {
+    position: fixed;
+    inset: 0;
+    z-index: 1090;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;  /* el fondo sigue recibiendo el clic para cerrar */
+}
+
+.visor > * {
+    pointer-events: auto;
+}
+
+.visor-barra {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px calc(14px + env(safe-area-inset-top)) 18px;
+    color: #fff;
+}
+
+.visor-etiqueta {
+    font-weight: 600;
+}
+
+.visor-contador {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.65);
+    margin-right: auto;
+}
+
+.visor-accion {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.2rem;
+    padding: 6px 10px;
+    cursor: pointer;
+    text-decoration: none;
+    line-height: 1;
+}
+
+.visor-accion:hover {
+    color: #fff;
+    opacity: 0.75;
+}
+
+.visor-cuerpo {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 10px calc(20px + env(safe-area-inset-bottom)) 10px;
+}
+
+.visor-cuerpo img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+}
+
+.visor-flecha {
+    flex-shrink: 0;
+    width: 46px;
+    height: 46px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    font-size: 1.3rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.visor-flecha:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+@media (max-width: 576px) {
+    .visor-flecha {
+        width: 38px;
+        height: 38px;
+        font-size: 1.1rem;
+    }
 }

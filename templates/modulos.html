@@ -24,7 +24,7 @@
     <div class="modulos-grilla">
         {% for m in modulos %}
             {% if m.disponible %}
-                <a href="{{ url_for(m.endpoint) }}" class="modulo-card"
+                <a href="{{ url_for(m.endpoint, **m.params) }}" class="modulo-card"
                    style="--modulo-color: {{ m.color }};">
                     <span class="modulo-icono"><i class="bi bi-{{ m.icono }}"></i></span>
                     <span class="modulo-nombre">{{ m.nombre }}</span>

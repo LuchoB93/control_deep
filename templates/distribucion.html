@@ -137,7 +137,14 @@
                                     <small>{{ horarios[j] }}</small>
                                 </div>
                                 {% for p in datos.tecnicos[j] %}
-                                    <div class="dist-persona">{{ p.nombre }}</div>
+                                    {# El tuyo resaltado: en una grilla con toda
+                                       la gente, encontrarse lleva su tiempo. #}
+                                    <div class="dist-persona {{ 'dist-persona-vos' if p.usuario_id == session.usuario_id }}">
+                                        {{ p.nombre }}
+                                        {% if p.usuario_id == session.usuario_id %}
+                                            <span class="dist-vos">vos</span>
+                                        {% endif %}
+                                    </div>
                                 {% else %}
                                     <div class="dist-persona dist-persona-vacia">Sin asignar</div>
                                 {% endfor %}
@@ -243,7 +250,12 @@
                                 {% endfor %}
                             {% else %}
                                 {% for g in asignados %}
-                                    <div class="dist-persona">{{ g.nombre }}</div>
+                                    <div class="dist-persona {{ 'dist-persona-vos' if g.usuario_id == session.usuario_id }}">
+                                        {{ g.nombre }}
+                                        {% if g.usuario_id == session.usuario_id %}
+                                            <span class="dist-vos">vos</span>
+                                        {% endif %}
+                                    </div>
                                 {% else %}
                                     <div class="dist-persona dist-persona-vacia">Sin asignar</div>
                                 {% endfor %}

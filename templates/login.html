@@ -3,33 +3,74 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Control de Camionetas</title>
+    <title>UltraHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body>
+<body class="login-body">
+
     <div class="login-container">
         <div class="login-box">
-            <h1>Control de Camionetas</h1>
-            <h2>Iniciar Sesión</h2>
-            
+
+            <div class="login-marca">
+                <span class="login-logo"><i class="bi bi-hexagon-fill"></i></span>
+                <h1>Ultra<span>Hub</span></h1>
+                <p class="login-bajada">Sistemas del departamento técnico</p>
+            </div>
+
             {% if error %}
-                <div class="alert alert-danger">{{ error }}</div>
+                <div class="login-error">
+                    <i class="bi bi-exclamation-triangle-fill"></i> {{ error }}
+                </div>
             {% endif %}
-            
-            <form method="POST" action="{{ url_for('procesar_login') }}">
-                <div class="form-group">
-                    <label for="usuario">Usuario:</label>
-                    <input type="text" id="usuario" name="usuario" required>
+
+            <form method="POST" action="{{ url_for('procesar_login') }}" class="login-form">
+                <div class="login-campo">
+                    <label for="usuario">Usuario</label>
+                    <div class="login-input">
+                        <i class="bi bi-person"></i>
+                        <input type="text" id="usuario" name="usuario"
+                               autocomplete="username" autocapitalize="none"
+                               autofocus required>
+                    </div>
                 </div>
-                
-                <div class="form-group">
-                    <label for="password">Contraseña:</label>
-                    <input type="password" id="password" name="password" required>
+
+                <div class="login-campo">
+                    <label for="password">Contraseña</label>
+                    <div class="login-input">
+                        <i class="bi bi-lock"></i>
+                        <input type="password" id="password" name="password"
+                               autocomplete="current-password" required>
+                        {# Ver lo que se escribe: en el celular, con guantes y
+                           a la intemperie, teclear una clave a ciegas falla. #}
+                        <button type="button" class="login-ojo" id="ver-clave"
+                                onclick="alternarClave()"
+                                aria-label="Mostrar la contraseña">
+                            <i class="bi bi-eye" id="ojo-icono"></i>
+                        </button>
+                    </div>
                 </div>
-                
-                <button type="submit" class="btn btn-primary btn-block">Iniciar Sesión</button>
+
+                <button type="submit" class="login-entrar">
+                    Entrar <i class="bi bi-arrow-right"></i>
+                </button>
             </form>
+
         </div>
+
+        <p class="login-pie">Control de flota · Stock · Materiales · Generadores</p>
     </div>
+
+<script>
+    function alternarClave() {
+        const campo = document.getElementById('password');
+        const icono = document.getElementById('ojo-icono');
+        const oculta = campo.type === 'password';
+        campo.type = oculta ? 'text' : 'password';
+        icono.className = oculta ? 'bi bi-eye-slash' : 'bi bi-eye';
+        document.getElementById('ver-clave').setAttribute(
+            'aria-label', oculta ? 'Ocultar la contraseña' : 'Mostrar la contraseña');
+    }
+</script>
 </body>
 </html>

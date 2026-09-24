@@ -314,6 +314,32 @@
                                 </div>
                             </div>
                         {% endfor %}
+
+                        {% if session.rol in ('soporte', 'admin') %}
+                            {# Los eventos no tienen fila propia arriba porque no
+                               vencen: se anotan desde acá y quedan en el historial. #}
+                            <div class="venc-fila venc-fila-evento">
+                                <div class="d-flex align-items-center gap-3">
+                                    <span class="tipo-icono" style="background: #6f42c1;">
+                                        <i class="bi bi-tools"></i>
+                                    </span>
+                                    <div>
+                                        <strong>Evento</strong>
+                                        <br>
+                                        <small class="text-muted">
+                                            Parabrisas, cubiertas, batería, chapa...
+                                            Queda en el historial, no vence.
+                                        </small>
+                                    </div>
+                                </div>
+                                <div>
+                                    <button class="btn btn-sm btn-outline-primary"
+                                            onclick='abrirRegistrar({{ g.camioneta_id }}, "EVENTO", "{{ g.patente }}", "Evento", {{ g.km_actual if g.km_actual is not none else "null" }})'>
+                                        <i class="bi bi-plus-lg"></i> Registrar evento
+                                    </button>
+                                </div>
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
             {% endfor %}
@@ -358,9 +384,14 @@
                             <td>{{ h.registrado_por or '—' }}</td>
                             {% if session.rol in ('soporte', 'admin') %}
                                 <td class="text-nowrap">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                            title="Ver el detalle"
+                                            onclick="abrirDetalle({{ h.id }})">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
                                     <button type="button" class="btn btn-sm btn-outline-primary"
                                             title="Editar"
-                                            onclick="abrirEditar({{ h|tojson }})">
+                                            onclick="abrirEditar({{ h.id }})">
                                         <i class="bi bi-pencil"></i>
                                     </button>
                                     <form method="POST" class="d-inline"
@@ -415,7 +446,7 @@
                     <label class="form-label">¿Por cuánto tiempo te la dieron?</label>
                     <select class="form-control" name="meses_vigencia" id="reg-vigencia">
                         {% for m in meses_vtv %}
-                            <option value="{{ m }}">{{ m }} meses</option>
+                            <option value="{{ m }}">{{ m }} {{ "mes" if m == 1 else "meses" }}</option>
                         {% endfor %}
                     </select>
                     <small class="text-muted">
@@ -431,12 +462,30 @@
                     <small class="text-muted" id="reg-km-ayuda"></small>
                 </div>
 
+
+                {# Solo para los eventos: qué se hizo. #}
+                <div class="mb-3" id="reg-evento-campo" hidden>
+                    <label class="form-label">¿Qué se hizo?</label>
+                    <select class="form-control" name="evento" id="reg-evento">
+                        {% for e in tipos_evento %}
+                            <option value="{{ e }}">{{ e }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
                 {# Solo para el service: qué se cambió. #}
                 <div class="mb-3" id="reg-items-campo" hidden>
                     <label class="form-label">¿Qué se cambió?</label>
                     <div class="reg-items" id="reg-items"></div>
                     <input type="text" class="form-control mt-2" name="otros" id="reg-otros"
                            placeholder="Otra cosa que se haya cambiado">
+                </div>
+                <div class="mb-3" id="reg-aclaracion-campo" hidden>
+                    <label class="form-label">
+                        Aclaración <span class="text-muted" id="reg-aclaracion-obliga">(opcional)</span>
+                    </label>
+                    <input type="text" class="form-control" name="otros" id="reg-aclaracion"
+                           placeholder="Ej: las dos delanteras · raja del lado del acompañante">
                 </div>
 
                 <div class="mb-0">
@@ -452,6 +501,24 @@
                 <button type="submit" class="btn btn-success">Registrar</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Detalle de un registro ya cargado -->
+<div class="modal fade" id="modal-detalle" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-card-list"></i> <span id="det-titulo"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="det-cuerpo"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -477,7 +544,7 @@
                     <label class="form-label">¿Por cuánto tiempo te la dieron?</label>
                     <select class="form-control" name="meses_vigencia" id="ed-vigencia">
                         {% for m in meses_vtv %}
-                            <option value="{{ m }}">{{ m }} meses</option>
+                            <option value="{{ m }}">{{ m }} {{ "mes" if m == 1 else "meses" }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -488,11 +555,28 @@
                            min="0" step="1">
                 </div>
 
+
+                {# Solo para los eventos: qué se hizo. #}
+                <div class="mb-3" id="ed-evento-campo" hidden>
+                    <label class="form-label">¿Qué se hizo?</label>
+                    <select class="form-control" name="evento" id="ed-evento">
+                        {% for e in tipos_evento %}
+                            <option value="{{ e }}">{{ e }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
                 <div class="mb-3" id="ed-items-campo" hidden>
                     <label class="form-label">¿Qué se cambió?</label>
                     <div class="reg-items" id="ed-items"></div>
                     <input type="text" class="form-control mt-2" name="otros" id="ed-otros"
                            placeholder="Otra cosa que se haya cambiado">
+                </div>
+                <div class="mb-3" id="ed-aclaracion-campo" hidden>
+                    <label class="form-label">
+                        Aclaración <span class="text-muted" id="ed-aclaracion-obliga">(opcional)</span>
+                    </label>
+                    <input type="text" class="form-control" name="otros" id="ed-aclaracion">
                 </div>
 
                 <div class="mb-0">
@@ -737,6 +821,12 @@
     // aca la misma tabla que ya vive en app.py.
     const TIPOS = {{ tipos_js|tojson }};
 
+    // El historial completo, indexado por id. Antes cada boton llevaba su
+    // registro serializado adentro del onclick y las comillas del JSON
+    // partian el atributo: el boton quedaba roto.
+    const REGISTROS = {};
+    {{ historial|tojson }}.forEach(r => { REGISTROS[r.id] = r; });
+
     // Arma las casillas de "que se cambio" (solo el service las usa).
     function pintarItems(contenedorId, items, marcados) {
         const contenedor = document.getElementById(contenedorId);
@@ -767,6 +857,23 @@
         campoKm.required = !!(config.pide_km && config.periodicidad_km);
         if (!config.pide_km) campoKm.value = '';
 
+        // Evento: una sola cosa de la lista mas la aclaracion.
+        const evento = document.getElementById(prefijo + '-evento-campo');
+        const aclaracion = document.getElementById(prefijo + '-aclaracion-campo');
+        evento.hidden = !config.solo_registro;
+        aclaracion.hidden = !config.solo_registro;
+        document.getElementById(prefijo + '-evento').required = !!config.solo_registro;
+        if (config.solo_registro) {
+            // El detalle guardado viene como "Cubiertas: las dos delanteras".
+            const guardado = opciones.detalle || '';
+            const corte = guardado.indexOf(':');
+            const que = corte === -1 ? guardado : guardado.slice(0, corte).trim();
+            const resto = corte === -1 ? '' : guardado.slice(corte + 1).trim();
+            if (que) document.getElementById(prefijo + '-evento').value = que;
+            document.getElementById(prefijo + '-aclaracion').value = resto;
+            marcarAclaracion(prefijo);
+        }
+
         const items = document.getElementById(prefijo + '-items-campo');
         const tieneItems = (config.items || []).length > 0;
         items.hidden = !tieneItems;
@@ -783,6 +890,21 @@
         }
     }
 
+    // Con "Otro" no queda dicho que se hizo, asi que la aclaracion es obligatoria.
+    function marcarAclaracion(prefijo) {
+        const otro = document.getElementById(prefijo + '-evento').value === 'Otro';
+        document.getElementById(prefijo + '-aclaracion').required = otro;
+        document.getElementById(prefijo + '-aclaracion-obliga').textContent =
+            otro ? '(obligatoria)' : '(opcional)';
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        ['reg', 'ed'].forEach(function (prefijo) {
+            const select = document.getElementById(prefijo + '-evento');
+            if (select) select.addEventListener('change', () => marcarAclaracion(prefijo));
+        });
+    });
+
     function abrirRegistrar(camionetaId, tipo, patente, etiqueta, kmActual) {
         document.getElementById('reg-camioneta').value = camionetaId;
         document.getElementById('reg-tipo').value = tipo;
@@ -792,6 +914,7 @@
 
         const config = TIPOS[tipo] || {};
         document.getElementById('reg-ayuda').textContent = config.ayuda || '';
+        document.getElementById('reg-aclaracion').value = '';
 
         armarCampos('reg', tipo, {});
 
@@ -805,7 +928,56 @@
         new bootstrap.Modal(document.getElementById('modal-registrar')).show();
     }
 
-    function abrirEditar(registro) {
+    // Tarjeta con lo que se hizo. Antes, para ver el detalle de un service
+    // habia que abrir el formulario de edicion, que es otra cosa.
+    function abrirDetalle(registroId) {
+        const r = REGISTROS[registroId];
+        if (!r) return;
+        const config = TIPOS[r.tipo] || {};
+
+        document.getElementById('det-titulo').textContent =
+            `${config.etiqueta || r.tipo} — ${r.patente}`;
+
+        const filas = [];
+        filas.push(['Fecha', r.fecha_realizado]);
+        if (r.meses_vigencia) {
+            filas.push(['Vigencia', r.meses_vigencia + (r.meses_vigencia === 1 ? ' mes' : ' meses')]);
+        }
+        if (r.km_realizado && config.pide_km) {
+            filas.push(['Kilometraje', r.km_realizado.toLocaleString('es-AR') + ' km']);
+        }
+        filas.push(['Registro', r.registrado_por || '—']);
+
+        const detalle = r.detalle
+            ? `<div class="det-bloque">
+                   <div class="det-bloque-titulo">¿Qué se hizo?</div>
+                   <div class="det-items">
+                       ${r.detalle.split(',').map(t =>
+                           `<span class="det-item">${t.trim()}</span>`).join('')}
+                   </div>
+               </div>`
+            : '';
+
+        const observacion = r.observacion
+            ? `<div class="det-bloque">
+                   <div class="det-bloque-titulo">Observación</div>
+                   <p class="mb-0">${r.observacion}</p>
+               </div>`
+            : '';
+
+        document.getElementById('det-cuerpo').innerHTML = `
+            <dl class="det-datos">
+                ${filas.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}
+            </dl>
+            ${detalle}
+            ${observacion}`;
+
+        new bootstrap.Modal(document.getElementById('modal-detalle')).show();
+    }
+
+    function abrirEditar(registroId) {
+        const registro = REGISTROS[registroId];
+        if (!registro) return;
         const config = TIPOS[registro.tipo] || {};
         document.getElementById('ed-registro').value = registro.id;
         document.getElementById('ed-titulo').textContent =

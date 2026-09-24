@@ -34,6 +34,9 @@
         <span class="act-resumen-item act-mal">
             <strong>{{ conteo['NO_RESUELTA'] }}</strong> sin resolver
         </span>
+        <span class="act-resumen-item act-cancel">
+            <strong>{{ conteo['CANCELADA'] }}</strong> canceladas
+        </span>
     </div>
 
     <!-- Alta -->
@@ -161,15 +164,26 @@
                             <span class="badge bg-success"><i class="bi bi-check-lg"></i> Resuelta</span>
                         {% elif r.estado == 'NO_RESUELTA' %}
                             <span class="badge bg-danger"><i class="bi bi-x-lg"></i> No se pudo</span>
+                        {% elif r.estado == 'CANCELADA' %}
+                            <span class="badge bg-dark"><i class="bi bi-slash-circle"></i> Cancelada</span>
                         {% else %}
                             <span class="badge bg-secondary">Pendiente</span>
                         {% endif %}
 
                         <span class="act-acciones">
                             {% if r.estado == 'PENDIENTE' %}
+                                {# El mensaje no se edita nunca. Al llegar al tope,
+                                   el boton se apaga: lo que queda es cancelarla. #}
                                 <button type="button" class="btn btn-sm btn-outline-primary"
-                                        onclick="abrirEdicion({{ r.id }})" title="Editar">
+                                        onclick="abrirEdicion({{ r.id }})"
+                                        title="Cambiar el tecnico o el dia"
+                                        {% if r.ediciones >= max_ediciones %}disabled{% endif %}>
                                     <i class="bi bi-pencil"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-dark"
+                                        onclick="abrirCancelacion({{ r.id }})"
+                                        title="Cancelar: no se hizo y no se va a hacer">
+                                    <i class="bi bi-slash-circle"></i>
                                 </button>
                             {% endif %}
                             <form method="POST" action="{{ url_for('reclamos_borrar') }}"
@@ -189,6 +203,7 @@
                         Cargó {{ r.creado_por or '—' }}
                         {% if r.editado_por %}
                             · editada por {{ r.editado_por }}
+                            ({{ r.ediciones }} de {{ max_ediciones }})
                         {% endif %}
                     </div>
 
@@ -208,6 +223,12 @@
                         <form method="POST" action="{{ url_for('reclamos_editar') }}"
                               class="act-editar" id="act-editar-{{ r.id }}" hidden>
                             <input type="hidden" name="reclamo_id" value="{{ r.id }}">
+                            <p class="act-editar-aviso">
+                                <i class="bi bi-info-circle"></i>
+                                El mensaje no se puede cambiar: el técnico pudo haberlo
+                                leído y salido con eso. Si el texto está mal, cancelá la
+                                actividad y cargá una nueva.
+                            </p>
                             <div class="reclamo-fila">
                                 <div class="reclamo-campo">
                                     <label for="edit-tecnico-{{ r.id }}">Técnico</label>
@@ -226,16 +247,32 @@
                                            value="{{ r.fecha }}" required>
                                 </div>
                             </div>
-                            <div class="reclamo-campo">
-                                <label for="edit-mensaje-{{ r.id }}">Mensaje</label>
-                                <textarea name="mensaje" id="edit-mensaje-{{ r.id }}"
-                                          rows="3" required>{{ r.mensaje }}</textarea>
-                            </div>
                             <button type="submit" class="btn btn-primary btn-sm">
                                 <i class="bi bi-check-lg"></i> Guardar cambios
                             </button>
                             <button type="button" class="btn btn-secondary btn-sm"
                                     onclick="abrirEdicion({{ r.id }})">Cancelar</button>
+                        </form>
+
+                        {# Cancelar la actividad: el trabajo no se hizo y no se va
+                           a hacer. Queda el registro de que se pidio y por que no. #}
+                        <form method="POST" action="{{ url_for('reclamos_cancelar') }}"
+                              class="act-cancelar" id="act-cancelar-{{ r.id }}" hidden
+                              onsubmit="return confirm('¿Cancelar esta actividad? El técnico deja de verla.');">
+                            <input type="hidden" name="reclamo_id" value="{{ r.id }}">
+                            <label for="cancel-motivo-{{ r.id }}">
+                                ¿Por qué no se va a hacer?
+                            </label>
+                            <input type="text" name="motivo" id="cancel-motivo-{{ r.id }}"
+                                   class="form-control" required
+                                   placeholder="Ej: el cliente lo resolvió · se reprogramó · me equivoqué de dirección">
+                            <div class="act-cancelar-botones">
+                                <button type="submit" class="btn btn-dark btn-sm">
+                                    <i class="bi bi-slash-circle"></i> Cancelar actividad
+                                </button>
+                                <button type="button" class="btn btn-secondary btn-sm"
+                                        onclick="abrirCancelacion({{ r.id }})">Volver</button>
+                            </div>
                         </form>
                     {% endif %}
                 </div>
@@ -251,6 +288,11 @@
 <script>
     function abrirEdicion(id) {
         const form = document.getElementById('act-editar-' + id);
+        if (form) form.hidden = !form.hidden;
+    }
+
+    function abrirCancelacion(id) {
+        const form = document.getElementById('act-cancelar-' + id);
         if (form) form.hidden = !form.hidden;
     }
 </script>

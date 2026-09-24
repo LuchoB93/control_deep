@@ -94,9 +94,21 @@
         .btn-subir:hover {
             background: #5a6fd6;
         }
+
+        .firma-volver {
+            margin-bottom: 16px;
+        }
     </style>
 </head>
 <body>
+
+    <div class="firma-volver" id="firma-volver" hidden>
+        <a href="{{ url_for('tecnico') if session.rol == 'tecnico'
+                   else (url_for('jefe') if session.rol == 'jefe' else url_for('admin')) }}"
+           class="btn btn-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Volver al panel
+        </a>
+    </div>
 
     {% if mensaje %}
         <div class="alert alert-success">{{ mensaje }}</div>
@@ -195,6 +207,13 @@
             .catch(error => {
                 alert('Error de conexión: ' + error);
             });
+        }
+    </script>
+    <script>
+        // window.self === window.top solo cuando la pagina NO esta dentro de
+        // un iframe. En el panel de soporte va embebida y el boton sobra.
+        if (window.self === window.top) {
+            document.getElementById('firma-volver').hidden = false;
         }
     </script>
 </body>

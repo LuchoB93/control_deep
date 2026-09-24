@@ -36,6 +36,10 @@
                 <i class="bi bi-clock-history"></i>
                 <span>Historial</span>
             </a>
+            <a href="#" class="sidebar-link" data-section="justificados" onclick="cambiarSeccion('justificados')">
+                <i class="bi bi-calendar-x"></i>
+                <span>Turnos justificados</span>
+            </a>
             <a href="{{ url_for('reclamos') }}" class="sidebar-link">
                 <i class="bi bi-chat-left-text"></i>
                 <span>Actividades coordinadas</span>
@@ -359,6 +363,10 @@
                                 <i class="bi bi-calendar-x"></i> Turnos justificados
                             </span>
                         </div>
+                        <button type="button" class="inicio-ir mb-2"
+                                onclick="cambiarSeccion('justificados')">
+                            Ver todos <i class="bi bi-arrow-right"></i>
+                        </button>
                         <ul class="inicio-lista">
                             {% for j in inicio.justificaciones %}
                                 <li>
@@ -639,12 +647,16 @@
             {# Historial de controles. Arranca con toda la flota; al tocar una
                tarjeta se filtra por esa patente sin cambiar de pantalla. #}
             <div class="card mt-3">
-                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                    <strong><i class="bi bi-list-ul"></i> Controles realizados</strong>
+                <button type="button" class="card-header bloque-cabecera"
+                        onclick="alternarBloque('bloque-controles', this)">
+                    <span>
+                        <i class="bi bi-chevron-down bloque-flecha"></i>
+                        <strong><i class="bi bi-list-ul"></i> Controles realizados</strong>
+                    </span>
                     <span class="text-muted small" id="hist-resumen"></span>
-                </div>
+                </button>
 
-                <div class="card-body">
+                <div class="card-body" id="bloque-controles">
                     <div class="hist-filtros">
                         <div class="hist-filtro">
                             <label for="hist-patente">Camioneta</label>
@@ -719,8 +731,226 @@
                     </div>
                 </div>
             </div>
+
+            {# Segundo bloque: rastrear un elemento a lo largo del tiempo.
+               Responde lo que la vista por fecha no responde: este elemento,
+               ¿cuántas veces faltó y desde cuándo? #}
+            <div class="card mt-3">
+                <button type="button" class="card-header bloque-cabecera"
+                        onclick="alternarBloque('bloque-rastreo', this, cargarRastreo)">
+                    <span>
+                        <i class="bi bi-chevron-right bloque-flecha"></i>
+                        <strong><i class="bi bi-search"></i> Rastrear elemento</strong>
+                    </span>
+                    <span class="text-muted small" id="rastreo-resumen"></span>
+                </button>
+
+                <div class="card-body" id="bloque-rastreo" hidden>
+                    <p class="text-muted small">
+                        Historia completa de cada elemento. Si arriba elegiste una
+                        camioneta, se rastrea solo esa; si no, toda la flota.
+                    </p>
+
+                    <div class="rastreo-buscador">
+                        <i class="bi bi-search"></i>
+                        <input type="text" id="rastreo-buscar" class="form-control"
+                               placeholder="Buscar elemento… (ej: GUANTES)"
+                               oninput="filtrarRastreo(this.value)">
+                    </div>
+
+                    <div id="rastreo-lista" class="rastreo-lista">
+                        <p class="text-muted">Cargando…</p>
+                    </div>
+                </div>
+            </div>
         </div>
 
+        <!-- ========================================== -->
+        <!-- SECCIÓN: TURNOS JUSTIFICADOS -->
+        <!-- ========================================== -->
+        <div id="seccion-justificados" class="seccion-content" style="display:none;">
+            <div class="seccion-header">
+                <h1><i class="bi bi-calendar-x"></i> Turnos justificados</h1>
+                <p class="text-muted">
+                    Turnos que quedaron sin control porque la camioneta no salió.
+                    Acá quedan registrados, se corrige el motivo y se pueden deshacer.
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <form method="GET" action="{{ url_for('admin') }}" class="hist-filtros">
+                        {# Sin esto, filtrar te devuelve a la sección Inicio. #}
+                        <input type="hidden" name="seccion" value="justificados">
+
+                        <div class="hist-filtro">
+                            <label for="j-patente">Camioneta</label>
+                            <select name="j_patente" id="j-patente" class="form-control form-control-sm">
+                                <option value="">Todas</option>
+                                {% for c in camionetas %}
+                                    <option value="{{ c.patente }}"
+                                            {% if filtros_justificados.patente == c.patente %}selected{% endif %}>
+                                        {{ c.patente }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="j-motivo">Motivo</label>
+                            <select name="j_motivo" id="j-motivo" class="form-control form-control-sm">
+                                <option value="">Todos</option>
+                                {% for clave, etiqueta in motivos_no_realizado.items() %}
+                                    <option value="{{ clave }}"
+                                            {% if filtros_justificados.motivo == clave %}selected{% endif %}>
+                                        {{ etiqueta }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="j-desde">Desde</label>
+                            <input type="date" name="j_desde" id="j-desde"
+                                   class="form-control form-control-sm"
+                                   value="{{ filtros_justificados.desde }}">
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="j-hasta">Hasta</label>
+                            <input type="date" name="j_hasta" id="j-hasta"
+                                   class="form-control form-control-sm"
+                                   value="{{ filtros_justificados.hasta }}">
+                        </div>
+
+                        <div class="hist-filtro hist-filtro-accion">
+                            <label class="just-ver-anuladas">
+                                <input type="checkbox" name="j_anuladas" value="1"
+                                       {% if filtros_justificados.anuladas %}checked{% endif %}>
+                                Ver las deshechas
+                            </label>
+                        </div>
+
+                        <div class="hist-filtro hist-filtro-accion">
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="bi bi-search"></i> Filtrar
+                            </button>
+                            <a href="{{ url_for('admin', seccion='justificados') }}"
+                               class="btn btn-secondary btn-sm">
+                                <i class="bi bi-x-circle"></i> Limpiar
+                            </a>
+                        </div>
+                    </form>
+
+                    <div class="just-lista">
+                        {% for j in justificados %}
+                            <div class="just-item {{ 'just-item-anulado' if j.anulado }}">
+                                <div class="just-item-top">
+                                    <span class="just-patente">{{ j.patente }}</span>
+                                    <span class="just-turno">
+                                        <i class="bi bi-calendar3"></i>
+                                        {{ j.fecha_turno }} {{ j.jornada }}
+                                    </span>
+                                    <span class="badge bg-secondary">{{ j.motivo_etiqueta }}</span>
+                                    {% if j.anulado %}
+                                        <span class="badge bg-dark">Deshecha</span>
+                                    {% endif %}
+
+                                    <span class="just-acciones">
+                                        {% if not j.anulado %}
+                                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                                    title="Corregir el motivo"
+                                                    onclick="abrirEditarJustificacion({{ j.id }})">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                            {% if j.anulable %}
+                                                {# Solo dentro de los 10 minutos: deshacer
+                                                   vuelve a trabar la camioneta. #}
+                                                <form method="POST" class="d-inline"
+                                                      action="{{ url_for('anular_justificacion') }}"
+                                                      onsubmit="return confirm('¿Deshacer? El turno vuelve a figurar como pendiente y la camioneta se traba.');">
+                                                    <input type="hidden" name="justificacion_id" value="{{ j.id }}">
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                                            title="Deshacer">
+                                                        <i class="bi bi-arrow-counterclockwise"></i>
+                                                    </button>
+                                                </form>
+                                            {% endif %}
+                                        {% endif %}
+                                    </span>
+                                </div>
+
+                                <div class="just-meta">
+                                    Técnico: {{ j.tecnico or '—' }} ·
+                                    justificó {{ j.justificado_por or '—' }}
+                                    {% if j.fecha_registro %}
+                                        el {{ j.fecha_registro[:16]|replace('T', ' ') }}
+                                    {% endif %}
+                                    {% if j.anulado and j.anulado_por %}
+                                        · deshecha por {{ j.anulado_por }}
+                                    {% endif %}
+                                    {% if not j.anulado and not j.anulable %}
+                                        · <span class="text-muted">ya no se puede deshacer</span>
+                                    {% endif %}
+                                </div>
+
+                                {% if j.comentario %}
+                                    <div class="just-comentario">
+                                        <i class="bi bi-chat-left-text"></i> {{ j.comentario }}
+                                    </div>
+                                {% endif %}
+
+                                {% if not j.anulado %}
+                                    <form method="POST" class="just-editar" id="just-editar-{{ j.id }}" hidden
+                                          action="{{ url_for('editar_justificacion') }}">
+                                        <input type="hidden" name="justificacion_id" value="{{ j.id }}">
+                                        <div class="hist-filtros">
+                                            <div class="hist-filtro">
+                                                <label for="je-motivo-{{ j.id }}">Motivo</label>
+                                                <select name="motivo" id="je-motivo-{{ j.id }}"
+                                                        class="form-control form-control-sm" required>
+                                                    {% for clave, etiqueta in motivos_no_realizado.items() %}
+                                                        <option value="{{ clave }}"
+                                                                {% if j.motivo == clave %}selected{% endif %}>
+                                                            {{ etiqueta }}
+                                                        </option>
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <div class="hist-filtro">
+                                                <label for="je-comentario-{{ j.id }}">Aclaración</label>
+                                                <input type="text" name="comentario" id="je-comentario-{{ j.id }}"
+                                                       class="form-control form-control-sm"
+                                                       value="{{ j.comentario or '' }}">
+                                            </div>
+                                            <div class="hist-filtro hist-filtro-accion">
+                                                <button type="submit" class="btn btn-primary btn-sm">
+                                                    <i class="bi bi-check-lg"></i> Guardar
+                                                </button>
+                                                <button type="button" class="btn btn-secondary btn-sm"
+                                                        onclick="abrirEditarJustificacion({{ j.id }})">
+                                                    Cancelar
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <p class="text-muted small mb-0">
+                                            La camioneta y el día no se cambian acá: eso es el turno,
+                                            no la justificación.
+                                        </p>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        {% else %}
+                            <p class="text-muted text-center py-4">
+                                No hay turnos justificados con esos filtros.
+                            </p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
         <!-- ========================================== -->
         <!-- SECCIÓN 4: REMITOS -->
         <!-- ========================================== -->
@@ -816,7 +1046,7 @@
                 document.getElementById('sidebar').classList.remove('active');
             }
             
-            localStorage.setItem('adminSeccion', seccion);
+            localStorage.setItem('ultrahubSeccion', seccion);
             
             if (seccion === 'remitos') {
                 cargarRemitos();
@@ -846,6 +1076,225 @@
                     if (nueva) actual.replaceWith(nueva);
                 })
                 .catch(() => { /* si falla se deja lo que ya estaba a la vista */ });
+        }
+
+        // ==========================================
+        // BLOQUES DESPLEGABLES DEL HISTORIAL
+        // ==========================================
+
+        function alternarBloque(id, boton, alAbrir) {
+            const cuerpo = document.getElementById(id);
+            const flecha = boton.querySelector('.bloque-flecha');
+            const abriendo = cuerpo.hidden;
+            cuerpo.hidden = !abriendo;
+            flecha.className = abriendo
+                ? 'bi bi-chevron-down bloque-flecha'
+                : 'bi bi-chevron-right bloque-flecha';
+            if (abriendo && typeof alAbrir === 'function') alAbrir();
+        }
+
+        // ==========================================
+        // RASTREAR ELEMENTO
+        // ==========================================
+
+        let rastreoCargado = false;
+
+        function cargarRastreo(forzar) {
+            if (rastreoCargado && !forzar) return;
+            const lista = document.getElementById('rastreo-lista');
+            lista.innerHTML = '<p class="text-muted">Cargando…</p>';
+
+            // Se respeta la camioneta elegida arriba: rastrear "GUANTES" en
+            // toda la flota cuando estabas mirando una camioneta puntual no
+            // es lo que uno espera.
+            const patente = document.getElementById('hist-patente').value;
+            const url = '/api/historial/elementos' + (patente ? '?patente=' + encodeURIComponent(patente) : '');
+
+            fetch(url)
+                .then(r => r.json())
+                .then(data => {
+                    rastreoCargado = true;
+                    pintarRastreo(data);
+                })
+                .catch(() => {
+                    lista.innerHTML = '<p class="text-danger">No se pudo cargar el rastreo.</p>';
+                });
+        }
+
+        function pintarRastreo(data) {
+            const lista = document.getElementById('rastreo-lista');
+            const resumen = document.getElementById('rastreo-resumen');
+
+            if (!data.elementos.length) {
+                lista.innerHTML = '<p class="text-muted">Todavía no hay reportes de elementos.</p>';
+                resumen.textContent = '';
+                return;
+            }
+
+            const patente = document.getElementById('hist-patente').value;
+            resumen.textContent = patente
+                ? `${data.elementos.length} elementos · ${patente}`
+                : `${data.elementos.length} elementos · toda la flota`;
+
+            // Agrupados por categoría, como en el historial viejo.
+            const porCategoria = {};
+            data.elementos.forEach(e => {
+                (porCategoria[e.categoria] = porCategoria[e.categoria] || []).push(e);
+            });
+
+            lista.innerHTML = Object.keys(porCategoria).map(cat => `
+                <div class="rastreo-categoria">
+                    <div class="rastreo-categoria-titulo">
+                        ${escapar(data.categorias[cat] || cat)}
+                        <span class="badge bg-secondary">${porCategoria[cat].length}</span>
+                    </div>
+                    ${porCategoria[cat].map(filaRastreo).join('')}
+                </div>`).join('');
+        }
+
+        function claseEstado(estado) {
+            if (estado === 'OK' || estado === 'PRESENTE') return 'ok';
+            if (estado === 'RESUELTO') return 'resuelto';
+            if (estado === 'FALTANTE') return 'faltante';
+            return 'observacion';
+        }
+
+        function filaRastreo(e) {
+            const clave = (e.elemento + (e.patente || '')).replace(/[^A-Za-z0-9]/g, '_');
+            const badgeFalt = e.faltantes
+                ? `<span class="badge bg-danger">${e.faltantes} faltó</span>` : '';
+            const badgeRes = e.resueltos
+                ? `<span class="badge bg-success">${e.resueltos} repuesto</span>` : '';
+
+            const eventos = e.registros.map(r => `
+                <div class="rastreo-evento ${claseEstado(r.estado)}">
+                    <div class="rastreo-evento-top">
+                        <span class="rastreo-fecha">
+                            <i class="bi bi-calendar3"></i>
+                            ${escapar((r.fecha_hora || '').slice(0, 16).replace('T', ' '))}
+                        </span>
+                        <span class="badge ${r.estado === 'OK' || r.estado === 'RESUELTO' ? 'bg-success' : 'bg-warning text-dark'}">
+                            ${escapar(r.estado)}
+                        </span>
+                        ${r.patente && !e.patente ? `<span class="rastreo-pat">${escapar(r.patente)}</span>` : ''}
+                        <span class="rastreo-tecnico">${escapar(r.tecnico || '—')}</span>
+                    </div>
+                    ${r.descripcion ? `<div class="rastreo-texto">${escapar(r.descripcion)}</div>` : ''}
+                    ${r.fecha_resolucion ? `
+                        <div class="rastreo-texto rastreo-resuelto">
+                            <i class="bi bi-check-circle"></i>
+                            Resuelto el ${escapar(r.fecha_resolucion.slice(0, 16).replace('T', ' '))}
+                            ${r.resuelto_por ? 'por ' + escapar(r.resuelto_por) : ''}
+                            ${r.comentario_resolucion ? '· ' + escapar(r.comentario_resolucion) : ''}
+                        </div>` : ''}
+                    ${r.entregado_por ? `
+                        <div class="rastreo-texto">
+                            <i class="bi bi-box-seam"></i>
+                            Entregó ${escapar(r.entregado_por)}
+                            ${r.recibido_por ? '· recibió ' + escapar(r.recibido_por) : ''}
+                            ${r.motivo_reposicion ? '· ' + escapar(r.motivo_reposicion) : ''}
+                        </div>` : ''}
+                </div>`).join('');
+
+            return `
+                <div class="rastreo-elemento" data-nombre="${escapar(e.elemento.toUpperCase())}">
+                    <button type="button" class="rastreo-elemento-cabecera"
+                            onclick="alternarRastreo('${clave}', this)">
+                        <span class="rastreo-nombre">
+                            <i class="bi bi-chevron-right rastreo-flecha"></i>
+                            ${escapar(e.elemento)}
+                            ${e.patente ? `<small class="text-muted">${escapar(e.patente)}</small>` : ''}
+                        </span>
+                        <span class="rastreo-chips">
+                            ${badgeFalt} ${badgeRes}
+                            <span class="rastreo-ultimo">
+                                Último: <span class="est-${claseEstado(e.ultimo.estado)}">${escapar(e.ultimo.estado)}</span>
+                                · ${escapar((e.ultimo.fecha_hora || '').slice(0, 10))}
+                            </span>
+                        </span>
+                    </button>
+                    <div class="rastreo-linea" id="rastreo-${clave}" hidden>${eventos}</div>
+                </div>`;
+        }
+
+        function alternarRastreo(clave, boton) {
+            const linea = document.getElementById('rastreo-' + clave);
+            const flecha = boton.querySelector('.rastreo-flecha');
+            const abriendo = linea.hidden;
+            linea.hidden = !abriendo;
+            flecha.className = abriendo
+                ? 'bi bi-chevron-down rastreo-flecha'
+                : 'bi bi-chevron-right rastreo-flecha';
+        }
+
+        function filtrarRastreo(texto) {
+            const buscado = texto.trim().toUpperCase();
+            document.querySelectorAll('.rastreo-elemento').forEach(el => {
+                el.hidden = buscado && !el.dataset.nombre.includes(buscado);
+            });
+            // Una categoría sin elementos visibles se esconde entera.
+            document.querySelectorAll('.rastreo-categoria').forEach(cat => {
+                const visibles = [...cat.querySelectorAll('.rastreo-elemento')]
+                    .filter(el => !el.hidden).length;
+                cat.hidden = visibles === 0;
+            });
+        }
+
+        // ==========================================
+        // VISOR DE FOTOS
+        // ==========================================
+
+        // Las fotos del control que se está mirando, para poder pasar de una a
+        // otra sin cerrar el visor.
+        let fotosAbiertas = [];
+        let fotoActual = 0;
+
+        function abrirFoto(controlId, indice) {
+            const carpeta = FOTOS_POR_CONTROL[controlId] || [];
+            fotosAbiertas = carpeta.filter(f => f.url);
+            if (!fotosAbiertas.length) return;
+            fotoActual = Math.max(0, Math.min(indice, fotosAbiertas.length - 1));
+            pintarFoto();
+            document.getElementById('visor-fondo').hidden = false;
+            document.getElementById('visor').hidden = false;
+            document.body.classList.add('sin-scroll');
+        }
+
+        function pintarFoto() {
+            const f = fotosAbiertas[fotoActual];
+            document.getElementById('visor-img').src = f.url;
+            document.getElementById('visor-img').alt = f.etiqueta;
+            document.getElementById('visor-etiqueta').textContent = f.etiqueta;
+            document.getElementById('visor-contador').textContent =
+                `${fotoActual + 1} de ${fotosAbiertas.length}`;
+            document.getElementById('visor-descargar').href = f.url;
+            const solaUna = fotosAbiertas.length < 2;
+            document.getElementById('visor-antes').hidden = solaUna;
+            document.getElementById('visor-despues').hidden = solaUna;
+        }
+
+        function moverFoto(paso) {
+            // Da la vuelta: desde la última, "siguiente" lleva a la primera.
+            fotoActual = (fotoActual + paso + fotosAbiertas.length) % fotosAbiertas.length;
+            pintarFoto();
+        }
+
+        function cerrarFoto() {
+            document.getElementById('visor-fondo').hidden = true;
+            document.getElementById('visor').hidden = true;
+            document.body.classList.remove('sin-scroll');
+        }
+
+        document.addEventListener('keydown', function (e) {
+            if (document.getElementById('visor').hidden) return;
+            if (e.key === 'Escape') cerrarFoto();
+            if (e.key === 'ArrowRight') moverFoto(1);
+            if (e.key === 'ArrowLeft') moverFoto(-1);
+        });
+
+        function abrirEditarJustificacion(id) {
+            const form = document.getElementById('just-editar-' + id);
+            if (form) form.hidden = !form.hidden;
         }
 
         // ==========================================
@@ -899,6 +1348,10 @@
         // ==========================================
         // HISTORIAL (tarjetas + controles de la flota)
         // ==========================================
+
+        // Fotos ya traidas, por id de control. El visor las usa para pasar de
+        // una a otra sin volver a pedirlas.
+        const FOTOS_POR_CONTROL = {};
 
         // Cuantos controles hay cargados ahora mismo en la lista. Sirve para
         // que "Ver mas" pida la tanda siguiente en vez de volver a la primera.
@@ -1024,6 +1477,8 @@
                 t.classList.toggle('activa', !yaEstaba && t.dataset.patente === patente);
             });
             recargarHistorial();
+            // El rastreo sigue a la camioneta elegida, si esta desplegado.
+            if (!document.getElementById('bloque-rastreo').hidden) cargarRastreo(true);
         }
 
         // Desde el selector de la sección Reportes.
@@ -1074,6 +1529,8 @@
             let bloqueFotos = '';
             if (data.ve_fotos) {
                 const sacadas = data.fotos.filter(f => f.url);
+                // Se guardan para que el visor pueda pasar de una a otra.
+                FOTOS_POR_CONTROL[data.control.id] = data.fotos;
                 bloqueFotos = `
                     <div class="hist-fotos">
                         <div class="hist-fotos-titulo">
@@ -1083,11 +1540,13 @@
                         </div>
                         ${sacadas.length ? `
                             <div class="hist-fotos-grilla">
-                                ${data.fotos.map(f => f.url ? `
+                                ${data.fotos.map((f, i) => f.url ? `
                                     <figure class="hist-foto">
-                                        <a href="${f.url}" target="_blank" rel="noopener">
+                                        <button type="button" class="hist-foto-abrir"
+                                                onclick="abrirFoto(${data.control.id}, ${sacadas.indexOf(f)})"
+                                                title="Ver ${escapar(f.etiqueta)}">
                                             <img src="${f.url}" alt="${escapar(f.etiqueta)}" loading="lazy">
-                                        </a>
+                                        </button>
                                         <figcaption>
                                             ${escapar(f.etiqueta)}
                                             <a href="${f.url}" download
@@ -1296,7 +1755,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             const pedida = {{ seccion_inicial|tojson }};
             const patentePedida = {{ patente_inicial|tojson }};
-            const seccionGuardada = pedida || localStorage.getItem('adminSeccion') || 'inicio';
+            const seccionGuardada = pedida || localStorage.getItem('ultrahubSeccion') || 'inicio';
             cambiarSeccion(seccionGuardada);
             if (pedida === 'historial' && patentePedida) {
                 filtrarHistorialPor(patentePedida);
@@ -1805,5 +2264,36 @@
             </div>
         </form>
     </div>
+    {# Visor de fotos. Antes cada foto se abria en otra pestana y perdias el
+       control que estabas mirando; ahora se abre encima y se pasa de una a
+       otra con las flechas. #}
+    <div class="visor-fondo" id="visor-fondo" hidden onclick="cerrarFoto()"></div>
+
+    <div class="visor" id="visor" hidden role="dialog" aria-modal="true">
+        <div class="visor-barra">
+            <span class="visor-etiqueta" id="visor-etiqueta"></span>
+            <span class="visor-contador" id="visor-contador"></span>
+            <a class="visor-accion" id="visor-descargar" download title="Descargar">
+                <i class="bi bi-download"></i>
+            </a>
+            <button type="button" class="visor-accion" onclick="cerrarFoto()"
+                    aria-label="Cerrar">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+
+        <div class="visor-cuerpo">
+            <button type="button" class="visor-flecha visor-antes" id="visor-antes"
+                    onclick="moverFoto(-1)" aria-label="Anterior">
+                <i class="bi bi-chevron-left"></i>
+            </button>
+            <img id="visor-img" alt="">
+            <button type="button" class="visor-flecha visor-despues" id="visor-despues"
+                    onclick="moverFoto(1)" aria-label="Siguiente">
+                <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+    </div>
+
 </body>
 </html>
