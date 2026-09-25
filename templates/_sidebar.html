@@ -157,7 +157,7 @@
 
     <div class="sidebar-footer">
         <span class="user-name">{{ session.nombre }}</span>
-        <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm">Salir</a>
+        <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm btn-texto">Salir</a>
     </div>
 </div>
 
@@ -187,3 +187,5 @@
         }
     })();
 </script>
+
+{% include '_tiempo_real.html' %}

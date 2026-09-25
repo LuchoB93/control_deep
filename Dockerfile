@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Los datos van en un volumen; ver docker-compose.yml.
-RUN mkdir -p /app/remitos /app/static/firmas
+RUN mkdir -p /app/remitos /app/static/firmas /app/fotos
 
 # Usuario sin privilegios.
 RUN useradd --create-home --uid 1000 control \

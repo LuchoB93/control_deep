@@ -87,11 +87,20 @@
             </div>
 
             <div style="padding: 12px;">
-                <p class="small text-muted mb-3">
-                    <i class="bi bi-info-circle"></i>
-                    Sacá las 5 fotos con la cámara, en el momento. No se puede
-                    subir desde la galería.
-                </p>
+                {% if fotos_obligatorias %}
+                    <p class="small text-muted mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        Sacá las 5 fotos con la cámara, en el momento. No se puede
+                        subir desde la galería.
+                    </p>
+                {% else %}
+                    {# CONTROL_FOTOS_OBLIGATORIAS=0: solo para probar desde la PC. #}
+                    <div class="alert alert-warning small py-2 mb-3">
+                        <i class="bi bi-exclamation-triangle-fill"></i>
+                        <strong>Modo prueba:</strong> las fotos son opcionales y el
+                        control se puede finalizar sin ellas. No usar así en producción.
+                    </div>
+                {% endif %}
 
                 <div class="fotos-grid">
                     {% for f in fotos_control %}
@@ -300,6 +309,8 @@
     <!-- ========================================== -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Falso solo en modo prueba (CONTROL_FOTOS_OBLIGATORIAS=0).
+        const FOTOS_OBLIGATORIAS = {{ fotos_obligatorias|tojson }};
         // ==========================================
         // CHECKLIST POR LA POSITIVA
         // ==========================================
@@ -369,8 +380,10 @@
                 badgeFotos.classList.toggle('bg-success', fotosListas === totalFotos);
             }
 
-            const total = items.length + 1 + totalFotos;   // ítems + km + fotos
-            const hechos = marcados.length + kmCargado + fotosListas;
+            // En modo prueba las fotos no cuentan para llegar al 100%.
+            const total = items.length + 1 + (FOTOS_OBLIGATORIAS ? totalFotos : 0);
+            const hechos = marcados.length + kmCargado
+                         + (FOTOS_OBLIGATORIAS ? fotosListas : 0);
             const porcentaje = Math.round((hechos / total) * 100);
             document.getElementById('contador-progreso').textContent = porcentaje + '%';
 
@@ -383,6 +396,138 @@
         }
 
         // ==========================================
+        // COMPRESIÓN DE FOTOS EN EL NAVEGADOR
+        // ==========================================
+        // Redimensiona y comprime la imagen ANTES de subirla, usando canvas.
+        // Una foto de celular de 12 MP pesa 5-10 MB; con esto queda en ~200 KB.
+        // Evita:
+        //   1) Que el navegador del celular se quede sin memoria al procesarla.
+        //   2) Que la subida por red móvil tarde una eternidad.
+        //   3) Que el túnel bloquee el upload por tamaño.
+        // Si por algún motivo falla, devuelve el archivo original sin comprimir
+        // (mejor subir la foto grande que no subir nada).
+        //
+        // Las fotos que ya son livianas se suben tal cual: no ganan nada con
+        // pasar por el canvas y así conservan su EXIF completo.
+        const COMPRIMIR_DESDE = 1.5 * 1024 * 1024;
+
+        function comprimirImagen(archivo, maxAncho = 1600, calidad = 0.8) {
+            if (archivo.size < COMPRIMIR_DESDE) return Promise.resolve(archivo);
+            return new Promise((resolve) => {
+                const img = new Image();
+                const url = URL.createObjectURL(archivo);
+
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    try {
+                        let { width, height } = img;
+
+                        // Solo redimensionamos si es más grande que el máximo.
+                        // Una foto ya chica se deja como está.
+                        if (width > maxAncho) {
+                            height = Math.round(height * maxAncho / width);
+                            width = maxAncho;
+                        }
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        // JPEG no tiene transparencia: sin fondo, un PNG con
+                        // partes transparentes queda en negro.
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(0, 0, width, height);
+                        ctx.drawImage(img, 0, 0, width, height);
+
+                        canvas.toBlob(
+                            (blob) => {
+                                if (!blob) {
+                                    // toBlob devolvió null: mejor el original.
+                                    resolve(archivo);
+                                    return;
+                                }
+                                // Mantenemos el nombre original pero con extensión .jpg
+                                const nombreBase = archivo.name.replace(/\.[^.]+$/, '');
+                                const nuevo = new File(
+                                    [blob],
+                                    nombreBase + '.jpg',
+                                    { type: 'image/jpeg' }
+                                );
+                                resolve(nuevo);
+                            },
+                            'image/jpeg',
+                            calidad
+                        );
+                    } catch (e) {
+                        console.warn('Error al comprimir, se sube el original:', e);
+                        resolve(archivo);
+                    }
+                };
+
+                img.onerror = () => {
+                    URL.revokeObjectURL(url);
+                    console.warn('No se pudo leer la imagen, se sube el original.');
+                    resolve(archivo);
+                };
+
+                img.src = url;
+            });
+        }
+
+        // ==========================================
+        // FECHA DE CAPTURA (EXIF)
+        // ==========================================
+        // El canvas descarta el EXIF, y el servidor usa la fecha de captura
+        // para rechazar fotos viejas sacadas de la galería. Por eso se lee
+        // del archivo original ANTES de comprimir y se manda aparte.
+        // Devuelve 'AAAA:MM:DD HH:MM:SS' o '' si la foto no la trae.
+        async function fechaCapturaExif(archivo) {
+            try {
+                const buffer = await archivo.slice(0, 256 * 1024).arrayBuffer();
+                const vista = new DataView(buffer);
+                if (vista.getUint16(0) !== 0xFFD8) return '';  // no es JPEG
+
+                let pos = 2;
+                while (pos + 10 <= vista.byteLength) {
+                    const marcador = vista.getUint16(pos);
+                    if ((marcador & 0xFF00) !== 0xFF00 || marcador === 0xFFDA) break;
+                    // APP1 que empieza con "Exif"
+                    if (marcador === 0xFFE1 && vista.getUint32(pos + 4) === 0x45786966) {
+                        return leerFechaTiff(vista, pos + 10);
+                    }
+                    pos += 2 + vista.getUint16(pos + 2);
+                }
+            } catch (e) {
+                // EXIF raro o cortado: se sigue sin fecha, el servidor decide.
+            }
+            return '';
+        }
+
+        function leerFechaTiff(vista, tiff) {
+            const le = vista.getUint16(tiff) === 0x4949;  // "II" = little endian
+            const u16 = (o) => vista.getUint16(tiff + o, le);
+            const u32 = (o) => vista.getUint32(tiff + o, le);
+            const buscar = (ifd, tag) => {
+                const cantidad = u16(ifd);
+                for (let i = 0; i < cantidad; i++) {
+                    const entrada = ifd + 2 + i * 12;
+                    if (u16(entrada) === tag) return entrada;
+                }
+                return null;
+            };
+            const punteroExif = buscar(u32(4), 0x8769);  // Exif IFD
+            if (punteroExif === null) return '';
+            const entradaFecha = buscar(u32(punteroExif + 8), 0x9003);  // DateTimeOriginal
+            if (entradaFecha === null) return '';
+            const inicio = u32(entradaFecha + 8);
+            let texto = '';
+            for (let i = 0; i < 19; i++) {
+                texto += String.fromCharCode(vista.getUint8(tiff + inicio + i));
+            }
+            return texto;
+        }
+
+        // ==========================================
         // FOTOS DEL CONTROL
         // ==========================================
         // Cada foto se sube apenas se saca, sin esperar a finalizar el control.
@@ -390,8 +535,8 @@
         // están en el servidor y el control puede retomarse sin repetirlas.
         document.querySelectorAll('.foto-input').forEach(input => {
             input.addEventListener('change', async function() {
-                const archivo = this.files && this.files[0];
-                if (!archivo) return;
+                const archivoOriginal = this.files && this.files[0];
+                if (!archivoOriginal) return;
 
                 const posicion = this.dataset.posicion;
                 const slot = document.querySelector(`.foto-slot[data-posicion="${posicion}"]`);
@@ -400,11 +545,25 @@
 
                 botonera.innerHTML =
                     '<span class="spinner-border spinner-border-sm text-primary"></span>' +
+                    '<span class="ms-2 small text-muted">Comprimiendo…</span>';
+
+                // Mientras se procesa no se puede elegir otra foto encima.
+                this.disabled = true;
+
+                // La fecha se lee del original: la versión comprimida ya no la tiene.
+                const fechaCaptura = await fechaCapturaExif(archivoOriginal);
+                // Comprimimos ANTES de subir. Si falla, se sube el original.
+                const archivo = await comprimirImagen(archivoOriginal);
+
+                botonera.innerHTML =
+                    '<span class="spinner-border spinner-border-sm text-primary"></span>' +
                     '<span class="ms-2 small text-muted">Subiendo…</span>';
 
                 const formData = new FormData();
                 formData.append('foto', archivo);
                 formData.append('posicion', posicion);
+                formData.append('fecha_captura', fechaCaptura);
+                formData.append('ultima_modificacion', archivoOriginal.lastModified || '');
 
                 const controlId = document.getElementById('control-id').value;
 
@@ -452,6 +611,8 @@
                     alert('❌ Error de conexión al subir la foto.');
                     botonera.innerHTML = botonesOriginales;
                     this.value = '';
+                } finally {
+                    this.disabled = false;
                 }
             });
         });
@@ -591,7 +752,7 @@
             // 1) Fotos obligatorias primero: es lo que el técnico ve al llegar
             //    a la camioneta, así el aviso aparece arriba de todo.
             const faltanFotos = fotosFaltantes();
-            if (faltanFotos.length) {
+            if (faltanFotos.length && FOTOS_OBLIGATORIAS) {
                 const primero = document.querySelector('.foto-slot[data-tiene="false"]');
                 alert(`📷 Faltan ${faltanFotos.length} foto(s) obligatoria(s):\n\n` +
                       faltanFotos.map(f => '• ' + f).join('\n'));
@@ -659,7 +820,8 @@
                 : '✅ Revisaste todos los elementos y están en orden. ¿Finalizar control?';
 
             mensaje = `🚐 Kilometraje: ${kilometraje.toLocaleString('es-AR')} km\n` +
-                      `📷 5 fotos cargadas\n\n` + mensaje;
+                      `📷 ${document.querySelectorAll('.foto-slot').length - faltanFotos.length} `
+                      + `de ${document.querySelectorAll('.foto-slot').length} fotos cargadas\n\n` + mensaje;
 
             if (confirm(mensaje)) {
                 guardarControlRapido(problemas, recuperados, revisados, kilometraje);

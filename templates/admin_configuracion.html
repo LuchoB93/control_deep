@@ -109,7 +109,10 @@
             <div class="card-body">
                 <form method="POST" action="{{ url_for('config_camionetas') }}" class="form-inline-config">
                     <input type="hidden" name="accion" value="crear">
-                    <input type="text" name="patente" placeholder="Nueva patente (ej: AA123BB)" required maxlength="12">
+                    <input type="text" name="patente" placeholder="Patente (AA123BB)" required maxlength="9">
+                    <input type="text" name="marca" placeholder="Marca" maxlength="30">
+                    <input type="text" name="modelo" placeholder="Modelo" maxlength="30">
+                    <input type="number" name="anio" placeholder="Año" min="1980" max="2100" style="width: 90px;">
                     <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Agregar</button>
                 </form>
                 <p class="text-muted small mt-2 mb-0">
@@ -120,7 +123,7 @@
 
         <div class="table-responsive">
             <table class="tabla-config">
-                <thead><tr><th>Patente</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <thead><tr><th>Patente · Marca · Modelo · Año</th><th>Estado</th><th>Acciones</th></tr></thead>
                 <tbody>
                 {% for c in camionetas %}
                     <tr class="{% if not c.activa %}fila-inactiva{% endif %}">
@@ -128,8 +131,15 @@
                             <form method="POST" action="{{ url_for('config_camionetas') }}" class="form-linea">
                                 <input type="hidden" name="accion" value="renombrar">
                                 <input type="hidden" name="camioneta_id" value="{{ c.id }}">
-                                <input type="text" name="patente" value="{{ c.patente }}" maxlength="12" required>
-                                <button type="submit" class="btn btn-sm btn-outline-primary" title="Corregir patente">
+                                <input type="text" name="patente" value="{{ c.patente }}" maxlength="9" required
+                                       style="width: 105px;" title="Patente">
+                                <input type="text" name="marca" value="{{ c.marca or '' }}" maxlength="30"
+                                       placeholder="Marca" style="width: 110px;" title="Marca">
+                                <input type="text" name="modelo" value="{{ c.modelo or '' }}" maxlength="30"
+                                       placeholder="Modelo" style="width: 110px;" title="Modelo">
+                                <input type="number" name="anio" value="{{ c.anio or '' }}" min="1980" max="2100"
+                                       placeholder="Año" style="width: 80px;" title="Año">
+                                <button type="submit" class="btn btn-sm btn-outline-primary" title="Guardar cambios">
                                     <i class="bi bi-check-lg"></i>
                                 </button>
                             </form>
@@ -218,7 +228,7 @@
                             </button>
 
                             <button type="button" class="btn btn-sm btn-outline-warning"
-                                    onclick="cambiarPassword({{ u.id }}, '{{ u.usuario }}')">
+                                    onclick='cambiarPassword({{ u.id }}, {{ u.usuario|tojson }})'>
                                 Contraseña
                             </button>
 

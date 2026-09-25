@@ -83,7 +83,7 @@
                        que nadie hizo y el turno que quedó sin control. Si el
                        técnico no aparece, soporte lo cierra a mano. #}
                     <button type="button" class="btn btn-sm btn-warning"
-                            onclick="forzarControl({{ p.camioneta_id }}, '{{ p.tipo }}', '{{ p.patente }}', '{{ p.tecnico }}')">
+                            onclick='forzarControl({{ p.camioneta_id }}, {{ p.tipo|tojson }}, {{ p.patente|tojson }}, {{ p.tecnico|tojson }})'>
                         <i class="bi bi-unlock"></i> Liberar
                     </button>
                     {# Distinto de Liberar: aca la camioneta NO salio (feriado,
@@ -92,7 +92,7 @@
                        que la camioneta si salio y alguien la tiene. #}
                     {% if p.tipo == 'RETIRO' and p.asignacion_id %}
                         <button type="button" class="btn btn-sm btn-outline-secondary"
-                                onclick="justificarControl({{ p.asignacion_id }}, '{{ p.patente }}', '{{ p.fecha }}')">
+                                onclick='justificarControl({{ p.asignacion_id }}, {{ p.patente|tojson }}, {{ p.fecha|tojson }})'>
                             <i class="bi bi-calendar-x"></i> No salió
                         </button>
                     {% endif %}
@@ -118,7 +118,7 @@
                     <small class="text-muted">
                         Reportó {{ e.reportado_por }} &middot;
                         {{ e.fecha[:16]|replace('T', ' ') }}
-                        {% if e.estado == 'EN_CURSO' %} &middot; en curso{% endif %}
+                        {% if e.estado in ("EN_CURSO", "EN_PAUSA") %} &middot; {{ e.estado_etiqueta|lower }}{% endif %}
                     </small>
                 </div>
                 <div class="alerta-item-acciones">

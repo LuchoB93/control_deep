@@ -238,7 +238,7 @@
                         <span class="badge bg-light text-primary">{{ actividades|length }}</span>
                     </h5>
                 </div>
-                                <div class="card-body">
+                <div class="card-body">
                     {% for a in actividades %}
                         <div class="actividad-item {{ 'actividad-zona' if a.destino_tipo == 'zona' }}">{{ a.mensaje }}<span class="actividad-meta">
                                 {{ a.fecha }} &middot;
@@ -293,6 +293,7 @@
                         </div>
                     {% endfor %}
                 </div>
+            </div>
         {% endif %}
 
         {# Retiros que quedaron sin completar. Van fuera del if de asignación:
@@ -665,45 +666,6 @@
             {% endif %}
         </div>
 
-        {% if mis_eventos %}
-            <div class="card mb-4 mt-3">
-                <div class="card-header">
-                    <strong><i class="bi bi-list-check"></i> Lo que reportaste</strong>
-                </div>
-                <div class="card-body">
-                    {% for e in mis_eventos %}
-                        <div class="mi-evento {{ 'mi-evento-cerrado' if not e.abierto }}">
-                            <div class="mi-evento-top">
-                                <strong>{{ e.patente }}</strong>
-                                <span class="badge" style="background: {{ e.importancia_color }};">
-                                    {{ e.importancia_etiqueta }}
-                                </span>
-                                {% if e.estado == 'NUEVO' %}
-                                    <span class="badge bg-primary">Soporte no lo vio todavia</span>
-                                {% elif e.estado == 'EN_CURSO' %}
-                                    <span class="badge bg-warning text-dark">Lo estan viendo</span>
-                                {% elif e.estado == 'RESUELTO' %}
-                                    <span class="badge bg-success">Resuelto</span>
-                                {% else %}
-                                    <span class="badge bg-secondary">Descartado</span>
-                                {% endif %}
-                                <span class="mi-evento-fecha">
-                                    {{ e.fecha[:10] }}
-                                </span>
-                            </div>
-                            <div class="mi-evento-texto">{{ e.mensaje }}</div>
-                            {% if e.comentario_soporte %}
-                                <div class="mi-evento-respuesta">
-                                    <i class="bi bi-chat-right-quote"></i>
-                                    <strong>{{ e.atendido_por }}:</strong> {{ e.comentario_soporte }}
-                                </div>
-                            {% endif %}
-                        </div>
-                    {% endfor %}
-                </div>
-            </div>
-        {% endif %}
-
         {% if camioneta_reporte %}
         <div class="urgencia-fondo" id="reporte-fondo" hidden onclick="cerrarReporte()"></div>
 
@@ -722,9 +684,9 @@
             <form method="POST" action="{{ url_for('reportar_evento') }}" class="urgencia-form">
                 <input type="hidden" name="volver" value="{{ url_for('tecnico') }}">
 
-                {# La camioneta no se elige: es la que tiene asignada. Un reporte
-                   urgente la saca de circulación, así que no puede depender de
-                   un desplegable mal tocado. #}
+                {# La camioneta no se elige: es la que tiene asignada. El reporte
+                   le llega a soporte como algo de esa camioneta, así que no
+                   puede depender de un desplegable mal tocado. #}
                 <div class="urgencia-campo">
                     <label>Camioneta</label>
                     <div class="reporte-camioneta-fija">
@@ -929,6 +891,17 @@
         // FUNCIONES DE NOTIFICACIONES - TÉCNICO
         // ==========================================
 
+        // Escapa texto para meterlo en HTML. Lo que viene de la base lo
+        // escriben personas (descripciones, comentarios, nombres): insertarlo
+        // crudo con innerHTML permitía ejecutar código en la sesión de quien mira.
+        function escapar(texto) {
+            const div = document.createElement('div');
+            div.textContent = texto === null || texto === undefined ? '' : texto;
+            // innerHTML no escapa comillas: sin esto, dentro de un atributo
+            // (title="...", data-x="...") el texto podía cerrar el atributo.
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         function cargarNotificacionesTecnico() {
             fetch('/api/notificaciones')
                 .then(response => response.json())
@@ -961,7 +934,7 @@
                             <div class="alert alert-${pendiente ? 'warning' : 'info'} d-flex justify-content-between align-items-center" id="notif-${notif.id}">
                                 <div>
                                     <i class="bi bi-${notif.reporte_id ? 'file-earmark-pdf' : 'bell'}"></i>
-                                    ${notif.mensaje}
+                                    ${escapar(notif.mensaje)}
                                 </div>
                                 <div class="d-flex align-items-center gap-2">
                                     ${notif.reporte_id ? `<button class="btn btn-sm btn-outline-dark" onclick="abrirVisorRemito(${notif.reporte_id}, ${pendiente})"><i class="bi bi-eye"></i> ${pendiente ? 'Iniciar' : 'Ver'}</button>` : ''}
@@ -1094,5 +1067,6 @@
             cargarNotificacionesTecnico();
         });
     </script>
+    {% include '_tiempo_real.html' %}
 </body>
 </html>

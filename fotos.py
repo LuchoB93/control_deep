@@ -66,6 +66,33 @@ EXTENSIONES = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 # el EXIF lo delata y se rechaza.
 ANTIGUEDAD_MAXIMA = timedelta(hours=2)
 
+# Puntero al sub-bloque Exif dentro del EXIF de la imagen.
+EXIF_IFD = 0x8769
+
+
+def fecha_declarada(fecha_captura, ultima_modificacion, zona_horaria):
+    """La fecha de captura que informó el navegador, como datetime local naive.
+
+    Primero la del EXIF del original ('AAAA:MM:DD HH:MM:SS', hora local del
+    celular, igual que la que lee _fecha_exif). Si la foto no traía EXIF, la
+    fecha de modificación del archivo (milisegundos desde 1970): una foto de
+    la galería suele tenerla vieja, una recién sacada la tiene de ahora.
+    None si no vino ninguna de las dos.
+    """
+    try:
+        if fecha_captura:
+            return datetime.strptime(fecha_captura.strip()[:19], '%Y:%m:%d %H:%M:%S')
+    except ValueError:
+        pass
+    try:
+        milisegundos = int(ultima_modificacion)
+        if milisegundos > 0:
+            return (datetime.fromtimestamp(milisegundos / 1000, zona_horaria)
+                    .replace(tzinfo=None))
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    return None
+
 
 def _carpeta_destino(fotos_dir, patente, fecha):
     """fotos/AA123BB/2026-09/ — creada si no existe."""
@@ -85,16 +112,27 @@ def _fecha_exif(imagen):
         exif = imagen.getexif()
         if not exif:
             return None
-        for tag_id, valor in exif.items():
-            if TAGS.get(tag_id) == 'DateTimeOriginal':
-                return datetime.strptime(valor, '%Y:%m:%d %H:%M:%S')
-    except (AttributeError, ValueError, TypeError):
+        # DateTimeOriginal no está en el primer nivel del EXIF sino en el
+        # sub-bloque Exif (0x8769), que es donde la escriben los celulares.
+        # Antes solo se miraba el primer nivel, así que nunca se encontraba
+        # y ninguna foto vieja se rechazaba.
+        for bloque in (exif.get_ifd(EXIF_IFD), exif):
+            for tag_id, valor in bloque.items():
+                if TAGS.get(tag_id) == 'DateTimeOriginal':
+                    return datetime.strptime(str(valor).strip()[:19], '%Y:%m:%d %H:%M:%S')
+    except (AttributeError, ValueError, TypeError, KeyError):
         return None
     return None
 
 
-def validar_imagen(archivo, momento):
+def validar_imagen(archivo, momento, fecha_declarada=None):
     """(ok, error). Valida formato, tamaño y que la foto sea reciente.
+
+    `fecha_declarada` es la fecha de captura que leyó el navegador del
+    archivo original. Hace falta porque el celular comprime la foto con un
+    canvas antes de subirla, y eso borra el EXIF: sin este dato, cualquier
+    foto de la galería pasaría como recién sacada. Solo se usa cuando la
+    imagen que llega no trae su propia fecha.
 
     No alcanza con mirar la extensión: hay que abrir el archivo. Un .jpg
     renombrado desde un .exe pasaría el filtro de extensión; abrirlo con
@@ -126,7 +164,7 @@ def validar_imagen(archivo, momento):
 
         archivo.stream.seek(0)
         with Image.open(archivo.stream) as img:
-            fecha_exif = _fecha_exif(img)
+            fecha_exif = _fecha_exif(img) or fecha_declarada
 
         if fecha_exif and momento - fecha_exif > ANTIGUEDAD_MAXIMA:
             return False, ('Esta foto no fue sacada en el momento del control. '
@@ -138,14 +176,15 @@ def validar_imagen(archivo, momento):
     return True, None
 
 
-def guardar_foto(archivo, fotos_dir, patente, control_id, posicion, fecha, momento):
+def guardar_foto(archivo, fotos_dir, patente, control_id, posicion, fecha, momento,
+                 fecha_declarada=None):
     """Comprime y guarda una foto. Devuelve (ruta_relativa, error).
 
     La ruta relativa es lo único que va a la base: 'AA123BB/2026-09/xxx.jpg'.
     Guardar la ruta absoluta rompería todo el día que se mueva el servidor
     (es el mismo error que ya se corrigió en las firmas).
     """
-    ok, error = validar_imagen(archivo, momento)
+    ok, error = validar_imagen(archivo, momento, fecha_declarada)
     if not ok:
         return None, error
 

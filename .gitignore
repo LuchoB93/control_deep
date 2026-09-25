@@ -13,6 +13,7 @@ database.db-wal
 database.db-shm
 remitos/
 static/firmas/
+fotos/
 
 # Variables de entorno (contienen la clave de sesión)
 .env
@@ -22,3 +23,5 @@ static/firmas/
 .idea/
 Thumbs.db
 desktop.ini
+.claude/settings.local.json
+backups/

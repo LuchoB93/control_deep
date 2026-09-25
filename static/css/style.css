@@ -4327,3 +4327,438 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
     border-color: #667eea;
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.25);
 }
+
+/* ============================================
+   REPORTES: CARPETAS POR CAMIONETA Y SEGUIMIENTO
+   ============================================ */
+
+/* La regla global de .btn-danger.btn-sm (botón redondo de eliminar de la
+   planilla) convertía cualquier botón rojo chico en un círculo de 28px:
+   "Confirmo: fuera de servicio" se desbordaba. Acá los botones son normales. */
+.ev-botones .btn,
+.ev-botones .btn-danger.btn-sm {
+    width: auto;
+    height: auto;
+    border-radius: 0.2rem;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ev-botones .btn:hover { transform: none; }
+
+.btn-ev-curso { background: #fd7e14; border-color: #fd7e14; color: #fff; }
+.btn-ev-curso:hover { background: #e96b02; color: #fff; }
+.btn-ev-pausa { background: #ffc107; border-color: #ffc107; color: #212529; }
+.btn-ev-pausa:hover { background: #e0a800; color: #212529; }
+
+.ev-retomar {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    color: #6c757d;
+    font-size: 0.8rem;
+}
+
+.ev-retomar input { width: 150px; }
+
+.ev-carpeta {
+    border: 1px solid #e6e6ec;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.ev-carpeta-fuera { border-color: #212529; }
+
+.ev-carpeta-cabecera {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 12px 15px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+.ev-carpeta-cabecera::-webkit-details-marker { display: none; }
+.ev-carpeta-cabecera:hover { background: #f8f9fb; border-radius: 10px; }
+.ev-carpeta-icono { color: #667eea; font-size: 1.15rem; }
+
+.ev-carpeta-flecha {
+    margin-left: auto;
+    color: #adb5bd;
+    transition: transform 0.15s;
+}
+
+.ev-carpeta[open] .ev-carpeta-flecha { transform: rotate(180deg); }
+
+.ev-carpeta-cuerpo {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 12px 12px;
+}
+
+/* Paso a paso del reporte. */
+.ev-seguimiento {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0 0 0 14px;
+    border-left: 2px solid #e3e5ee;
+}
+
+.ev-seguimiento li {
+    position: relative;
+    padding: 4px 0 8px 10px;
+}
+
+.ev-seguimiento li::before {
+    content: '';
+    position: absolute;
+    left: -20px;
+    top: 9px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--estado, #6c757d);
+    box-shadow: 0 0 0 2px #fff;
+}
+
+.ev-paso-top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 0.78rem;
+}
+
+.ev-paso-estado { font-weight: 700; color: var(--estado, #333); }
+.ev-paso-quien { color: #555; }
+.ev-paso-fecha { color: #999; margin-left: auto; }
+.ev-paso-texto { font-size: 0.88rem; white-space: pre-wrap; }
+.ev-paso-retomar { font-size: 0.78rem; color: #8a6d00; }
+
+.ev-bloqueo-decidir {
+    background: #fdf1f1;
+    border-left-color: #dc3545;
+}
+
+.ev-estado[data-estado="EN_PAUSA"] { color: #212529; }
+
+/* Detalle de un control en el historial: un bloque por categoría. */
+.hist-categoria {
+    border: 1px solid #e6e6ec;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: #fff;
+}
+
+.hist-categoria > summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 9px 12px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.hist-categoria > summary::-webkit-details-marker { display: none; }
+.hist-categoria > summary .bi-folder2 { color: #667eea; }
+.hist-categoria[open] > summary { border-bottom: 1px solid #eef0f4; }
+.hist-fila-novedad td { background: #fffaf0; }
+
+/* Botón rojo chico con texto ("Salir"): la regla de .btn-danger.btn-sm lo
+   achicaba a un círculo de 28px pensado para el ícono de eliminar. */
+.btn-danger.btn-sm.btn-texto {
+    width: auto;
+    height: auto;
+    border-radius: 0.2rem;
+    padding: 0.25rem 0.6rem;
+}
+
+/* Badges de importancia y estado de los reportes: el fondo viene inline,
+   el texto tiene que ser blanco (salvo en pausa, que es amarillo). */
+.ev-item .badge[style] { color: #fff; }
+.ev-item .badge.ev-estado[data-estado="EN_PAUSA"] { color: #212529; }
+
+/* ============================================
+   TARJETA DE REPORTE (rediseño)
+   ============================================ */
+.rep {
+    background: #fff;
+    border: 1px solid #e3e5ee;
+    border-left: 5px solid #6c757d;
+    border-radius: 10px;
+    padding: 14px 16px;
+}
+
+.rep.rep-baja { border-left-color: #198754; }
+.rep.rep-media { border-left-color: #ffc107; }
+.rep.rep-alta { border-left-color: #fd7e14; }
+.rep.rep-urgente { border-left-color: #dc3545; }
+.rep.rep-cerrado { background: #f8f9fb; border-left-color: #adb5bd; padding: 10px 14px; margin-top: 8px; }
+
+.rep-cabecera {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.rep .badge[style] { color: #fff; }
+.rep .badge.ev-estado[data-estado="EN_PAUSA"] { color: #212529; }
+
+.rep-circ {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 12px;
+}
+
+.rep-circ-ok { background: #e7f6ec; color: #146c43; }
+.rep-circ-fuera { background: #212529; color: #fff; }
+.rep-circ-decidir { background: #fdeaea; color: #b02a37; }
+
+.rep-mensaje {
+    margin: 10px 0 2px;
+    font-size: 1rem;
+    font-weight: 500;
+    color: #1f2330;
+    white-space: pre-wrap;
+}
+
+.rep-aviso-pausa {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: #fff8db;
+    border-left: 3px solid #ffc107;
+    border-radius: 4px;
+    font-size: 0.88rem;
+}
+
+.rep-historial {
+    margin-top: 10px;
+}
+
+.rep-historial > summary,
+.rep-cerrados > summary {
+    cursor: pointer;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: #667eea;
+    list-style: none;
+}
+
+.rep-historial > summary::-webkit-details-marker,
+.rep-cerrados > summary::-webkit-details-marker { display: none; }
+
+.rep-cerrados {
+    margin-top: 4px;
+    padding: 8px 4px 0;
+    border-top: 1px dashed #dcdce4;
+}
+
+.rep-mini {
+    font-size: 0.7rem;
+    padding: 0 7px;
+    border-radius: 10px;
+}
+
+.rep-mini-fuera { background: #212529; color: #fff; }
+.rep-mini-circula { background: #e7f6ec; color: #146c43; }
+
+.rep-form {
+    margin-top: 12px;
+    padding: 12px;
+    background: #f7f8fc;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.rep-bloque-titulo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 6px;
+}
+
+.rep-bloque-titulo span {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #667eea;
+    color: #fff;
+    font-size: 0.72rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.rep-pasos {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+}
+
+.rep-paso,
+.rep-circ-opcion {
+    margin: 0;
+    cursor: pointer;
+}
+
+.rep-paso input,
+.rep-circ-opcion input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.rep-paso > span {
+    display: block;
+    height: 100%;
+    padding: 9px 11px;
+    background: #fff;
+    border: 2px solid #e0e3ec;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: border-color 0.12s, background 0.12s;
+}
+
+.rep-paso small {
+    display: block;
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: #777;
+}
+
+.rep-paso:hover > span { border-color: #b9bfd3; }
+.rep-paso-en_curso.activo > span { border-color: #fd7e14; background: #fff1e6; }
+.rep-paso-en_pausa.activo > span { border-color: #ffc107; background: #fff8db; }
+.rep-paso-resuelto.activo > span { border-color: #198754; background: #e7f6ec; }
+.rep-paso-descartado.activo > span { border-color: #6c757d; background: #f1f2f4; }
+.rep-paso input:focus-visible + span,
+.rep-circ-opcion input:focus-visible + span { outline: 2px solid #667eea; outline-offset: 2px; }
+
+.rep-fecha {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 0;
+    font-size: 0.85rem;
+    color: #8a6d00;
+}
+
+.rep-fecha[hidden] { display: none; }
+.rep-fecha input { width: 170px; }
+
+.rep-circ-opciones {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.rep-circ-opcion > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: #fff;
+    border: 2px solid #e0e3ec;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.88rem;
+}
+
+.rep-circ-opcion-ok.activo > span { border-color: #198754; background: #e7f6ec; color: #146c43; }
+.rep-circ-opcion-fuera.activo > span { border-color: #212529; background: #212529; color: #fff; }
+
+.rep-bloque-circ[hidden] { display: none; }
+
+.rep-guardar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.rep-guardar .ev-al-calendario { margin-top: 0; }
+
+/* Un estilo global de <header> le ponía borde y márgenes a la cabecera de
+   la tarjeta, y el de textarea la dejaba angosta. */
+header.rep-cabecera {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    background: none;
+    box-shadow: none;
+}
+
+.rep-form textarea.form-control {
+    display: block;
+    width: 100%;
+    min-height: 64px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 0.92rem;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+    background: #fff;
+}
+
+/* Último paso del reporte y formulario plegado. */
+.rep-ultimo {
+    margin-top: 10px;
+    padding: 9px 12px;
+    background: #f8f9fb;
+    border-left: 4px solid var(--estado, #6c757d);
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+.rep-ultimo-top {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.rep-ultimo-top strong { color: var(--estado, #333); }
+.rep-ultimo-top span { font-size: 0.78rem; color: #888; }
+
+.rep-accion { margin-top: 12px; }
+
+.rep-accion-boton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border: 1px solid #667eea;
+    border-radius: 6px;
+    color: #667eea;
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+.rep-accion-boton::-webkit-details-marker { display: none; }
+.rep-accion-boton:hover { background: #f0f2fd; }
+.rep-accion[open] > .rep-accion-boton { display: none; }
+.rep-accion > .rep-form { margin-top: 0; }
+.rep .ev-al-calendario { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }

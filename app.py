@@ -8,6 +8,7 @@ import secrets
 import shutil
 import re
 import calendar as calendario_py
+from urllib.parse import urlencode
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
@@ -87,6 +88,12 @@ REMITOS_DIR = Path(os.environ.get('CONTROL_REMITOS_DIR') or (BASE_DIR / "remitos
 UPLOAD_FOLDER = Path(os.environ.get('CONTROL_FIRMAS_DIR') or (BASE_DIR / "static" / "firmas"))
 FOTOS_DIR = Path(os.environ.get('CONTROL_FOTOS_DIR') or (BASE_DIR / "fotos"))
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+# Las cinco fotos del control son obligatorias. CONTROL_FOTOS_OBLIGATORIAS=0
+# las vuelve opcionales: es solo para probar desde una PC sin cámara. En
+# producción tiene que quedar sin definir (o en 1); la pantalla del control
+# avisa cuando está apagado para que no quede así por descuido.
+FOTOS_OBLIGATORIAS = os.environ.get('CONTROL_FOTOS_OBLIGATORIAS', '1').strip() != '0'
 
 # Tope de subida por request. Las fotos de celular pesan 3-5 MB cada una, y
 # en un mismo control pueden subirse varias juntas.
@@ -182,6 +189,23 @@ CATALOGO_INICIAL = {
 }
 
 CATEGORIAS = ('CAMIONETA', 'HERRAMIENTA', 'CAJA')
+
+# La flota con la que arranca una instalación nueva. Después se administra
+# desde Configuración → Camionetas.
+FLOTA_INICIAL = (
+    ('AE154BU', 'RENAULT', 'KANGOO', 2020),
+    ('AE525PY', 'RENAULT', 'KANGOO', 2021),
+    ('AE805XQ', 'RENAULT', 'KANGOO', 2021),
+    ('NZE374', 'RENAULT', 'KANGOO', 2014),
+    ('AE525PZ', 'RENAULT', 'KANGOO', 2021),
+    ('LHI934', 'FIAT', 'STRADA', 2012),
+    ('AE943RM', 'RENAULT', 'KANGOO', 2021),
+    ('AE805XR', 'RENAULT', 'KANGOO', 2021),
+    ('AF199MD', 'RENAULT', 'KANGOO', 2022),
+)
+
+# Formatos de patente argentinos: el Mercosur (AA123BB) y el anterior (ABC123).
+PATRON_PATENTE = re.compile(r'^([A-Z]{2}\d{3}[A-Z]{2}|[A-Z]{3}\d{3})$')
 
 ETIQUETA_CATEGORIA = {
     'CAMIONETA': 'Camioneta',
@@ -399,41 +423,55 @@ IMPORTANCIA_EVENTO = {
     'BAJA': {'etiqueta': 'Baja', 'ayuda': 'Puede esperar', 'color': '#198754'},
     'MEDIA': {'etiqueta': 'Media', 'ayuda': 'Esta semana', 'color': '#ffc107'},
     'ALTA': {'etiqueta': 'Alta', 'ayuda': 'Hay que verlo ya', 'color': '#fd7e14'},
-    'URGENTE': {'etiqueta': 'Urgente', 'ayuda': 'La camioneta no deberia salir',
+    'URGENTE': {'etiqueta': 'Urgente', 'ayuda': 'Soporte decide si puede salir',
                 'color': '#dc3545'},
 }
 
 # En que anda el reporte. DESCARTADO es para lo que resulto no ser nada o ya
 # estaba resuelto: cerrarlo como RESUELTO mentiria sobre un arreglo que nunca
-# se hizo.
+# se hizo. EN_PAUSA es lo que no se pudo terminar en el momento y sigue otro
+# dia: la cubierta quedo en la gomeria, el taller estaba cerrado.
 ESTADOS_EVENTO = {
     'NUEVO': 'Nuevo',
     'EN_CURSO': 'En curso',
+    'EN_PAUSA': 'En pausa',
     'RESUELTO': 'Resuelto',
     'DESCARTADO': 'Descartado',
 }
 
-ESTADOS_EVENTO_ABIERTOS = ('NUEVO', 'EN_CURSO')
+ESTADOS_EVENTO_ABIERTOS = ('NUEVO', 'EN_CURSO', 'EN_PAUSA')
 
-# Que nivel saca la camioneta de circulacion apenas se reporta. Solo el mas
-# grave: trabar por cualquier aviso dejaria la flota parada por un espejo.
-# Se destraba cuando soporte mira el reporte y decide, no por si sola.
-IMPORTANCIA_QUE_BLOQUEA = ('URGENTE',)
+# Color de cada estado, para el panel de reportes y el calendario.
+COLOR_ESTADO_EVENTO = {
+    'NUEVO': '#0d6efd',
+    'EN_CURSO': '#fd7e14',
+    'EN_PAUSA': '#ffc107',
+    'RESUELTO': '#198754',
+    'DESCARTADO': '#6c757d',
+}
+
+# Un reporte ya no saca la camioneta de circulacion por si solo, ni siquiera
+# el urgente: el tecnico avisa y soporte decide si sale o queda fuera de
+# servicio. Asi un reporte exagerado no deja la flota parada, y la decision
+# queda registrada con nombre y fecha.
 
 
 def camionetas_bloqueadas(conexion):
     """{camioneta_id: evento} de las camionetas que no se pueden retirar.
 
-    Un reporte urgente las saca de circulacion hasta que soporte lo mire. La
-    idea es que un tecnico no pueda dar de baja una camioneta por su cuenta,
-    pero que tampoco tenga que salir con algo que el vio mal.
+    Solo las que soporte saco de circulacion al revisar un reporte. Siguen
+    fuera de servicio mientras el reporte este abierto (incluido en pausa:
+    la camioneta puede estar esperando un repuesto) o hasta que soporte
+    diga que vuelve a circular.
     """
-    filas = conexion.execute("""
+    abiertos = ','.join(f"'{e}'" for e in ESTADOS_EVENTO_ABIERTOS)
+    filas = conexion.execute(f"""
         SELECT e.*, c.patente
         FROM eventos_reportados e
         JOIN camionetas c ON e.camioneta_id = c.id
         WHERE COALESCE(e.bloquea, 0) = 1
-          AND e.estado IN ('NUEVO', 'EN_CURSO')
+          AND c.activa = 1
+          AND e.estado IN ({abiertos})
         ORDER BY e.fecha DESC
     """).fetchall()
 
@@ -706,12 +744,15 @@ def generar_pdf_remito(remito, ruta_pdf):
 # ============================================
 
 def crear_notificacion(tipo, mensaje, patente=None, elemento=None, destinatario_rol='todos',
-                       enlace=None, reporte_id=None, conexion=None):
+                       enlace=None, reporte_id=None, conexion=None, destinatario_usuario_id=None):
     """Crea una notificación en el sistema.
 
     Si se pasa `conexion`, reutiliza la transacción del llamador (indispensable:
     abrir una segunda conexión mientras la ruta ya está escribiendo hace que
     SQLite responda 'database is locked' y la notificación se pierda en silencio).
+
+    Con `destinatario_usuario_id` la ve solo esa persona, sea cual sea su rol:
+    "soporte cerró tu reporte" no le interesa a nadie más.
     """
     propia = conexion is None
     if propia:
@@ -720,9 +761,11 @@ def crear_notificacion(tipo, mensaje, patente=None, elemento=None, destinatario_
         fecha = ahora().isoformat()
         conexion.execute('''
             INSERT INTO notificaciones
-                (tipo, mensaje, patente, elemento, fecha, destinatario_rol, enlace, reporte_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (tipo, mensaje, patente, elemento, fecha, destinatario_rol, enlace, reporte_id))
+                (tipo, mensaje, patente, elemento, fecha, destinatario_rol, enlace,
+                 reporte_id, destinatario_usuario_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (tipo, mensaje, patente, elemento, fecha, destinatario_rol, enlace,
+              reporte_id, destinatario_usuario_id))
         if propia:
             conexion.commit()
         return True
@@ -932,8 +975,41 @@ def desbloquear_elemento(conexion, camioneta_id, elemento):
     ''', (ahora().isoformat(), camioneta_id, elemento))
 
 
-def obtener_notificaciones(rol=None, conexion=None):
-    """Notificaciones sin leer de un rol, con el estado del remito asociado.
+# Qué notificaciones le llegan a cada rol. Soporte y admin comparten la misma
+# bandeja: el rol admin se separó de soporte (admin quedó para configuración),
+# pero las notificaciones se seguían mandando a 'admin' y los usuarios de
+# soporte, que son los que operan, nunca las veían. Y al revés: las que iban a
+# 'soporte' no las veía el admin.
+AUDIENCIA_NOTIFICACIONES = {
+    'admin': ('admin', 'soporte', 'todos'),
+    'soporte': ('admin', 'soporte', 'todos'),
+    'jefe': ('jefe', 'todos'),
+    'tecnico': ('tecnico', 'todos'),
+}
+
+
+def _filtro_notificaciones(rol, usuario_id):
+    """(where, parametros) de las notificaciones que le corresponden a alguien.
+
+    Las personales (destinatario_usuario_id) las ve solo esa persona; las de
+    rol, todos los de ese rol que no la hayan descartado. Descartar es por
+    persona: antes uno la cerraba y desaparecía para todo su rol.
+    """
+    audiencia = AUDIENCIA_NOTIFICACIONES.get(rol, ('todos',))
+    marcas = ','.join('?' for _ in audiencia)
+    where = f'''
+        n.leido = 0
+        AND ((n.destinatario_usuario_id IS NULL AND n.destinatario_rol IN ({marcas}))
+             OR n.destinatario_usuario_id = ?)
+        AND NOT EXISTS (
+            SELECT 1 FROM notificaciones_descartadas d
+            WHERE d.notificacion_id = n.id AND d.usuario_id = ?)
+    '''
+    return where, list(audiencia) + [usuario_id, usuario_id]
+
+
+def obtener_notificaciones(rol, usuario_id, conexion=None):
+    """Notificaciones pendientes de una persona, con el estado del remito asociado.
 
     `remito_cerrable` dice si la alerta se puede descartar: las de un remito
     quedan fijas hasta que el remito termina su circuito, para que nadie las
@@ -943,23 +1019,14 @@ def obtener_notificaciones(rol=None, conexion=None):
     if propia:
         conexion = get_db()
     try:
-        if rol:
-            filas = conexion.execute('''
-                SELECT n.*, sr.estado AS estado_remito
-                FROM notificaciones n
-                LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = n.reporte_id
-                WHERE (n.destinatario_rol = ? OR n.destinatario_rol = 'todos')
-                  AND n.leido = 0
-                ORDER BY n.fecha DESC
-            ''', (rol,)).fetchall()
-        else:
-            filas = conexion.execute('''
-                SELECT n.*, sr.estado AS estado_remito
-                FROM notificaciones n
-                LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = n.reporte_id
-                WHERE n.leido = 0
-                ORDER BY n.fecha DESC
-            ''').fetchall()
+        where, parametros = _filtro_notificaciones(rol, usuario_id)
+        filas = conexion.execute(f'''
+            SELECT n.*, sr.estado AS estado_remito
+            FROM notificaciones n
+            LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = n.reporte_id
+            WHERE {where}
+            ORDER BY n.fecha DESC
+        ''', parametros).fetchall()
 
         notificaciones = []
         for f in filas:
@@ -971,30 +1038,41 @@ def obtener_notificaciones(rol=None, conexion=None):
         if propia:
             conexion.close()
 
-def marcar_notificacion_leida(notificacion_id):
-    """Descarta una notificación. Devuelve (ok, motivo del rechazo)."""
+
+def marcar_notificacion_leida(notificacion_id, rol, usuario_id):
+    """Descarta una notificación para esa persona. Devuelve (ok, motivo del rechazo)."""
     conexion = get_db()
     try:
-        fila = conexion.execute('''
-            SELECT n.id, sr.estado AS estado_remito
+        where, parametros = _filtro_notificaciones(rol, usuario_id)
+        # Solo se descarta lo que uno puede ver: antes cualquiera cerraba
+        # cualquier notificación cambiando el id en la URL.
+        fila = conexion.execute(f'''
+            SELECT n.id, n.destinatario_usuario_id, sr.estado AS estado_remito
             FROM notificaciones n
             LEFT JOIN seguimiento_remitos sr ON sr.reporte_id = n.reporte_id
-            WHERE n.id = ?
-        ''', (notificacion_id,)).fetchone()
+            WHERE n.id = ? AND {where}
+        ''', [notificacion_id] + parametros).fetchone()
 
         if fila is None:
-            return False, 'La alerta no existe'
+            return False, 'La alerta no existe o ya la cerraste'
 
         # Una alerta de remito no se puede sacar de la vista mientras el
         # circuito siga abierto: es el recordatorio de que falta una firma.
         if fila['estado_remito'] not in (None, 'FINALIZADO'):
             return False, 'No se puede cerrar: el remito todavía no está finalizado'
 
-        conexion.execute('''
-            UPDATE notificaciones
-            SET leido = 1, fecha_lectura = ?
-            WHERE id = ?
-        ''', (ahora().isoformat(), notificacion_id))
+        momento = ahora().isoformat()
+        if fila['destinatario_usuario_id'] == usuario_id:
+            # Es solo suya: se cierra del todo.
+            conexion.execute('''
+                UPDATE notificaciones SET leido = 1, fecha_lectura = ? WHERE id = ?
+            ''', (momento, notificacion_id))
+        else:
+            conexion.execute('''
+                INSERT OR IGNORE INTO notificaciones_descartadas
+                    (notificacion_id, usuario_id, fecha)
+                VALUES (?, ?, ?)
+            ''', (notificacion_id, usuario_id, momento))
         conexion.commit()
         return True, None
     except Exception as e:
@@ -1003,6 +1081,8 @@ def marcar_notificacion_leida(notificacion_id):
         return False, str(e)
     finally:
         conexion.close()
+
+
 def fotos_del_control(conexion, control_id):
     """Las cinco posiciones obligatorias con su foto actual (o None).
 
@@ -1282,7 +1362,22 @@ def crear_base_de_datos():
         destinatario_rol TEXT,  -- 'admin', 'tecnico', 'todos'
         enlace TEXT,
         reporte_id INTEGER,
-        fecha_lectura TEXT
+        fecha_lectura TEXT,
+        destinatario_usuario_id INTEGER
+    )
+''')
+
+# Quién cerró cada notificación de rol. Una notificación a 'soporte' la ven
+# todos los de soporte: que uno la cierre no quiere decir que los demás se
+# hayan enterado.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS notificaciones_descartadas (
+        notificacion_id INTEGER NOT NULL,
+        usuario_id INTEGER NOT NULL,
+        fecha TEXT NOT NULL,
+        PRIMARY KEY (notificacion_id, usuario_id),
+        FOREIGN KEY (notificacion_id) REFERENCES notificaciones(id),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
     )
 ''')
 
@@ -1345,7 +1440,10 @@ def crear_base_de_datos():
         CREATE TABLE IF NOT EXISTS camionetas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             patente TEXT UNIQUE NOT NULL,
-            activa INTEGER DEFAULT 1
+            activa INTEGER DEFAULT 1,
+            marca TEXT,
+            modelo TEXT,
+            anio INTEGER
         )
     ''')
     
@@ -1522,6 +1620,27 @@ def crear_base_de_datos():
         ON eventos_reportados (estado, fecha)
     """)
 
+    # Cada paso de un reporte: lo estoy viendo, en pausa hasta mañana,
+    # resuelto. Es la historia del problema, no solo el ultimo comentario.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS eventos_seguimiento (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evento_id INTEGER NOT NULL,
+            estado TEXT,
+            comentario TEXT,
+            usuario TEXT,
+            usuario_id INTEGER,
+            fecha TEXT NOT NULL,
+            retomar_el TEXT,
+            circulacion TEXT,
+            FOREIGN KEY (evento_id) REFERENCES eventos_reportados(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_eventos_seguimiento
+        ON eventos_seguimiento (evento_id, fecha)
+    """)
+
     # Controles que nunca se hicieron porque ese día la camioneta no salió:
     # feriado, el técnico faltó, la camioneta estaba en el taller. No es lo
     # mismo que un control olvidado. Mientras el hueco sigue abierto la
@@ -1666,6 +1785,80 @@ def crear_base_de_datos():
     insertar_datos_prueba(conexion)
     conexion.close()
 
+# Tablas cuyos cambios tienen que verse en los paneles abiertos sin recargar a
+# mano. Quedan afuera las que no cambian lo que se ve (usuarios, que además se
+# toca en cada login al migrar contraseñas) y las que son de una sola persona
+# (notificaciones_descartadas).
+TABLAS_EN_VIVO = (
+    'asignaciones', 'controles', 'controles_tecnicos', 'items_control_tecnico',
+    'reportes', 'elementos_bloqueados', 'seguimiento_remitos', 'notificaciones',
+    'eventos_reportados', 'eventos_seguimiento', 'reclamos_coordinados',
+    'controles_justificados', 'distribucion_semanal', 'distribucion_jornadas',
+    'distribucion_guardia', 'vencimientos', 'vencimientos_historial',
+    'camionetas', 'zonas', 'elementos_catalogo', 'fotos',
+)
+
+
+def crear_version_datos(cursor):
+    """Un número que sube con cada cambio en las tablas de TABLAS_EN_VIVO.
+
+    Los paneles lo consultan cada pocos segundos (/api/version) y, si cambió,
+    se actualizan solos. Lo suben triggers de SQLite y no el código de cada
+    ruta: así ningún camino que escriba en la base se olvida de avisar.
+    """
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS version_datos (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            version INTEGER NOT NULL DEFAULT 0
+        )
+    ''')
+    cursor.execute('INSERT OR IGNORE INTO version_datos (id, version) VALUES (1, 0)')
+    for tabla in TABLAS_EN_VIVO:
+        if not cursor.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                              (tabla,)).fetchone():
+            continue
+        for operacion in ('INSERT', 'UPDATE', 'DELETE'):
+            cursor.execute(f'''
+                CREATE TRIGGER IF NOT EXISTS trg_version_{tabla}_{operacion.lower()}
+                AFTER {operacion} ON {tabla}
+                BEGIN
+                    UPDATE version_datos SET version = version + 1 WHERE id = 1;
+                END
+            ''')
+
+
+def version_actual(conexion=None):
+    """El número de version_datos, o 0 si todavía no existe."""
+    propia = conexion is None
+    if propia:
+        conexion = get_db()
+    try:
+        fila = conexion.execute('SELECT version FROM version_datos WHERE id = 1').fetchone()
+        return fila[0] if fila else 0
+    except sqlite3.Error:
+        return 0
+    finally:
+        if propia:
+            conexion.close()
+
+
+@app.context_processor
+def inyectar_version_datos():
+    """Todas las pantallas saben con qué versión de los datos se armaron."""
+    if 'usuario_id' not in session:
+        return {}
+    return {'version_datos': version_actual()}
+
+
+@app.route('/api/version')
+def api_version():
+    """Lo que consultan los paneles para saber si hay algo nuevo. Es una sola
+    fila, así que se puede pedir seguido sin cargar el servidor."""
+    if 'usuario_id' not in session:
+        return jsonify({'error': 'No autorizado'}), 401
+    return jsonify({'version': version_actual()})
+
+
 def aplicar_migraciones(conexion):
     """Agrega columnas nuevas a bases de datos ya existentes, sin perder datos.
 
@@ -1677,6 +1870,8 @@ def aplicar_migraciones(conexion):
     columnas_esperadas = {
         'notificaciones': [
             ('reporte_id', 'INTEGER'),
+            # La notificación es para una persona puntual y no para todo su rol.
+            ('destinatario_usuario_id', 'INTEGER'),
         ],
         'reportes': [
             ('motivo_reposicion', 'TEXT'),
@@ -1706,6 +1901,8 @@ def aplicar_migraciones(conexion):
             ('fuera_de_servicio', 'INTEGER DEFAULT 0'),
             ('revisado_por', 'TEXT'),
             ('fecha_revision', 'TEXT'),
+            # Para cuándo quedó el reporte en pausa.
+            ('retomar_el', 'TEXT'),
         ],
         # El técnico ahora marca la actividad como resuelta o como no resuelta,
         # y soporte puede corregir el mensaje. Todo va en columnas nuevas: las
@@ -1724,9 +1921,22 @@ def aplicar_migraciones(conexion):
         # detalle: qué se cambió en el service (aceite, filtros, etc.).
         # meses_vigencia: por cuánto tiempo entregaron la VTV esta vez, que
         # cambia en cada revisión y por eso no puede vivir en la configuración.
+        # Si en ese paso la camioneta quedó circulando o fuera de servicio.
+        'eventos_seguimiento': [
+            ('circulacion', 'TEXT'),
+        ],
         'vencimientos_historial': [
             ('detalle', 'TEXT'),
             ('meses_vigencia', 'INTEGER'),
+            # El reporte del técnico del que salió este registro, si salió de
+            # uno: el calendario lo pinta según en qué anda ese reporte.
+            ('evento_id', 'INTEGER'),
+        ],
+        # Datos del vehículo, para reconocerlo además de por la patente.
+        'camionetas': [
+            ('marca', 'TEXT'),
+            ('modelo', 'TEXT'),
+            ('anio', 'INTEGER'),
         ],
         'asignaciones': [
             ('tecnico2_id', 'INTEGER'),
@@ -1762,6 +1972,7 @@ def aplicar_migraciones(conexion):
         ('idx_bloqueados_camioneta', 'elementos_bloqueados (camioneta_id, resuelto)'),
         ('idx_seguimiento_reporte', 'seguimiento_remitos (reporte_id)'),
         ('idx_notificaciones_rol', 'notificaciones (destinatario_rol, leido)'),
+        ('idx_notificaciones_usuario', 'notificaciones (destinatario_usuario_id, leido)'),
         ('idx_controles_kilometraje', 'controles_tecnicos (asignacion_id, kilometraje)'),
         ('idx_fotos_control', 'fotos (control_id, tipo)'),
         
@@ -1793,6 +2004,17 @@ def aplicar_migraciones(conexion):
             VALUES (?, ?, ?, 'admin', 1)
         ''', ('Umber', 'umber', hashear_password('umber123')))
         print('🔧 Migración: usuario admin "umber" creado')
+
+    # Antes un reporte urgente sacaba la camioneta de circulación solo. Ahora
+    # eso lo decide soporte, así que los bloqueos que nadie revisó se
+    # levantan. Los que soporte confirmó (revisado_por) quedan como están.
+    liberadas = cursor.execute('''
+        UPDATE eventos_reportados SET bloquea = 0
+        WHERE COALESCE(bloquea, 0) = 1 AND revisado_por IS NULL
+    ''').rowcount
+    if liberadas:
+        print(f'🔧 Migración: {liberadas} bloqueo(s) automático(s) levantado(s): '
+              'ahora lo decide soporte')
 
     # Estados del seguimiento renombrados al ciclo de doble firma.
     cursor.execute('''
@@ -1864,6 +2086,10 @@ def aplicar_migraciones(conexion):
 
         cursor.execute('DROP TABLE fotos_vieja')
 
+    # Al final: la migración de fotos de arriba recrea esa tabla, y los
+    # triggers tienen que quedar sobre la definitiva.
+    crear_version_datos(cursor)
+
     conexion.commit()
 
 def insertar_datos_prueba(conexion):
@@ -1931,12 +2157,11 @@ def insertar_datos_prueba(conexion):
     count = cursor.fetchone()[0]
     
     if count == 0:
-        patentes = ['AA123BB', 'AB456CD', 'AC789EF', 'AD012GH']
-        for patente in patentes:
+        for patente, marca, modelo, anio in FLOTA_INICIAL:
             cursor.execute('''
-                INSERT INTO camionetas (patente, activa)
-                VALUES (?, ?)
-            ''', (patente, 1))
+                INSERT INTO camionetas (patente, activa, marca, modelo, anio)
+                VALUES (?, 1, ?, ?, ?)
+            ''', (patente, marca, modelo, anio))
     
     conexion.commit()
 
@@ -2427,8 +2652,10 @@ def custodias_abiertas(conexion, momento=None, tecnico_id=None):
     """
     momento = momento or ahora()
     custodias = []
+    # Solo la flota activa: una camioneta dada de baja ya no está en manos de
+    # nadie a efectos del sistema, y no puede trabarle el retiro a un técnico.
     for camioneta in conexion.execute(
-            'SELECT id, patente FROM camionetas ORDER BY patente').fetchall():
+            'SELECT id, patente FROM camionetas WHERE activa = 1 ORDER BY patente').fetchall():
         abierto = retiro_abierto(conexion, camioneta['id'])
         if abierto is None:
             continue
@@ -2497,6 +2724,7 @@ def controles_faltantes(conexion, momento=None, tecnico_id=None, camioneta_id=No
         JOIN camionetas c ON a.camioneta_id = c.id
         JOIN usuarios u ON a.tecnico_id = u.id
         WHERE a.estado = 'ASIGNADA' AND a.tecnico_id IS NOT NULL
+          AND c.activa = 1
           AND a.fecha <= ?
           AND NOT EXISTS (
               SELECT 1 FROM controles_tecnicos ct
@@ -2866,8 +3094,12 @@ def camionetas_para_urgencia(conexion, usuario_id, momento=None):
     jornada = jornada_actual(momento)
 
     disponibles = []
+    # Las que soporte sacó de circulación no salen ni de urgencia.
+    fuera_de_servicio = camionetas_bloqueadas(conexion)
     for camioneta in conexion.execute(
             'SELECT id, patente FROM camionetas WHERE activa = 1 ORDER BY patente'):
+        if camioneta['id'] in fuera_de_servicio:
+            continue
         abierto = retiro_abierto(conexion, camioneta['id'])
         if abierto is not None and abierto['tecnico_id'] != usuario_id:
             continue  # la tiene otro en la mano
@@ -3077,7 +3309,7 @@ def proximo_vencimiento(config_dias, config_km, desde_fecha, desde_km):
 
 
 def registrar_realizado(conexion, camioneta_id, tipo, fecha, km, quien,
-                        observacion, detalle=None, meses_vigencia=None):
+                        observacion, detalle=None, meses_vigencia=None, evento_id=None):
     """Anota el trabajo hecho y corre el vencimiento al proximo periodo.
 
     Es un solo movimiento a proposito: si se registrara el lavado sin mover la
@@ -3105,10 +3337,10 @@ def registrar_realizado(conexion, camioneta_id, tipo, fecha, km, quien,
     conexion.execute("""
         INSERT INTO vencimientos_historial
             (camioneta_id, tipo, fecha_realizado, km_realizado, registrado_por,
-             observacion, fecha_registro, detalle, meses_vigencia)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             observacion, fecha_registro, detalle, meses_vigencia, evento_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (camioneta_id, tipo, fecha, km, quien, observacion,
-          ahora().isoformat(), detalle, meses_vigencia))
+          ahora().isoformat(), detalle, meses_vigencia, evento_id))
 
     # Un evento se anota y listo: no corre ninguna fecha de vencimiento.
     if config.get('solo_registro'):
@@ -3223,15 +3455,25 @@ def calendario_mes(conexion, anio, mes, momento=None):
 
     for fila in conexion.execute('''
             SELECT h.id, h.tipo, h.fecha_realizado, h.km_realizado,
-                   h.registrado_por, h.observacion, c.patente
+                   h.registrado_por, h.observacion, c.patente,
+                   ev.estado AS estado_evento
             FROM vencimientos_historial h
             JOIN camionetas c ON h.camioneta_id = c.id
+            LEFT JOIN eventos_reportados ev ON h.evento_id = ev.id
             WHERE h.fecha_realizado BETWEEN ? AND ?
             ORDER BY h.fecha_realizado, c.patente
         ''', (desde, hasta)):
         config = TIPOS_VENCIMIENTO.get(fila['tipo'], {})
+        # Un evento que salió de un reporte se pinta según en qué anda ese
+        # reporte: verde resuelto, amarillo en pausa, naranja en curso.
+        estado_evento = fila['estado_evento']
+        texto = f"{config.get('etiqueta', fila['tipo'])} · {fila['patente']}"
+        if estado_evento:
+            texto += f" · {ESTADOS_EVENTO.get(estado_evento, estado_evento)}"
         agregar(fila['fecha_realizado'][:10], {
             'clase': 'hecho',
+            'estado_evento': estado_evento or '',
+            'estado_etiqueta': ESTADOS_EVENTO.get(estado_evento, '') if estado_evento else '',
             # El id deja que la ventana del dia abra el detalle del trabajo.
             'registro_id': fila['id'],
             'tipo': fila['tipo'],
@@ -3240,7 +3482,7 @@ def calendario_mes(conexion, anio, mes, momento=None):
             'color': config.get('color', '#6c757d'),
             'patente': fila['patente'],
             'detalle': (f"{miles(fila['km_realizado'])} km" if fila['km_realizado'] else ''),
-            'texto': f"{config.get('etiqueta', fila['tipo'])} · {fila['patente']}",
+            'texto': texto,
             'observacion': fila['observacion'] or '',
             'quien': fila['registrado_por'] or '',
         })
@@ -3480,6 +3722,7 @@ def resumen_inicio(conexion, momento=None):
         JOIN camionetas c ON a.camioneta_id = c.id
         WHERE r.estado IN ('FALLA', 'FALTANTE', 'OBSERVACION')
           AND r.fecha_resolucion IS NULL
+          AND c.activa = 1
         GROUP BY c.patente, r.elemento
         ORDER BY desde
     """).fetchall()
@@ -3608,7 +3851,8 @@ def admin():
                 estado=filtro_ev_estado if filtro_ev_estado != 'abiertos' else None,
                 solo_abiertos=filtro_ev_estado == 'abiertos',
                 camioneta_id=filtro_ev_camioneta,
-                importancia=(request.args.get('ev_importancia') or '').upper())
+                importancia=(request.args.get('ev_importancia') or '').upper(),
+                con_seguimiento=True)
             eventos_nuevos = eventos_sin_ver(conexion)
 
             # Turnos justificados, con sus filtros.
@@ -3646,7 +3890,8 @@ def admin():
         conexion = get_db()
         try:
             conexion.execute(
-                "UPDATE eventos_reportados SET visto = 1 WHERE estado = 'NUEVO'")
+                "UPDATE eventos_reportados SET visto = 1 "
+                "WHERE estado = 'NUEVO' AND COALESCE(visto, 0) = 0")
             conexion.commit()
         finally:
             conexion.close()
@@ -3678,6 +3923,9 @@ def admin():
                          eventos=eventos,
                          eventos_sin_ver=eventos_nuevos,
                          estados_evento=ESTADOS_EVENTO,
+                         pasos_evento=PASOS_EVENTO,
+                         hoy_iso=ahora().strftime('%Y-%m-%d'),
+                         ev_abrir=request.args.get('ev_abrir', ''),
                          importancia_evento=IMPORTANCIA_EVENTO,
                          filtros_eventos={
                              'estado': request.args.get('ev_estado', ''),
@@ -4017,6 +4265,7 @@ def tecnico():
             AND a.fecha = ? 
             AND a.jornada = ?
             AND a.estado = 'ASIGNADA'
+            AND c.activa = 1
         ''', (usuario_id, usuario_id, fecha_actual, jornada)).fetchone()
         if asignacion:
             jornada_actual_tecnico = jornada
@@ -4163,7 +4412,6 @@ def tecnico():
                          urgencias=urgencias,
                          camioneta_reporte=camioneta_del_tecnico,
                          importancia_evento=IMPORTANCIA_EVENTO,
-                         mis_eventos=consultar_eventos_de(usuario_id),
                          faltantes=faltantes_otros,
                          falta_de_hoy=falta_de_hoy,
                          trabada_por_hueco=trabada_por_hueco,
@@ -4343,9 +4591,9 @@ def iniciar_control():
             if bloqueada is not None:
                 return redirect(url_for('tecnico',
                     error=f'\U0001f512 {bloqueada["patente"]} está fuera de '
-                          f'circulación: {bloqueada["reportado_por"]} reportó '
-                          f'\u201c{bloqueada["mensaje"]}\u201d y soporte todavía no '
-                          f'lo revisó.'))
+                          f'servicio: {bloqueada["revisado_por"] or "soporte"} la sacó '
+                          f'de circulación por \u201c{bloqueada["mensaje"]}\u201d. '
+                          f'Consultá con soporte.'))
 
             if abierto is not None:
                 return redirect(url_for('tecnico',
@@ -4470,6 +4718,11 @@ def retiro_urgencia():
             (camioneta_id,)).fetchone()
         if camioneta is None:
             return redirect(url_for('tecnico', error='Camioneta no encontrada.'))
+
+        if camioneta_id in camionetas_bloqueadas(conexion):
+            return redirect(url_for('tecnico',
+                error=f'{camioneta["patente"]} está fuera de servicio por decisión de '
+                      'soporte: no puede salir, ni de urgencia.'))
 
         abierto = retiro_abierto(conexion, camioneta_id)
         if abierto is not None:
@@ -4689,6 +4942,7 @@ def realizar_control(control_id):
                          elementos_bloqueados=elementos_bloqueados_lista,
                          faltantes_recuperables=faltantes_recuperables,
                          fotos_control=fotos_control,
+                         fotos_obligatorias=FOTOS_OBLIGATORIAS,
                          posiciones_foto=fotos.POSICIONES)
 @app.route('/finalizar-control/<int:control_id>', methods=['POST'])
 def finalizar_control(control_id):
@@ -4898,7 +5152,7 @@ def guardar_control_rapido():
         faltan_fotos = [fotos.POSICIONES[p]['etiqueta']
                         for p in fotos.POSICIONES
                         if p not in fotos_presentes]
-        if faltan_fotos:
+        if faltan_fotos and FOTOS_OBLIGATORIAS:
             return jsonify({
                 'error': 'Faltan las fotos obligatorias: ' + ', '.join(faltan_fotos)
             }), 400
@@ -5107,8 +5361,10 @@ def jefe():
     finally:
         conexion.close()
     
-    return render_template('jefe.html', 
+    return render_template('jefe.html',
                          resumen_flota=resumen_flota,
+                         novedades=obtener_notificaciones(session.get('rol'),
+                                                          session['usuario_id']),
                          fecha_actual=fecha_actual)
 
 # ============================================
@@ -5427,6 +5683,9 @@ def api_historial_control(control_id):
             'observacion': control['observacion'],
         },
         'elementos': [dict(e) for e in elementos],
+        # Para agrupar el detalle por categoría, en el orden del control.
+        'categorias': [{'clave': c, 'etiqueta': ETIQUETA_CATEGORIA.get(c, c)}
+                       for c in CATEGORIAS],
         've_fotos': ve_fotos,
         'fotos': carpeta,
     })
@@ -5677,7 +5936,8 @@ def api_alertas():
     try:
         pendientes = controles_pendientes(conexion)
         vencimientos = vencimientos_alerta(conexion)
-        notificaciones = obtener_notificaciones(session.get('rol'), conexion=conexion)
+        notificaciones = obtener_notificaciones(session.get('rol'), session['usuario_id'],
+                                                conexion=conexion)
         # Solo los graves: un espejo roto de importancia baja no tiene por que
         # estar en el mismo lugar que una camioneta trabada.
         reportes = [e for e in consultar_eventos(conexion, solo_abiertos=True)
@@ -5697,8 +5957,7 @@ def api_notificaciones():
     if 'usuario_id' not in session:
         return jsonify({'error': 'No autorizado'}), 401
     
-    rol = session.get('rol')
-    notificaciones = obtener_notificaciones(rol)
+    notificaciones = obtener_notificaciones(session.get('rol'), session['usuario_id'])
     return jsonify(notificaciones)
 
 @app.route('/api/notificaciones/marcar/<int:notificacion_id>', methods=['POST'])
@@ -5707,7 +5966,8 @@ def marcar_notificacion(notificacion_id):
     if 'usuario_id' not in session:
         return jsonify({'error': 'No autorizado'}), 401
     
-    ok, motivo = marcar_notificacion_leida(notificacion_id)
+    ok, motivo = marcar_notificacion_leida(notificacion_id, session.get('rol'),
+                                           session['usuario_id'])
     if ok:
         return jsonify({'success': True})
     return jsonify({'success': False, 'error': motivo}), 400
@@ -6098,7 +6358,8 @@ def admin_configuracion():
         zonas = [dict(f) for f in conexion.execute(
             'SELECT id, nombre, activa FROM zonas ORDER BY nombre')]
         camionetas = [dict(f) for f in conexion.execute(
-            'SELECT id, patente, activa FROM camionetas ORDER BY patente')]
+            'SELECT id, patente, activa, marca, modelo, anio FROM camionetas '
+            'ORDER BY activa DESC, patente')]
         usuarios = [dict(f) for f in conexion.execute(
             'SELECT id, nombre, usuario, rol, activo FROM usuarios ORDER BY rol, nombre')]
         catalogo = obtener_catalogo(conexion, incluir_inactivos=True)
@@ -6178,6 +6439,34 @@ def config_zonas():
 
 # ---------- Camionetas ----------
 
+def _leer_camioneta_form():
+    """(datos, error) de patente, marca, modelo y año del formulario."""
+    patente = (request.form.get('patente') or '').strip().upper().replace(' ', '').replace('-', '')
+    if not patente:
+        return None, 'La patente no puede estar vacía.'
+    if not PATRON_PATENTE.match(patente):
+        return None, (f'"{patente}" no parece una patente: tiene que ser como '
+                      'AA123BB o ABC123.')
+
+    anio = (request.form.get('anio') or '').strip()
+    if anio:
+        try:
+            anio = int(anio)
+        except ValueError:
+            return None, 'El año tiene que ser un número.'
+        if not 1980 <= anio <= ahora().year + 1:
+            return None, f'{anio} no es un año válido para la camioneta.'
+    else:
+        anio = None
+
+    return {
+        'patente': patente,
+        'marca': (request.form.get('marca') or '').strip().upper() or None,
+        'modelo': (request.form.get('modelo') or '').strip().upper() or None,
+        'anio': anio,
+    }, None
+
+
 @app.route('/admin/configuracion/camionetas', methods=['POST'])
 def config_camionetas():
     if not autorizado():
@@ -6187,15 +6476,19 @@ def config_camionetas():
     conexion = get_db()
     try:
         if accion == 'crear':
-            patente = (request.form.get('patente') or '').strip().upper().replace(' ', '')
-            if not patente:
-                return _volver_config('camionetas', error='La patente no puede estar vacía.')
+            datos, error = _leer_camioneta_form()
+            if error:
+                return _volver_config('camionetas', error=error)
             try:
-                conexion.execute('INSERT INTO camionetas (patente, activa) VALUES (?, 1)', (patente,))
+                conexion.execute('''
+                    INSERT INTO camionetas (patente, activa, marca, modelo, anio)
+                    VALUES (?, 1, ?, ?, ?)
+                ''', (datos['patente'], datos['marca'], datos['modelo'], datos['anio']))
                 conexion.commit()
             except sqlite3.IntegrityError:
-                return _volver_config('camionetas', error=f'La patente {patente} ya está cargada.')
-            return _volver_config('camionetas', mensaje=f'Camioneta {patente} agregada.')
+                return _volver_config('camionetas',
+                                      error=f'La patente {datos["patente"]} ya está cargada.')
+            return _volver_config('camionetas', mensaje=f'Camioneta {datos["patente"]} agregada.')
 
         camioneta_id = request.form.get('camioneta_id')
         camioneta = conexion.execute(
@@ -6204,14 +6497,21 @@ def config_camionetas():
             return _volver_config('camionetas', error='Camioneta no encontrada.')
 
         if accion == 'renombrar':
-            patente = (request.form.get('patente') or '').strip().upper().replace(' ', '')
-            if not patente:
-                return _volver_config('camionetas', error='La patente no puede estar vacía.')
+            datos, error = _leer_camioneta_form()
+            if error:
+                return _volver_config('camionetas', error=error)
+            patente = datos['patente']
             try:
-                conexion.execute('UPDATE camionetas SET patente = ? WHERE id = ?',
-                                 (patente, camioneta_id))
+                conexion.execute('''
+                    UPDATE camionetas SET patente = ?, marca = ?, modelo = ?, anio = ?
+                    WHERE id = ?
+                ''', (patente, datos['marca'], datos['modelo'], datos['anio'], camioneta_id))
             except sqlite3.IntegrityError:
                 return _volver_config('camionetas', error=f'La patente {patente} ya está cargada.')
+
+            if patente == camioneta['patente']:
+                conexion.commit()
+                return _volver_config('camionetas', mensaje=f'Datos de {patente} actualizados.')
 
             # El historial sigue colgado del id, pero los remitos se guardan por
             # patente: hay que arrastrarlos o quedan bajo un nombre que ya no existe.
@@ -6488,6 +6788,7 @@ def reclamos():
         conexion.execute("""
             UPDATE reclamos_coordinados SET resolucion_vista = 1
             WHERE activo = 1 AND COALESCE(estado, 'PENDIENTE') <> 'PENDIENTE'
+              AND COALESCE(resolucion_vista, 0) = 0
         """)
         conexion.commit()
 
@@ -6727,12 +7028,15 @@ def reclamos_resolver():
         """, (estado, comentario, session.get('nombre'), usuario_id,
               ahora().isoformat(), reclamo_id))
 
-        # Soporte se entera sin tener que estar mirando la pantalla.
+        # Soporte y el jefe se enteran sin tener que estar mirando la pantalla.
+        # El jefe la recibe en su panel: es la base para medir cuánta
+        # actividad resuelve cada técnico.
         aviso = 'resolvió' if estado == 'RESUELTA' else 'no pudo resolver'
-        crear_notificacion(
-            'ACTIVIDAD_RESUELTA',
-            f'\U0001f4cb {session.get("nombre")} {aviso} una actividad coordinada: {comentario}',
-            None, None, 'admin', '/reclamos', conexion=conexion)
+        texto = (f'\U0001f4cb {session.get("nombre")} {aviso} la actividad '
+                 f'“{actividad["mensaje"]}”: {comentario}')
+        for destino in ('soporte', 'jefe'):
+            crear_notificacion('ACTIVIDAD_RESUELTA', texto, None, None, destino,
+                               '/reclamos', conexion=conexion)
 
         conexion.commit()
     finally:
@@ -6769,16 +7073,37 @@ def reclamos_borrar():
 # EVENTOS REPORTADOS
 # ============================================
 
+def _decorar_evento(fila):
+    """Agrega al evento las etiquetas y colores que usan las pantallas."""
+    evento = dict(fila)
+    config = IMPORTANCIA_EVENTO.get(fila['importancia'], {})
+    evento['importancia_etiqueta'] = config.get('etiqueta', fila['importancia'])
+    evento['importancia_color'] = config.get('color', '#6c757d')
+    evento['estado_etiqueta'] = ESTADOS_EVENTO.get(fila['estado'], fila['estado'])
+    evento['estado_color'] = COLOR_ESTADO_EVENTO.get(fila['estado'], '#6c757d')
+    evento['abierto'] = fila['estado'] in ESTADOS_EVENTO_ABIERTOS
+    return evento
+
+
 def consultar_eventos(conexion, estado=None, camioneta_id=None, importancia=None,
-                      solo_abiertos=False, limite=200):
-    """Los eventos reportados, con la camioneta y quien los reporto."""
-    where = ['1 = 1']
+                      solo_abiertos=False, limite=200, con_seguimiento=False):
+    """Los eventos reportados, con la camioneta y quien los reporto.
+
+    Con `con_seguimiento` trae tambien cada paso que se fue anotando (lo
+    estoy viendo, en pausa hasta mañana, resuelto) y cuantas veces se paso
+    al calendario.
+    """
+    # Los reportes de camionetas dadas de baja no se muestran: ya no hay
+    # nada que decidir sobre un vehículo que salió de la flota.
+    where = ['c.activa = 1']
     parametros = []
     if estado in ESTADOS_EVENTO:
         where.append('e.estado = ?')
         parametros.append(estado)
     if solo_abiertos:
-        where.append("e.estado IN ('NUEVO', 'EN_CURSO')")
+        where.append('e.estado IN ({})'.format(
+            ','.join('?' for _ in ESTADOS_EVENTO_ABIERTOS)))
+        parametros.extend(ESTADOS_EVENTO_ABIERTOS)
     if camioneta_id:
         where.append('e.camioneta_id = ?')
         parametros.append(camioneta_id)
@@ -6787,27 +7112,40 @@ def consultar_eventos(conexion, estado=None, camioneta_id=None, importancia=None
         parametros.append(importancia)
 
     filas = conexion.execute(f"""
-        SELECT e.*, c.patente
+        SELECT e.*, c.patente,
+               (SELECT COUNT(*) FROM vencimientos_historial h
+                 WHERE h.evento_id = e.id) AS en_calendario,
+               (SELECT MAX(h.fecha_realizado) FROM vencimientos_historial h
+                 WHERE h.evento_id = e.id) AS fecha_calendario
         FROM eventos_reportados e
         JOIN camionetas c ON e.camioneta_id = c.id
         WHERE {' AND '.join(where)}
         ORDER BY
-            CASE e.estado WHEN 'NUEVO' THEN 0 WHEN 'EN_CURSO' THEN 1 ELSE 2 END,
+            CASE e.estado WHEN 'NUEVO' THEN 0 WHEN 'EN_CURSO' THEN 1
+                          WHEN 'EN_PAUSA' THEN 2 ELSE 3 END,
             CASE e.importancia WHEN 'URGENTE' THEN 0 WHEN 'ALTA' THEN 1
                                WHEN 'MEDIA' THEN 2 ELSE 3 END,
             e.fecha DESC
         LIMIT ?
     """, parametros + [limite]).fetchall()
 
-    salida = []
-    for fila in filas:
-        evento = dict(fila)
-        config = IMPORTANCIA_EVENTO.get(fila['importancia'], {})
-        evento['importancia_etiqueta'] = config.get('etiqueta', fila['importancia'])
-        evento['importancia_color'] = config.get('color', '#6c757d')
-        evento['estado_etiqueta'] = ESTADOS_EVENTO.get(fila['estado'], fila['estado'])
-        evento['abierto'] = fila['estado'] in ESTADOS_EVENTO_ABIERTOS
-        salida.append(evento)
+    salida = [_decorar_evento(fila) for fila in filas]
+
+    if con_seguimiento and salida:
+        marcas = ','.join('?' for _ in salida)
+        pasos = {}
+        for paso in conexion.execute(f"""
+            SELECT * FROM eventos_seguimiento
+            WHERE evento_id IN ({marcas})
+            ORDER BY fecha, id
+        """, [e['id'] for e in salida]):
+            item = dict(paso)
+            item['estado_etiqueta'] = ESTADOS_EVENTO.get(paso['estado'], paso['estado'] or '')
+            item['estado_color'] = COLOR_ESTADO_EVENTO.get(paso['estado'], '#6c757d')
+            item['paso_etiqueta'] = PASOS_EVENTO.get(paso['estado'], item['estado_etiqueta'])
+            pasos.setdefault(paso['evento_id'], []).append(item)
+        for evento in salida:
+            evento['seguimiento'] = pasos.get(evento['id'], [])
     return salida
 
 
@@ -6820,32 +7158,44 @@ def eventos_sin_ver(conexion):
     return fila['n'] if fila else 0
 
 
+def anotar_seguimiento(conexion, evento_id, estado, comentario, retomar_el=None):
+    """Deja constancia de un paso del reporte: quien, cuando, que y en que estado.
 
-def consultar_eventos_de(usuario_id, limite=10):
-    """Los ultimos reportes de una persona, para que vea en que quedaron."""
-    conexion = get_db()
-    try:
-        filas = conexion.execute("""
-            SELECT e.*, c.patente
-            FROM eventos_reportados e
-            JOIN camionetas c ON e.camioneta_id = c.id
-            WHERE e.reportado_por_id = ?
-            ORDER BY e.fecha DESC
-            LIMIT ?
-        """, (usuario_id, limite)).fetchall()
-    finally:
-        conexion.close()
+    Antes solo quedaba el ultimo comentario de soporte, que se pisaba con
+    cada cambio: si la cubierta fue a la gomeria, estaba cerrada y se llevo
+    al dia siguiente, eso no se podia reconstruir.
+    """
+    conexion.execute("""
+        INSERT INTO eventos_seguimiento
+            (evento_id, estado, comentario, usuario, usuario_id, fecha, retomar_el)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (evento_id, estado, comentario, session.get('nombre'),
+          session.get('usuario_id'), ahora().isoformat(), retomar_el))
 
-    salida = []
-    for fila in filas:
-        evento = dict(fila)
-        config = IMPORTANCIA_EVENTO.get(fila['importancia'], {})
-        evento['importancia_etiqueta'] = config.get('etiqueta', fila['importancia'])
-        evento['importancia_color'] = config.get('color', '#6c757d')
-        evento['estado_etiqueta'] = ESTADOS_EVENTO.get(fila['estado'], fila['estado'])
-        evento['abierto'] = fila['estado'] in ESTADOS_EVENTO_ABIERTOS
-        salida.append(evento)
-    return salida
+
+def _destino_local(volver, por_defecto):
+    """La URL a la que volver, solo si es de este mismo sistema.
+
+    `volver` viene del formulario: sin esta verificacion se podia armar un
+    link que, despues de reportar, mandara a otro sitio.
+    """
+    if volver and volver.startswith('/') and not volver.startswith('//') \
+            and '\\' not in volver:
+        return volver
+    return por_defecto
+
+
+def _volver_con(volver, **parametros):
+    """`volver` con los parametros agregados, bien codificados."""
+    separador = '&' if '?' in volver else '?'
+    return volver + separador + urlencode(parametros)
+
+
+def _volver_eventos(mensaje=None, error=None, patente=None):
+    """Vuelve a la seccion de reportes, abierta en la carpeta de esa camioneta."""
+    return redirect(url_for('admin', seccion='eventos', mensaje=mensaje or '',
+                            error=error or '', ev_abrir=patente or ''))
+
 
 @app.route('/eventos/reportar', methods=['POST'])
 def reportar_evento():
@@ -6857,20 +7207,20 @@ def reportar_evento():
     if 'usuario_id' not in session:
         return redirect(url_for('login'))
 
-    volver = request.form.get('volver') or url_for('tecnico')
+    volver = _destino_local(request.form.get('volver'), url_for('tecnico'))
 
     try:
         camioneta_id = int(request.form.get('camioneta_id', ''))
     except (TypeError, ValueError):
-        return redirect(volver + '?error=Eleg%C3%AD una camioneta.')
+        return redirect(_volver_con(volver, error='Elegí una camioneta.'))
 
     mensaje = (request.form.get('mensaje') or '').strip()
     if not mensaje:
-        return redirect(volver + '?error=Cont%C3%A1 qu%C3%A9 pas%C3%B3.')
+        return redirect(_volver_con(volver, error='Contá qué pasó.'))
 
     importancia = (request.form.get('importancia') or '').strip().upper()
     if importancia not in IMPORTANCIA_EVENTO:
-        return redirect(volver + '?error=Eleg%C3%AD qu%C3%A9 tan urgente es.')
+        return redirect(_volver_con(volver, error='Elegí qué tan urgente es.'))
 
     conexion = get_db()
     try:
@@ -6878,10 +7228,10 @@ def reportar_evento():
             'SELECT id, patente FROM camionetas WHERE id = ? AND activa = 1',
             (camioneta_id,)).fetchone()
         if camioneta is None:
-            return redirect(volver + '?error=Camioneta no encontrada.')
+            return redirect(_volver_con(volver, error='Camioneta no encontrada.'))
 
-        # El técnico solo reporta sobre la suya. Sin esto, cambiando el id del
-        # formulario podría sacar de circulación una camioneta que no maneja.
+        # El técnico solo reporta sobre la suya: el reporte le llega a soporte
+        # como algo de esa camioneta, y tiene que ser de alguien que la manejó.
         if session.get('rol') == 'tecnico':
             propias = {c['camioneta_id']
                        for c in custodias_abiertas(conexion,
@@ -6892,26 +7242,26 @@ def reportar_evento():
             """, (session['usuario_id'], ahora().strftime('%Y-%m-%d'))).fetchall()
             propias.update(fila['camioneta_id'] for fila in asignada)
             if camioneta_id not in propias:
-                return redirect(volver + '?error=Solo pod' + '%C3%A9s reportar sobre '
-                                'la camioneta que ten' + '%C3%A9s asignada.')
+                return redirect(_volver_con(
+                    volver, error='Solo podés reportar sobre la camioneta que tenés asignada.'))
 
-        bloquea = 1 if importancia in IMPORTANCIA_QUE_BLOQUEA else 0
+        # bloquea = 0 siempre: sacarla de circulación lo decide soporte.
         conexion.execute("""
             INSERT INTO eventos_reportados
                 (camioneta_id, mensaje, importancia, estado, reportado_por,
                  reportado_por_id, fecha, visto, bloquea)
-            VALUES (?, ?, ?, 'NUEVO', ?, ?, ?, 0, ?)
+            VALUES (?, ?, ?, 'NUEVO', ?, ?, ?, 0, 0)
         """, (camioneta_id, mensaje, importancia, session.get('nombre'),
-              session.get('usuario_id'), ahora().isoformat(), bloquea))
+              session.get('usuario_id'), ahora().isoformat()))
 
         # Soporte se entera en el momento, que es todo el sentido de esto.
         etiqueta = IMPORTANCIA_EVENTO[importancia]['etiqueta']
         crear_notificacion(
             'EVENTO_REPORTADO',
-            f'\u26a0\ufe0f {session.get("nombre")} reportó un problema en '
+            f'⚠️ {session.get("nombre")} reportó un problema en '
             f'{camioneta["patente"]} ({etiqueta}): {mensaje}',
             patente=camioneta['patente'],
-            destinatario_rol='admin',
+            destinatario_rol='soporte',
             enlace='/admin?seccion=eventos',
             conexion=conexion)
         conexion.commit()
@@ -6919,22 +7269,21 @@ def reportar_evento():
     finally:
         conexion.close()
 
-    if bloquea:
-        aviso = (f'Reportaste un problema urgente en {patente}. Queda fuera de '
-                 f'circulación hasta que soporte lo revise.')
+    if importancia == 'URGENTE':
+        aviso = (f'Reportaste un problema urgente en {patente}. Soporte lo revisa '
+                 f'y decide si la camioneta puede seguir saliendo.')
     else:
         aviso = f'Reportaste el problema de {patente}. Soporte ya lo ve.'
-    return redirect(volver + '?mensaje=' + aviso)
-
+    return redirect(_volver_con(volver, mensaje=aviso))
 
 
 @app.route('/eventos/revisar', methods=['POST'])
 def revisar_evento():
-    """Soporte decide si la camioneta puede salir o queda fuera de servicio.
+    """Soporte decide si la camioneta sigue circulando o queda fuera de servicio.
 
-    Es el paso que evita que una camioneta quede parada porque si, y tambien
-    que salga con algo grave porque nadie miro. La decision es de soporte y
-    queda registrada con nombre y fecha.
+    Un reporte no saca la camioneta de circulación por sí solo: esta es la
+    única forma de hacerlo, y también la de devolverla. La decisión queda
+    registrada con nombre y fecha en el seguimiento del reporte.
     """
     if not autorizado('soporte', 'admin'):
         return redirect(url_for('login'))
@@ -6942,17 +7291,15 @@ def revisar_evento():
     try:
         evento_id = int(request.form.get('evento_id', ''))
     except (TypeError, ValueError):
-        return redirect(url_for('admin', seccion='eventos', error='Evento inválido.'))
+        return _volver_eventos(error='Evento inválido.')
 
     decision = (request.form.get('decision') or '').strip().upper()
     if decision not in ('LIBERAR', 'FUERA_DE_SERVICIO'):
-        return redirect(url_for('admin', seccion='eventos',
-                                error='Elegí si puede salir o queda fuera de servicio.'))
+        return _volver_eventos(error='Elegí si puede circular o queda fuera de servicio.')
 
     comentario = (request.form.get('comentario') or '').strip()
     if not comentario:
-        return redirect(url_for('admin', seccion='eventos',
-                                error='Conta qué viste antes de decidir.'))
+        return _volver_eventos(error='Contá qué viste antes de decidir.')
 
     conexion = get_db()
     try:
@@ -6963,23 +7310,31 @@ def revisar_evento():
             WHERE e.id = ?
         ''', (evento_id,)).fetchone()
         if evento is None:
-            return redirect(url_for('admin', seccion='eventos',
-                                    error='Ese evento no existe.'))
+            return _volver_eventos(error='Ese evento no existe.')
+        if evento['estado'] not in ESTADOS_EVENTO_ABIERTOS:
+            return _volver_eventos(error='Ese reporte ya está cerrado.',
+                                   patente=evento['patente'])
 
         libera = decision == 'LIBERAR'
+        # Revisarlo ya es estar viéndolo; si estaba en pausa, sigue en pausa.
+        nuevo_estado = 'EN_CURSO' if evento['estado'] == 'NUEVO' else evento['estado']
         conexion.execute("""
             UPDATE eventos_reportados
             SET bloquea = ?, fuera_de_servicio = ?, revisado_por = ?,
-                fecha_revision = ?, comentario_soporte = ?, estado = 'EN_CURSO',
+                fecha_revision = ?, comentario_soporte = ?, estado = ?,
                 visto = 1
             WHERE id = ?
         """, (0 if libera else 1, 0 if libera else 1, session.get('nombre'),
-              ahora().isoformat(), comentario, evento_id))
+              ahora().isoformat(), comentario, nuevo_estado, evento_id))
+
+        anotar_seguimiento(
+            conexion, evento_id, nuevo_estado,
+            ('Puede circular. ' if libera else 'Fuera de servicio. ') + comentario)
 
         crear_notificacion(
             'EVENTO_REVISADO',
-            (f'\u2705 {evento["patente"]} revisada por {session.get("nombre")}: '
-             f'puede salir. {comentario}') if libera else
+            (f'✅ {evento["patente"]} revisada por {session.get("nombre")}: '
+             f'puede circular. {comentario}') if libera else
             (f'\U0001f6d1 {evento["patente"]} queda FUERA DE SERVICIO según '
              f'{session.get("nombre")}: {comentario}'),
             patente=evento['patente'],
@@ -6990,31 +7345,43 @@ def revisar_evento():
     finally:
         conexion.close()
 
-    return redirect(url_for('admin', seccion='eventos',
-                            mensaje=(f'{patente} liberada: puede volver a salir.'
-                                     if libera else
-                                     f'{patente} queda fuera de servicio.')))
+    return _volver_eventos(
+        mensaje=(f'{patente} puede circular.' if libera
+                 else f'{patente} queda fuera de servicio: nadie la puede retirar.'),
+        patente=patente)
+
 
 @app.route('/eventos/atender', methods=['POST'])
 def atender_evento():
-    """Soporte mueve el reporte de estado y deja su comentario."""
+    """Soporte deja una nueva instancia del reporte: avanza, pausa, cierra o anota.
+
+    Cada paso queda en el seguimiento, así que se puede reconstruir la
+    historia completa (lo llevé a la gomería, estaba cerrado, lo llevo
+    mañana, quedó resuelto). NOTA agrega un comentario sin cambiar el estado.
+    """
     if not autorizado('soporte', 'admin'):
         return redirect(url_for('login'))
 
     try:
         evento_id = int(request.form.get('evento_id', ''))
     except (TypeError, ValueError):
-        return redirect(url_for('admin', seccion='eventos', error='Evento inválido.'))
+        return _volver_eventos(error='Evento inválido.')
 
     estado = (request.form.get('estado') or '').strip().upper()
-    if estado not in ESTADOS_EVENTO:
-        return redirect(url_for('admin', seccion='eventos', error='Estado inválido.'))
+    if estado not in ESTADOS_EVENTO and estado != 'NOTA':
+        return _volver_eventos(error='Estado inválido.')
 
     comentario = (request.form.get('comentario') or '').strip()
-    # Cerrar sin decir nada deja al tecnico sin saber si se arreglo o no.
-    if estado in ('RESUELTO', 'DESCARTADO') and not comentario:
-        return redirect(url_for('admin', seccion='eventos',
-                                error='Conta qué se hizo antes de cerrarlo.'))
+    # Sin comentario el seguimiento no dice nada: ni por qué quedó en pausa,
+    # ni qué se hizo para cerrarlo. Solo "lo estoy viendo" se puede sin texto.
+    if estado != 'EN_CURSO' and not comentario:
+        return _volver_eventos(error='Contá qué pasó en este paso: es obligatorio.')
+
+    retomar_el = None
+    if estado == 'EN_PAUSA':
+        retomar_el = (request.form.get('retomar_el') or '').strip() or None
+        if retomar_el and _fecha_iso(retomar_el) is None:
+            return _volver_eventos(error='La fecha para retomarlo no es válida.')
 
     conexion = get_db()
     try:
@@ -7025,37 +7392,235 @@ def atender_evento():
             WHERE e.id = ?
         ''', (evento_id,)).fetchone()
         if evento is None:
-            return redirect(url_for('admin', seccion='eventos',
-                                    error='Ese evento no existe.'))
+            return _volver_eventos(error='Ese evento no existe.')
+        if evento['estado'] not in ESTADOS_EVENTO_ABIERTOS:
+            return _volver_eventos(error='Ese reporte ya está cerrado.',
+                                   patente=evento['patente'])
 
+        if estado == 'NOTA':
+            estado = evento['estado']
         cerrado = estado in ('RESUELTO', 'DESCARTADO')
         conexion.execute("""
             UPDATE eventos_reportados
             SET estado = ?, comentario_soporte = ?, atendido_por = ?,
-                fecha_atendido = ?, visto = 1,
+                fecha_atendido = ?, visto = 1, retomar_el = ?,
                 bloquea = CASE WHEN ? THEN 0 ELSE bloquea END
             WHERE id = ?
         """, (estado, comentario or evento['comentario_soporte'],
               session.get('nombre'),
               ahora().isoformat() if cerrado else evento['fecha_atendido'],
+              retomar_el if estado == 'EN_PAUSA' else None,
               1 if cerrado else 0,
               evento_id))
+
+        anotar_seguimiento(conexion, evento_id, estado,
+                           comentario or 'Lo está viendo', retomar_el)
 
         # El que lo reporto tiene que enterarse de en que quedo.
         if cerrado and evento['reportado_por_id']:
             crear_notificacion(
                 'EVENTO_ATENDIDO',
-                f'\u2705 Soporte cerró tu reporte de {evento["patente"]} '
+                f'✅ Soporte cerró tu reporte de {evento["patente"]} '
                 f'({ESTADOS_EVENTO[estado].lower()}): {comentario}',
+                patente=evento['patente'],
                 destinatario_rol='tecnico',
+                destinatario_usuario_id=evento['reportado_por_id'],
+                conexion=conexion)
+        conexion.commit()
+        patente = evento['patente']
+    finally:
+        conexion.close()
+
+    return _volver_eventos(mensaje=f'{patente}: reporte {ESTADOS_EVENTO[estado].lower()}.',
+                           patente=patente)
+
+# Los pasos que soporte puede darle a un reporte desde su tarjeta, con el
+# texto que ve en el boton. El orden es el de la pantalla.
+PASOS_EVENTO = {
+    'EN_CURSO': 'Lo estoy viendo',
+    'EN_PAUSA': 'Queda pendiente',
+    'RESUELTO': 'Resuelto',
+    'DESCARTADO': 'Descartar',
+}
+
+
+def sincronizar_calendario_evento(conexion, evento, paso, comentario, retomar_el):
+    """Deja el reporte anotado en el calendario de la camioneta, solo.
+
+    Antes había que pasarlo a mano con "Registrarlo en el calendario", y lo
+    que no se pasaba no quedaba en ningún lado. Ahora cada reporte tiene una
+    entrada en el calendario que se mueve con él:
+
+      - queda pendiente con fecha -> la entrada va a ese día, para verlo
+        en la agenda cuando toca retomarlo;
+      - cualquier otro paso        -> la entrada va al día de hoy.
+
+    El color lo pone el estado del reporte (ver calendario_mes), así que al
+    resolverlo la misma entrada pasa a verde sin hacer nada más.
+    """
+    hoy = ahora().strftime('%Y-%m-%d')
+    fecha = retomar_el if (paso == 'EN_PAUSA' and retomar_el) else hoy
+    detalle = f'Otro: {evento["mensaje"]}'
+    observacion = comentario or PASOS_EVENTO.get(paso, '')
+
+    existente = conexion.execute("""
+        SELECT id FROM vencimientos_historial
+        WHERE evento_id = ? ORDER BY id DESC LIMIT 1
+    """, (evento['id'],)).fetchone()
+
+    if existente:
+        conexion.execute("""
+            UPDATE vencimientos_historial
+            SET fecha_realizado = ?, observacion = ?, registrado_por = ?
+            WHERE id = ?
+        """, (fecha, observacion, session.get('nombre'), existente['id']))
+    else:
+        conexion.execute("""
+            INSERT INTO vencimientos_historial
+                (camioneta_id, tipo, fecha_realizado, km_realizado, registrado_por,
+                 observacion, fecha_registro, detalle, meses_vigencia, evento_id)
+            VALUES (?, 'EVENTO', ?, NULL, ?, ?, ?, ?, NULL, ?)
+        """, (evento['camioneta_id'], fecha, session.get('nombre'), observacion,
+              ahora().isoformat(), detalle, evento['id']))
+    return fecha
+
+
+@app.route('/eventos/actualizar', methods=['POST'])
+def actualizar_evento():
+    """Un paso del reporte, desde un único formulario.
+
+    Antes la tarjeta tenía dos formularios (uno para decidir si la camioneta
+    circula y otro para el estado) con siete botones entre los dos, y no se
+    entendía qué hacía cada uno. Ahora soporte elige qué pasa con el reporte,
+    cuenta qué hizo y, si el reporte sigue abierto, dice si la camioneta
+    puede circular. Todo queda en un solo paso del seguimiento.
+    """
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        evento_id = int(request.form.get('evento_id', ''))
+    except (TypeError, ValueError):
+        return _volver_eventos(error='Reporte inválido.')
+
+    paso = (request.form.get('paso') or '').strip().upper()
+    if paso not in PASOS_EVENTO:
+        return _volver_eventos(error='Elegí qué pasa con el reporte.')
+
+    comentario = (request.form.get('comentario') or '').strip()
+    cerrado = paso in ('RESUELTO', 'DESCARTADO')
+
+    conexion = get_db()
+    try:
+        evento = conexion.execute('''
+            SELECT e.*, c.patente
+            FROM eventos_reportados e
+            JOIN camionetas c ON e.camioneta_id = c.id
+            WHERE e.id = ?
+        ''', (evento_id,)).fetchone()
+        if evento is None:
+            return _volver_eventos(error='Ese reporte no existe.')
+        patente = evento['patente']
+        if evento['estado'] not in ESTADOS_EVENTO_ABIERTOS:
+            return _volver_eventos(error='Ese reporte ya está cerrado.', patente=patente)
+
+        # Si la camioneta circula o no, solo se decide con el reporte abierto:
+        # al cerrarlo vuelve a circular sola.
+        circulacion = None
+        if not cerrado:
+            circulacion = (request.form.get('circulacion') or '').strip().upper()
+            if circulacion not in ('CIRCULA', 'FUERA'):
+                return _volver_eventos(
+                    error='Decidí si la camioneta puede circular mientras tanto.',
+                    patente=patente)
+
+        estaba_fuera = bool(evento['bloquea'])
+        queda_fuera = circulacion == 'FUERA'
+        cambia_circulacion = not cerrado and (
+            queda_fuera != estaba_fuera or not evento['revisado_por'])
+
+        # El comentario es lo que cuenta qué pasó. Solo se puede omitir al
+        # tomarlo ("lo estoy viendo") sin cambiar nada de la camioneta.
+        if not comentario and not (paso == 'EN_CURSO' and not cambia_circulacion):
+            return _volver_eventos(error='Contá qué pasó: es lo que queda en el historial.',
+                                   patente=patente)
+
+        retomar_el = None
+        if paso == 'EN_PAUSA':
+            retomar_el = (request.form.get('retomar_el') or '').strip() or None
+            if retomar_el and _fecha_iso(retomar_el) is None:
+                return _volver_eventos(error='La fecha para retomarlo no es válida.',
+                                       patente=patente)
+
+        momento = ahora().isoformat()
+        nombre = session.get('nombre')
+        conexion.execute("""
+            UPDATE eventos_reportados
+            SET estado = ?, comentario_soporte = ?, atendido_por = ?, visto = 1,
+                fecha_atendido = ?, retomar_el = ?,
+                bloquea = ?, fuera_de_servicio = ?,
+                revisado_por = CASE WHEN ? THEN ? ELSE revisado_por END,
+                fecha_revision = CASE WHEN ? THEN ? ELSE fecha_revision END
+            WHERE id = ?
+        """, (paso, comentario or evento['comentario_soporte'], nombre,
+              momento if cerrado else evento['fecha_atendido'], retomar_el,
+              1 if queda_fuera else 0, 1 if queda_fuera else 0,
+              1 if cambia_circulacion else 0, nombre,
+              1 if cambia_circulacion else 0, momento,
+              evento_id))
+
+        conexion.execute("""
+            INSERT INTO eventos_seguimiento
+                (evento_id, estado, comentario, usuario, usuario_id, fecha,
+                 retomar_el, circulacion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (evento_id, paso, comentario or PASOS_EVENTO[paso], nombre,
+              session.get('usuario_id'), momento, retomar_el,
+              ('CIRCULA' if cerrado else circulacion)))
+
+        # El calendario de la camioneta se actualiza solo con cada paso.
+        fecha_calendario = sincronizar_calendario_evento(
+            conexion, evento, paso, comentario, retomar_el)
+
+        # Todos se enteran cuando una camioneta sale o vuelve a circulación:
+        # el técnico que la tenía asignada, soporte y el jefe.
+        if not cerrado and queda_fuera != estaba_fuera:
+            crear_notificacion(
+                'EVENTO_REVISADO',
+                (f'\U0001f6d1 {patente} queda FUERA DE SERVICIO según {nombre}: '
+                 f'{comentario}') if queda_fuera else
+                (f'✅ {patente} vuelve a circular según {nombre}. {comentario}'),
+                patente=patente, destinatario_rol='todos', conexion=conexion)
+        elif cerrado and estaba_fuera:
+            crear_notificacion(
+                'EVENTO_REVISADO',
+                f'✅ {patente} vuelve a circular: {nombre} cerró el reporte. {comentario}',
+                patente=patente, destinatario_rol='todos', conexion=conexion)
+
+        # El que lo reporto tiene que enterarse de en que quedo.
+        if cerrado and evento['reportado_por_id']:
+            crear_notificacion(
+                'EVENTO_ATENDIDO',
+                f'✅ Soporte cerró tu reporte de {patente} '
+                f'({ESTADOS_EVENTO[paso].lower()}): {comentario}',
+                patente=patente, destinatario_rol='tecnico',
+                destinatario_usuario_id=evento['reportado_por_id'],
                 conexion=conexion)
         conexion.commit()
     finally:
         conexion.close()
 
-    return redirect(url_for('admin', seccion='eventos',
-                            mensaje=f'Evento marcado como '
-                                    f'{ESTADOS_EVENTO[estado].lower()}.'))
+    detalle = {
+        'EN_CURSO': 'lo estás viendo',
+        'EN_PAUSA': f'queda pendiente{" para el " + retomar_el if retomar_el else ""}',
+        'RESUELTO': 'resuelto',
+        'DESCARTADO': 'descartado',
+    }[paso]
+    if not cerrado:
+        detalle += ' · ' + ('fuera de servicio' if queda_fuera else 'puede circular')
+    return _volver_eventos(mensaje=f'{patente}: {detalle}. Anotado en el calendario '
+                                   f'el {fecha_calendario}.', patente=patente)
+
 
 # ============================================
 # CONTROLES JUSTIFICADOS
@@ -7624,9 +8189,11 @@ def calendario():
         historial = [dict(f) for f in conexion.execute(f'''
             SELECT h.id, h.camioneta_id, h.tipo, h.fecha_realizado,
                    h.km_realizado, h.registrado_por, h.observacion,
-                   h.detalle, h.meses_vigencia, c.patente
+                   h.detalle, h.meses_vigencia, c.patente,
+                   h.evento_id, ev.estado AS estado_evento
             FROM vencimientos_historial h
             JOIN camionetas c ON h.camioneta_id = c.id
+            LEFT JOIN eventos_reportados ev ON h.evento_id = ev.id
             WHERE {' AND '.join(where_h)}
             ORDER BY h.fecha_realizado DESC, h.id DESC
             LIMIT 200
@@ -7695,6 +8262,7 @@ def calendario():
                                'solo_registro': cfg.get('solo_registro', False),
                            } for clave, cfg in TIPOS_VENCIMIENTO.items()},
                            meses_vtv=MESES_VTV,
+                           estados_evento=ESTADOS_EVENTO,
                            tipos_evento=TIPOS_EVENTO,
                            filtros_historial={
                                'patente': filtro_h_patente,
@@ -7837,10 +8405,24 @@ def calendario_registrar():
         if error:
             return _volver_calendario(error=error)
 
+        # Si viene de un reporte del técnico, queda atado a él: el calendario
+        # lo pinta según en qué anda ese reporte (en pausa, resuelto...).
+        evento_id = None
+        if TIPOS_VENCIMIENTO[tipo].get('solo_registro'):
+            try:
+                evento_id = int(request.form.get('evento_id') or 0) or None
+            except (TypeError, ValueError):
+                evento_id = None
+            if evento_id and conexion.execute(
+                    'SELECT 1 FROM eventos_reportados WHERE id = ? AND camioneta_id = ?',
+                    (evento_id, camioneta['id'])).fetchone() is None:
+                evento_id = None
+
         nueva_fecha, nuevo_km = registrar_realizado(
             conexion, camioneta['id'], tipo, datos['fecha'], datos['km'],
             session.get('nombre'), datos['observacion'],
-            detalle=datos['detalle'], meses_vigencia=datos['meses'])
+            detalle=datos['detalle'], meses_vigencia=datos['meses'],
+            evento_id=evento_id)
         conexion.commit()
     finally:
         conexion.close()
@@ -8072,7 +8654,11 @@ def subir_foto_control(control_id):
 
         ruta_relativa, error = fotos.guardar_foto(
             archivo, FOTOS_DIR, camioneta['patente'],
-            control_id, posicion, fecha, momento)
+            control_id, posicion, fecha, momento,
+            fecha_declarada=fotos.fecha_declarada(
+                request.form.get('fecha_captura'),
+                request.form.get('ultima_modificacion'),
+                TZ_LOCAL))
 
         if error:
             return jsonify({'success': False, 'error': error}), 400
@@ -8199,6 +8785,9 @@ def create_app():
     if not os.environ.get('CONTROL_SECRET_KEY'):
         print("⚠️ CONTROL_SECRET_KEY no está definida: las sesiones se van a "
               "cerrar en cada reinicio del servidor.")
+    if not FOTOS_OBLIGATORIAS:
+        print("⚠️ CONTROL_FOTOS_OBLIGATORIAS=0: las fotos del control son "
+              "opcionales. Solo para pruebas: sacarlo antes de producción.")
     return app
 
 

@@ -12,6 +12,7 @@ database.db-wal
 database.db-shm
 remitos/
 static/firmas/
+fotos/
 
 Dockerfile
 docker-compose.yml

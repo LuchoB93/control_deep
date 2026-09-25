@@ -14,12 +14,14 @@ services:
       CONTROL_DATA_DIR: /app/datos
       CONTROL_REMITOS_DIR: /app/remitos
       CONTROL_FIRMAS_DIR: /app/static/firmas
+      CONTROL_FOTOS_DIR: /app/fotos
     volumes:
       # Todo lo que no se puede perder vive fuera de la imagen: si se
       # reconstruye el contenedor, los datos siguen estando.
       - control-datos:/app/datos
       - control-remitos:/app/remitos
       - control-firmas:/app/static/firmas
+      - control-fotos:/app/fotos
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/').status\""]
       interval: 30s
@@ -31,3 +33,4 @@ volumes:
   control-datos:
   control-remitos:
   control-firmas:
+  control-fotos:

@@ -49,6 +49,9 @@ ambos al principio de `app.py`.
 | `CONTROL_DATA_DIR` | carpeta del proyecto | Dónde vive `database.db` |
 | `CONTROL_REMITOS_DIR` | `./remitos` | PDF de remitos |
 | `CONTROL_FIRMAS_DIR` | `./static/firmas` | Firmas de los administradores |
+| `CONTROL_FOTOS_DIR` | `./fotos` | Las cinco fotos de cada control |
+| `CONTROL_FOTOS_OBLIGATORIAS` | `1` | `0` vuelve opcionales las fotos del control. **Solo para pruebas** desde una PC sin cámara |
+| `CONTROL_TZ` | `America/Argentina/Buenos_Aires` | Zona horaria de las jornadas y alertas |
 | `CONTROL_HOST` | `0.0.0.0` | Solo para el servidor de desarrollo |
 | `CONTROL_PORT` | `5000` | Puerto |
 | `CONTROL_DEBUG` | `0` | `1` activa el modo debug. **Nunca en producción**: expone una consola que permite ejecutar código en el servidor |
@@ -113,16 +116,17 @@ docker compose up -d --build
 ```
 
 Los datos viven en volúmenes (`control-datos`, `control-remitos`,
-`control-firmas`), así que reconstruir la imagen no borra nada.
+`control-firmas`, `control-fotos`), así que reconstruir la imagen no borra nada.
 
 ### Backup
 
-Lo único irreemplazable es la base y los remitos:
+Lo irreemplazable es la base, los remitos y las fotos de los controles:
 
 ```bash
 docker compose exec control python -c "import shutil,datetime; shutil.copy('/app/datos/database.db', '/app/datos/backup-' + datetime.date.today().isoformat() + '.db')"
 docker run --rm -v control-datos:/datos -v "$PWD":/backup alpine tar czf /backup/backup-datos.tar.gz /datos
 docker run --rm -v control-remitos:/remitos -v "$PWD":/backup alpine tar czf /backup/backup-remitos.tar.gz /remitos
+docker run --rm -v control-fotos:/fotos -v "$PWD":/backup alpine tar czf /backup/backup-fotos.tar.gz /fotos
 ```
 
 ## Contraseñas

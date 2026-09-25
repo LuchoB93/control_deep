@@ -1,0 +1,7 @@
+{# Actualización automática de los paneles: ver static/js/tiempo_real.js.
+   No va en la pantalla del control en curso: el técnico está marcando la
+   planilla y una recarga le haría perder lo que lleva. #}
+{% if version_datos is defined %}
+    <script>window.VERSION_DATOS = {{ version_datos|tojson }};</script>
+    <script src="{{ url_for('static', filename='js/tiempo_real.js') }}" defer></script>
+{% endif %}

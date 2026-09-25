@@ -519,7 +519,7 @@
                     {% for c in camionetas %}
                         <button type="button" class="tarjeta-patente"
                                 data-patente="{{ c.patente }}"
-                                onclick="elegirPatente('{{ c.patente }}')">
+                                onclick='elegirPatente({{ c.patente|tojson }})'>
                             <span class="tp-patente">
                                 <i class="bi bi-truck"></i> {{ c.patente }}
                             </span>
@@ -568,7 +568,7 @@
                     <button type="button"
                             class="hist-tarjeta"
                             data-patente="{{ c.patente }}"
-                            onclick="filtrarHistorialPor('{{ c.patente }}')">
+                            onclick='filtrarHistorialPor({{ c.patente|tojson }})'>
                         <div class="hist-tarjeta-top">
                             <span class="hist-patente">{{ c.patente }}</span>
                             {% if c.pendientes %}
@@ -745,8 +745,10 @@
             <div class="seccion-header">
                 <h1><i class="bi bi-exclamation-triangle"></i> Eventos reportados</h1>
                 <p class="text-muted">
-                    Problemas que avisaron los técnicos fuera del control diario:
-                    algo se rompió y no podía esperar al próximo retiro.
+                    Problemas que avisaron los técnicos fuera del control diario.
+                    En cada reporte elegís qué pasa (lo estás viendo, queda pendiente
+                    para otro día, resuelto o descartado), contás qué hiciste y decidís
+                    si la camioneta puede circular mientras tanto. Todo queda en su historial.
                 </p>
             </div>
 
@@ -809,135 +811,267 @@
                         </div>
                     </form>
 
-                    <div class="ev-lista">
-                        {% for e in eventos %}
-                            <div class="ev-item ev-{{ e.importancia|lower }} {{ 'ev-cerrado' if not e.abierto }}">
-                                <div class="ev-item-top">
-                                    <span class="ev-patente">{{ e.patente }}</span>
-
-                                    <span class="badge" style="background: {{ e.importancia_color }};">
-                                        {{ e.importancia_etiqueta }}
-                                    </span>
-
-                                    {% if e.estado == 'NUEVO' %}
-                                        <span class="badge bg-primary">Nuevo</span>
-                                    {% elif e.estado == 'EN_CURSO' %}
-                                        <span class="badge bg-warning text-dark">En curso</span>
-                                    {% elif e.estado == 'RESUELTO' %}
-                                        <span class="badge bg-success">Resuelto</span>
-                                    {% else %}
-                                        <span class="badge bg-secondary">Descartado</span>
-                                    {% endif %}
-
-                                    {% if e.bloquea %}
-                                        <span class="badge bg-dark">
-                                            <i class="bi bi-lock-fill"></i> Fuera de circulación
-                                        </span>
-                                    {% endif %}
-                                    <span class="ev-fecha">
-                                        {{ e.fecha[:16]|replace('T', ' ') }}
-                                    </span>
-                                </div>
-
-                                <div class="ev-mensaje">{{ e.mensaje }}</div>
-
-                                <div class="ev-meta">
-                                    Reportó {{ e.reportado_por or '—' }}
-                                    {% if e.atendido_por %}
-                                        · atendió {{ e.atendido_por }}
-                                    {% endif %}
-                                </div>
-
-                                {% if e.comentario_soporte %}
-                                    <div class="ev-respuesta">
-                                        <i class="bi bi-chat-right-quote"></i>
-                                        <strong>{{ e.atendido_por }}:</strong>
-                                        {{ e.comentario_soporte }}
-                                    </div>
-                                {% endif %}
-
-                                {% if e.bloquea %}
-                                    {# La camioneta esta parada por este reporte.
-                                       Sale de circulacion sola, pero para volver
-                                       hace falta que alguien de soporte diga que
-                                       la miro: es lo que evita que un tecnico la
-                                       de de baja por su cuenta, y tambien que
-                                       salga con algo grave porque nadie chequeo. #}
-                                    <div class="ev-bloqueo">
-                                        <i class="bi bi-lock-fill"></i>
-                                        <strong>{{ e.patente }} está fuera de circulación.</strong>
-                                        Nadie la puede retirar hasta que la revises.
-                                    </div>
-                                    <form method="POST" action="{{ url_for('revisar_evento') }}"
-                                          class="ev-acciones">
-                                        <input type="hidden" name="evento_id" value="{{ e.id }}">
-                                        <input type="text" name="comentario"
-                                               class="form-control form-control-sm"
-                                               required
-                                               placeholder="Qué viste al revisarla (obligatorio)">
-                                        <div class="ev-botones">
-                                            <button type="submit" name="decision" value="LIBERAR"
-                                                    class="btn btn-success btn-sm">
-                                                <i class="bi bi-check-lg"></i> La revisé, puede salir
-                                            </button>
-                                            <button type="submit" name="decision" value="FUERA_DE_SERVICIO"
-                                                    class="btn btn-danger btn-sm">
-                                                <i class="bi bi-slash-circle"></i> Confirmo: fuera de servicio
-                                            </button>
-                                        </div>
-                                    </form>
-                                {% endif %}
-
-                                {% if e.fuera_de_servicio and not e.bloquea %}
-                                    <div class="ev-bloqueo ev-bloqueo-ok">
-                                        <i class="bi bi-unlock"></i>
-                                        Revisada por {{ e.revisado_por }}: puede circular.
-                                    </div>
-                                {% endif %}
-
-                                {% if e.abierto %}
-                                    <form method="POST" action="{{ url_for('atender_evento') }}"
-                                          class="ev-acciones">
-                                        <input type="hidden" name="evento_id" value="{{ e.id }}">
-                                        <input type="text" name="comentario" class="form-control form-control-sm"
-                                               placeholder="Qué se hizo (obligatorio para cerrarlo)"
-                                               value="{{ e.comentario_soporte or '' }}">
-                                        <div class="ev-botones">
-                                            {% if e.estado == 'NUEVO' %}
-                                                <button type="submit" name="estado" value="EN_CURSO"
-                                                        class="btn btn-warning btn-sm">
-                                                    <i class="bi bi-tools"></i> Lo estoy viendo
-                                                </button>
+                    {# Una carpeta por camioneta. Adentro, primero los reportes
+                       abiertos (con su formulario) y abajo, plegados, los
+                       cerrados. Se abren solas las carpetas con algo pendiente
+                       y la de la camioneta sobre la que se acaba de trabajar. #}
+                    {% macro historial_reporte(e, abierto_por_defecto) %}
+                        {% if e.seguimiento %}
+                            <details class="rep-historial" {% if abierto_por_defecto %}open{% endif %}>
+                                <summary>
+                                    <i class="bi bi-clock-history"></i>
+                                    Historial · {{ e.seguimiento|length }} paso{{ 's' if e.seguimiento|length != 1 }}
+                                </summary>
+                                <ol class="ev-seguimiento">
+                                    {% for paso in e.seguimiento %}
+                                        <li style="--estado: {{ paso.estado_color }};">
+                                            <div class="ev-paso-top">
+                                                <span class="ev-paso-estado">{{ paso.estado_etiqueta }}</span>
+                                                {% if paso.circulacion == 'FUERA' %}
+                                                    <span class="rep-mini rep-mini-fuera"><i class="bi bi-lock-fill"></i> fuera de servicio</span>
+                                                {% elif paso.circulacion == 'CIRCULA' %}
+                                                    <span class="rep-mini rep-mini-circula"><i class="bi bi-truck"></i> circula</span>
+                                                {% endif %}
+                                                <span class="ev-paso-quien">{{ paso.usuario or '—' }}</span>
+                                                <span class="ev-paso-fecha">{{ paso.fecha[:16]|replace('T', ' ') }}</span>
+                                            </div>
+                                            <div class="ev-paso-texto">{{ paso.comentario }}</div>
+                                            {% if paso.retomar_el %}
+                                                <div class="ev-paso-retomar">
+                                                    <i class="bi bi-calendar-event"></i> Se retoma el {{ paso.retomar_el }}
+                                                </div>
                                             {% endif %}
-                                            <button type="submit" name="estado" value="RESUELTO"
-                                                    class="btn btn-success btn-sm">
-                                                <i class="bi bi-check-lg"></i> Resuelto
-                                            </button>
-                                            <button type="submit" name="estado" value="DESCARTADO"
-                                                    class="btn btn-outline-secondary btn-sm">
-                                                <i class="bi bi-slash-circle"></i> Descartar
-                                            </button>
-                                        </div>
-                                    </form>
-                                {% endif %}
-
-                                {% if e.estado in ('EN_CURSO', 'RESUELTO') %}
-                                    {# Lo que se arregló suele merecer quedar en el
-                                       calendario de la camioneta. Se ofrece, no se
-                                       hace solo: hay arreglos que no son un trabajo
-                                       que valga la pena registrar. #}
-                                    {# El mensaje va en un data-*, no dentro del onclick:
-                                       ahi sus comillas cierran el atributo y el
-                                       boton queda roto. #}
-                                    <button type="button" class="ev-al-calendario"
-                                            data-camioneta="{{ e.camioneta_id }}"
-                                            data-mensaje="{{ e.mensaje }}"
-                                            onclick="pasarAlCalendario(this)">
-                                        <i class="bi bi-calendar-plus"></i>
-                                        Registrarlo en el calendario
-                                    </button>
-                                {% endif %}
+                                        </li>
+                                    {% endfor %}
+                                </ol>
+                            </details>
+                        {% elif e.comentario_soporte %}
+                            {# Reportes de antes del seguimiento: solo quedó el
+                               último comentario. #}
+                            <div class="ev-respuesta">
+                                <i class="bi bi-chat-right-quote"></i>
+                                <strong>{{ e.atendido_por or e.revisado_por }}:</strong>
+                                {{ e.comentario_soporte }}
                             </div>
+                        {% endif %}
+                    {% endmacro %}
+
+                    {% macro boton_calendario(e) %}
+                        {# Cada paso del reporte lo anota solo en el calendario
+                           (el pendiente, en el día que se retoma): acá solo se
+                           ofrece ir a verlo. #}
+                        {% if e.fecha_calendario %}
+                            <a class="ev-al-calendario"
+                               href="{{ url_for('calendario', anio=e.fecha_calendario[:4]|int, mes=e.fecha_calendario[5:7]|int) }}">
+                                <i class="bi bi-calendar-check"></i>
+                                En el calendario el {{ e.fecha_calendario }}
+                            </a>
+                        {% endif %}
+                    {% endmacro %}
+
+                    <div class="ev-lista">
+                        {% for grupo in eventos|groupby('patente') %}
+                            {% set abiertos = grupo.list|selectattr('abierto')|list %}
+                            {% set cerrados = grupo.list|rejectattr('abierto')|list %}
+                            {% set fuera = abiertos|selectattr('bloquea')|list %}
+                            <details class="ev-carpeta {{ 'ev-carpeta-fuera' if fuera }}"
+                                     {% if abiertos or ev_abrir == grupo.grouper %}open{% endif %}>
+                                <summary class="ev-carpeta-cabecera">
+                                    <i class="bi bi-folder2{{ '-open' if abiertos }} ev-carpeta-icono"></i>
+                                    <span class="ev-patente">{{ grupo.grouper }}</span>
+                                    {% if abiertos %}
+                                        <span class="badge bg-warning text-dark">{{ abiertos|length }} por resolver</span>
+                                    {% else %}
+                                        <span class="badge bg-success">Todo resuelto</span>
+                                    {% endif %}
+                                    {% if fuera %}
+                                        <span class="badge bg-dark"><i class="bi bi-lock-fill"></i> Fuera de servicio</span>
+                                    {% endif %}
+                                    <span class="text-muted small">{{ grupo.list|length }} reporte{{ 's' if grupo.list|length != 1 }} en total</span>
+                                    <i class="bi bi-chevron-down ev-carpeta-flecha"></i>
+                                </summary>
+
+                                <div class="ev-carpeta-cuerpo">
+                                {% for e in abiertos %}
+                                    {# Cómo está la camioneta hoy por este reporte. #}
+                                    {% if e.bloquea %}
+                                        {% set circ_actual = 'FUERA' %}
+                                    {% elif e.revisado_por or e.importancia not in ('URGENTE', 'ALTA') %}
+                                        {% set circ_actual = 'CIRCULA' %}
+                                    {% else %}
+                                        {% set circ_actual = '' %}
+                                    {% endif %}
+                                    <article class="rep rep-{{ e.importancia|lower }}">
+                                        <header class="rep-cabecera">
+                                            <span class="badge" style="background: {{ e.importancia_color }};">
+                                                {{ e.importancia_etiqueta }}
+                                            </span>
+                                            <span class="badge ev-estado" data-estado="{{ e.estado }}"
+                                                  style="background: {{ e.estado_color }};">
+                                                {{ e.estado_etiqueta }}
+                                            </span>
+                                            {% if circ_actual == 'FUERA' %}
+                                                <span class="rep-circ rep-circ-fuera">
+                                                    <i class="bi bi-lock-fill"></i> Fuera de servicio
+                                                </span>
+                                            {% elif circ_actual == 'CIRCULA' %}
+                                                <span class="rep-circ rep-circ-ok">
+                                                    <i class="bi bi-truck"></i> Circulando
+                                                </span>
+                                            {% else %}
+                                                <span class="rep-circ rep-circ-decidir">
+                                                    <i class="bi bi-exclamation-octagon-fill"></i> Falta decidir si circula
+                                                </span>
+                                            {% endif %}
+                                            <span class="ev-fecha">{{ e.fecha[:16]|replace('T', ' ') }}</span>
+                                        </header>
+
+                                        <p class="rep-mensaje">{{ e.mensaje }}</p>
+                                        <div class="ev-meta">
+                                            Reportó {{ e.reportado_por or '—' }}
+                                            {% if e.en_calendario %}
+                                                · <i class="bi bi-calendar-check"></i> en el calendario
+                                            {% endif %}
+                                        </div>
+
+                                        {% if e.estado == 'EN_PAUSA' %}
+                                            <div class="rep-aviso-pausa">
+                                                <i class="bi bi-pause-circle-fill"></i>
+                                                Pendiente{% if e.retomar_el %}: se retoma el <strong>{{ e.retomar_el }}</strong>{% endif %}.
+                                            </div>
+                                        {% endif %}
+
+                                        {% set ultimo = e.seguimiento[-1] if e.seguimiento else none %}
+                                        {% if ultimo %}
+                                            {# Lo último que se hizo, a la vista: es lo que uno
+                                               quiere saber al volver a la tarjeta. #}
+                                            <div class="rep-ultimo" style="--estado: {{ ultimo.estado_color }};">
+                                                <div class="rep-ultimo-top">
+                                                    <strong>Último paso: {{ ultimo.estado_etiqueta }}</strong>
+                                                    <span>{{ ultimo.usuario or '—' }} · {{ ultimo.fecha[:16]|replace('T', ' ') }}</span>
+                                                </div>
+                                                <div>{{ ultimo.comentario }}</div>
+                                            </div>
+                                        {% endif %}
+
+                                        {% if e.seguimiento|length > 1 %}
+                                            {{ historial_reporte(e, false) }}
+                                        {% endif %}
+
+                                        {# Si ya se hizo algo con el reporte, el formulario queda
+                                           plegado: abierto parecía que no se había guardado nada.
+                                           Uno nuevo lo muestra abierto porque hay que atenderlo. #}
+                                        <details class="rep-accion" {% if not e.seguimiento %}open{% endif %}>
+                                            <summary class="rep-accion-boton">
+                                                <i class="bi bi-pencil-square"></i>
+                                                {{ 'Actualizar este reporte' if e.seguimiento else 'Atender este reporte' }}
+                                            </summary>
+                                        <form method="POST" action="{{ url_for('actualizar_evento') }}"
+                                              class="rep-form" data-form-reporte>
+                                            <input type="hidden" name="evento_id" value="{{ e.id }}">
+
+                                            <div class="rep-bloque">
+                                                <div class="rep-bloque-titulo"><span>1</span> ¿Qué pasa con el reporte?</div>
+                                                <div class="rep-pasos">
+                                                    {% for clave, etiqueta in pasos_evento.items() %}
+                                                        <label class="rep-paso rep-paso-{{ clave|lower }}">
+                                                            <input type="radio" name="paso" value="{{ clave }}" required>
+                                                            <span>
+                                                                {% if clave == 'EN_CURSO' %}<i class="bi bi-tools"></i>
+                                                                {% elif clave == 'EN_PAUSA' %}<i class="bi bi-pause-circle"></i>
+                                                                {% elif clave == 'RESUELTO' %}<i class="bi bi-check-circle"></i>
+                                                                {% else %}<i class="bi bi-x-circle"></i>{% endif %}
+                                                                {{ etiqueta }}
+                                                                <small>
+                                                                    {% if clave == 'EN_CURSO' %}Ya lo estás atendiendo
+                                                                    {% elif clave == 'EN_PAUSA' %}Se sigue otro día
+                                                                    {% elif clave == 'RESUELTO' %}Quedó arreglado
+                                                                    {% else %}No era nada / ya estaba{% endif %}
+                                                                </small>
+                                                            </span>
+                                                        </label>
+                                                    {% endfor %}
+                                                </div>
+                                                <label class="rep-fecha" hidden>
+                                                    <i class="bi bi-calendar-event"></i>
+                                                    ¿Para cuándo queda?
+                                                    <input type="date" name="retomar_el" class="form-control form-control-sm"
+                                                           min="{{ hoy_iso }}">
+                                                </label>
+                                            </div>
+
+                                            <div class="rep-bloque">
+                                                <div class="rep-bloque-titulo"><span>2</span> Contá qué pasó</div>
+                                                <textarea name="comentario" class="form-control" rows="2"
+                                                          placeholder="Ej: la llevé a la gomería pero estaba cerrada, mañana a primera hora"></textarea>
+                                            </div>
+
+                                            <div class="rep-bloque rep-bloque-circ">
+                                                <div class="rep-bloque-titulo"><span>3</span> Mientras tanto, la camioneta…</div>
+                                                <div class="rep-circ-opciones">
+                                                    <label class="rep-circ-opcion rep-circ-opcion-ok">
+                                                        <input type="radio" name="circulacion" value="CIRCULA"
+                                                               {% if circ_actual == 'CIRCULA' %}checked{% endif %}>
+                                                        <span><i class="bi bi-truck"></i> Puede circular</span>
+                                                    </label>
+                                                    <label class="rep-circ-opcion rep-circ-opcion-fuera">
+                                                        <input type="radio" name="circulacion" value="FUERA"
+                                                               {% if circ_actual == 'FUERA' %}checked{% endif %}>
+                                                        <span><i class="bi bi-lock-fill"></i> Fuera de servicio</span>
+                                                    </label>
+                                                </div>
+                                                <small class="text-muted">Fuera de servicio: nadie la puede retirar, ni la guardia.</small>
+                                            </div>
+
+                                            <div class="rep-guardar">
+                                                <button type="submit" class="btn btn-primary">
+                                                    <i class="bi bi-save"></i> Guardar
+                                                </button>
+                                                {% if e.seguimiento %}
+                                                    <button type="button" class="btn btn-outline-secondary"
+                                                            onclick="this.closest('details').open = false">
+                                                        Cancelar
+                                                    </button>
+                                                {% endif %}
+                                                <small class="text-muted">
+                                                    <i class="bi bi-calendar-plus"></i>
+                                                    Se anota solo en el calendario
+                                                </small>
+                                            </div>
+                                        </form>
+                                        </details>
+                                        {{ boton_calendario(e) }}
+                                    </article>
+                                {% endfor %}
+
+                                {% if cerrados %}
+                                    <details class="rep-cerrados" {% if not abiertos %}open{% endif %}>
+                                        <summary>
+                                            <i class="bi bi-archive"></i>
+                                            {{ cerrados|length }} reporte{{ 's' if cerrados|length != 1 }} cerrado{{ 's' if cerrados|length != 1 }}
+                                        </summary>
+                                        {% for e in cerrados %}
+                                            <article class="rep rep-cerrado">
+                                                <header class="rep-cabecera">
+                                                    <span class="badge" style="background: {{ e.importancia_color }};">
+                                                        {{ e.importancia_etiqueta }}
+                                                    </span>
+                                                    <span class="badge ev-estado" data-estado="{{ e.estado }}"
+                                                          style="background: {{ e.estado_color }};">
+                                                        {{ e.estado_etiqueta }}
+                                                    </span>
+                                                    <span class="ev-fecha">{{ e.fecha[:16]|replace('T', ' ') }}</span>
+                                                </header>
+                                                <p class="rep-mensaje">{{ e.mensaje }}</p>
+                                                <div class="ev-meta">Reportó {{ e.reportado_por or '—' }}</div>
+                                                {{ historial_reporte(e, false) }}
+                                                {{ boton_calendario(e) }}
+                                            </article>
+                                        {% endfor %}
+                                    </details>
+                                {% endif %}
+                                </div>
+                            </details>
                         {% else %}
                             <p class="text-muted text-center py-4">
                                 No hay eventos reportados con esos filtros.
@@ -1500,10 +1634,45 @@
         // Pasar un reporte resuelto al calendario. No lo registra solo: lleva
         // al calendario con la camioneta y el texto a mano, y soporte decide
         // si ese arreglo merece quedar anotado como trabajo.
+        // La tarjeta de cada reporte es un solo formulario: lo que se pide
+        // cambia según el paso elegido. Al cerrarlo no se pregunta si la
+        // camioneta circula (vuelve a circular sola) y solo "queda pendiente"
+        // pide la fecha para retomarlo.
+        const TEXTO_PASO = {
+            EN_CURSO: ['Opcional: qué estás haciendo', 'Guardar: lo estoy viendo'],
+            EN_PAUSA: ['Qué falta y por qué queda para otro día (obligatorio)', 'Guardar: queda pendiente'],
+            RESUELTO: ['Qué se hizo para resolverlo (obligatorio)', 'Guardar: resuelto'],
+            DESCARTADO: ['Por qué se descarta (obligatorio)', 'Guardar: descartado'],
+        };
+        document.querySelectorAll('[data-form-reporte]').forEach(form => {
+            const actualizar = () => {
+                const elegido = form.querySelector('input[name="paso"]:checked');
+                const paso = elegido ? elegido.value : '';
+                const cerrado = paso === 'RESUELTO' || paso === 'DESCARTADO';
+                form.querySelectorAll('.rep-paso').forEach(l =>
+                    l.classList.toggle('activo', l.querySelector('input').checked));
+                form.querySelectorAll('.rep-circ-opcion').forEach(l =>
+                    l.classList.toggle('activo', l.querySelector('input').checked));
+                form.querySelector('.rep-fecha').hidden = paso !== 'EN_PAUSA';
+                const circ = form.querySelector('.rep-bloque-circ');
+                circ.hidden = cerrado;
+                circ.querySelectorAll('input').forEach(i => { i.required = !cerrado; });
+                const texto = form.querySelector('textarea');
+                texto.required = !!paso && paso !== 'EN_CURSO';
+                const [ayuda, boton] = TEXTO_PASO[paso] || ['Contá qué pasó', 'Guardar'];
+                texto.placeholder = ayuda;
+                form.querySelector('.rep-guardar .btn-primary').innerHTML =
+                    '<i class="bi bi-save"></i> ' + boton;
+            };
+            form.addEventListener('change', actualizar);
+            actualizar();
+        });
+
         function pasarAlCalendario(boton) {
             const params = new URLSearchParams({
                 seccion: 'evento',
                 camioneta: boton.dataset.camioneta,
+                evento: boton.dataset.evento || '',
                 detalle: boton.dataset.mensaje || ''
             });
             window.location.href = '/calendario?' + params.toString();
@@ -1599,7 +1768,9 @@
         function escapar(texto) {
             const div = document.createElement('div');
             div.textContent = texto === null || texto === undefined ? '' : texto;
-            return div.innerHTML;
+            // innerHTML no escapa comillas: sin esto, dentro de un atributo
+            // (title="...", data-x="...") el texto podía cerrar el atributo.
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         function filaHistorial(c) {
@@ -1745,14 +1916,48 @@
         }
 
         function detalleControl(data) {
-            const conNovedad = data.elementos.filter(
-                e => e.estado !== 'OK' && e.estado !== 'PRESENTE');
-            const filas = (conNovedad.length ? conNovedad : data.elementos).map(e => `
-                <tr>
-                    <td>${escapar(e.elemento)}</td>
-                    <td><span class="badge ${e.estado === 'OK' || e.estado === 'PRESENTE' ? 'bg-success' : 'bg-warning text-dark'}">${escapar(e.estado)}</span></td>
-                    <td class="text-muted small">${escapar(e.observacion || '')}</td>
-                </tr>`).join('');
+            const esOk = e => e.estado === 'OK' || e.estado === 'PRESENTE';
+            const conNovedad = data.elementos.filter(e => !esOk(e));
+
+            // Un bloque por categoría (camioneta, herramientas, caja), como en
+            // la pantalla del control. Se abren solos los que tienen novedad;
+            // los que salieron todos OK quedan plegados con su conteo.
+            const categorias = (data.categorias || []).slice();
+            data.elementos.forEach(e => {
+                if (!categorias.some(c => c.clave === e.categoria)) {
+                    categorias.push({ clave: e.categoria, etiqueta: e.categoria || 'Otros' });
+                }
+            });
+            const bloquesCategoria = categorias.map(cat => {
+                const propios = data.elementos.filter(e => e.categoria === cat.clave);
+                if (!propios.length) return '';
+                const problemas = propios.filter(e => !esOk(e));
+                // Primero lo que tuvo novedad: es lo que uno viene a buscar.
+                const ordenados = problemas.concat(propios.filter(esOk));
+                const filasCat = ordenados.map(e => `
+                    <tr class="${esOk(e) ? '' : 'hist-fila-novedad'}">
+                        <td>${escapar(e.elemento)}</td>
+                        <td><span class="badge ${esOk(e) ? 'bg-success' : 'bg-warning text-dark'}">${escapar(e.estado)}</span></td>
+                        <td class="text-muted small">${escapar(e.observacion || '')}</td>
+                    </tr>`).join('');
+                return `
+                    <details class="hist-categoria" ${problemas.length ? 'open' : ''}>
+                        <summary>
+                            <i class="bi bi-folder2"></i>
+                            <strong>${escapar(cat.etiqueta)}</strong>
+                            ${problemas.length
+                                ? `<span class="badge bg-warning text-dark">${problemas.length} con novedad</span>`
+                                : ''}
+                            <span class="badge bg-light text-dark border">${propios.length - problemas.length}/${propios.length} OK</span>
+                        </summary>
+                        <div class="table-responsive">
+                            <table class="table table-sm hist-tabla mb-0">
+                                <thead><tr><th>Elemento</th><th>Estado</th><th>Observación</th></tr></thead>
+                                <tbody>${filasCat}</tbody>
+                            </table>
+                        </div>
+                    </details>`;
+            }).join('');
 
             const aviso = conNovedad.length
                 ? `<p class="text-muted small mb-2">${conNovedad.length} elemento(s) con novedad, de ${data.elementos.length} revisados.</p>`
@@ -1802,12 +2007,7 @@
             return `
                 ${observacion}
                 ${aviso}
-                <div class="table-responsive">
-                    <table class="table table-sm hist-tabla">
-                        <thead><tr><th>Elemento</th><th>Estado</th><th>Observación</th></tr></thead>
-                        <tbody>${filas || '<tr><td colspan="3" class="text-muted">Sin elementos registrados.</td></tr>'}</tbody>
-                    </table>
-                </div>
+                ${bloquesCategoria || '<p class="text-muted small">Sin elementos registrados.</p>'}
                 ${bloqueFotos}`;
         }
 
@@ -2258,9 +2458,9 @@
                     
                     let descripcionHtml = '';
                     if (item.descripcion && item.descripcion !== 'Elemento en buen estado') {
-                        descripcionHtml = `<br><span class="descripcion-problema">📝 ${item.descripcion}</span>`;
+                        descripcionHtml = `<br><span class="descripcion-problema">📝 ${escapar(item.descripcion)}</span>`;
                     } else if (item.descripcion) {
-                        descripcionHtml = `<br><span class="descripcion-ok">${item.descripcion}</span>`;
+                        descripcionHtml = `<br><span class="descripcion-ok">${escapar(item.descripcion)}</span>`;
                     }
 
                     // Referencia: última vez que este elemento se registró OK.
@@ -2272,14 +2472,14 @@
                         if (dias === 0) antiguedad = ' (hoy)';
                         else if (dias === 1) antiguedad = ' (hace 1 día)';
                         else if (dias > 1) antiguedad = ` (hace ${dias} días)`;
-                        const quien = item.ultima_ok_tecnico ? ` por ${item.ultima_ok_tecnico}` : '';
-                        ultimaOkHtml = `<br><span class="ultima-ok">✔️ Última vez OK: ${fechaOk}${antiguedad}${quien}</span>`;
+                        const quien = item.ultima_ok_tecnico ? ` por ${escapar(item.ultima_ok_tecnico)}` : '';
+                        ultimaOkHtml = `<br><span class="ultima-ok">✔️ Última vez OK: ${escapar(fechaOk)}${antiguedad}${quien}</span>`;
                     } else {
                         ultimaOkHtml = `<br><span class="ultima-ok sin-registro">⚠️ Nunca se registró OK en esta camioneta</span>`;
                     }
 
                     htmlFaltantes += `<li class="item-reporte" id="reporte-item-${item.id}">
-                        <strong>${icono} ${item.elemento}:</strong> ${item.estado}
+                        <strong>${icono} ${escapar(item.elemento)}:</strong> ${escapar(item.estado)}
                         ${descripcionHtml}
                         ${ultimaOkHtml}
                         <div style="margin-top: 5px;">
@@ -2300,7 +2500,7 @@
         function cargarHistorial(patente) {
             const histCompleto = document.getElementById('historial-completo');
             const registros = historialData[patente] || [];
-            let htmlHist = `<h4 style="margin-top:0;">Historial Completo de ${patente}</h4>`;
+            let htmlHist = `<h4 style="margin-top:0;">Historial Completo de ${escapar(patente)}</h4>`;
             
             if (registros.length === 0) {
                 htmlHist += '<p>No hay registros para esta camioneta.</p>';
@@ -2308,13 +2508,16 @@
                 htmlHist += '<div class="table-responsive"><table class="tabla-historial"><thead><tr><th>Fecha</th><th>Elemento</th><th>Estado</th><th>Descripción</th><th>Técnico</th><th>Resuelto Por</th><th>Fecha de Resolución</th><th>Comentario</th></tr></thead><tbody>';
                 
                 registros.forEach(r => {
-                    let fechaFormateada = r.fecha_hora ? r.fecha_hora.slice(0, 16).replace('T', ' ') : '-';
-                    let fechaResolucion = r.fecha_resolucion || '-';
-                    let resueltoPor = r.resuelto_por || '-';
-                    let comentario = r.comentario_resolucion || '-';
+                    // Todo lo que viene de la base se escapa: la descripción
+                    // y el comentario los escribe una persona, y sin esto un
+                    // texto con <script> se ejecutaba en la sesión de soporte.
+                    let fechaFormateada = escapar(r.fecha_hora ? r.fecha_hora.slice(0, 16).replace('T', ' ') : '-');
+                    let fechaResolucion = escapar(r.fecha_resolucion || '-');
+                    let resueltoPor = escapar(r.resuelto_por || '-');
+                    let comentario = escapar(r.comentario_resolucion || '-');
                     
-                    let descripcion = r.descripcion || '-';
-                    if (descripcion !== '-' && descripcion !== 'Elemento en buen estado') {
+                    let descripcion = escapar(r.descripcion || '-');
+                    if (r.descripcion && r.descripcion !== 'Elemento en buen estado') {
                         descripcion = `<span class="descripcion-problema">${descripcion}</span>`;
                     }
                     
@@ -2326,10 +2529,10 @@
                     
                     htmlHist += `<tr>
                         <td style="white-space: nowrap;">${fechaFormateada}</td>
-                        <td><strong>${r.elemento}</strong></td>
+                        <td><strong>${escapar(r.elemento)}</strong></td>
                         <td>${badge}</td>
                         <td>${descripcion}</td>
-                        <td>${r.tecnico_nombre || '-'}</td>
+                        <td>${escapar(r.tecnico_nombre || '-')}</td>
                         <td>${resueltoPor}</td>
                         <td style="white-space: nowrap;">${fechaResolucion}</td>
                         <td>${comentario}</td>

@@ -34,6 +34,18 @@
         .chip.vence   { background: #fff4e0; border-left-color: #fd7e14; }
         .chip.vencido { background: #fdeaea; border-left-color: #dc3545; font-weight: 600; }
         .chip.control { background: #eef1f5; border-left-color: #6c757d; color: #6c757d; }
+        /* Eventos que salieron de un reporte: el color dice en qué anda. */
+        .chip.ev-est-RESUELTO   { background: #e7f6ec; border-left-color: #198754; }
+        .chip.ev-est-EN_PAUSA   { background: #fff8db; border-left-color: #ffc107; }
+        .chip.ev-est-EN_CURSO   { background: #fff1e6; border-left-color: #fd7e14; }
+        .chip.ev-est-NUEVO      { background: #e7f0ff; border-left-color: #0d6efd; }
+        .chip.ev-est-DESCARTADO { background: #f1f2f4; border-left-color: #6c757d; color: #6c757d; }
+        .est-ev { font-size: .7rem; border-radius: 10px; padding: 1px 7px; color: #fff; }
+        .est-ev.est-RESUELTO { background: #198754; }
+        .est-ev.est-EN_PAUSA { background: #ffc107; color: #212529; }
+        .est-ev.est-EN_CURSO { background: #fd7e14; }
+        .est-ev.est-NUEVO { background: #0d6efd; }
+        .est-ev.est-DESCARTADO { background: #6c757d; }
 
         /* Ahora es un boton: ocupa todo el ancho y se puede tocar. */
         .tarjeta-estado { border-radius: 10px; padding: 14px; color: #fff;
@@ -108,6 +120,22 @@
         .dia-evento.hecho   { background: #e7f6ec; border-left-color: #198754; }
         .dia-evento.vence   { background: #fff4e0; border-left-color: #fd7e14; }
         .dia-evento.vencido { background: #fdeaea; border-left-color: #dc3545; }
+        /* Las filas que abren su detalle son <button>: sin esto tomaban el
+           borde y el ancho por defecto del navegador. */
+        .dia-evento-abrible { width: 100%; border: 0; border-left: 4px solid #adb5bd;
+                              font: inherit; text-align: left; cursor: pointer;
+                              align-items: center; }
+        .dia-evento-abrible.hecho { border-left-color: #198754; }
+        .dia-evento-abrible:hover { filter: brightness(.97); }
+        .dia-evento-flecha { margin-left: auto; color: #adb5bd; }
+        /* Van después de .hecho a propósito: si no, el verde de "hecho" les
+           ganaba y la ventana del día mostraba todo como resuelto. */
+        .dia-evento.ev-est-RESUELTO   { background: #e7f6ec; border-left-color: #198754; }
+        .dia-evento.ev-est-EN_PAUSA   { background: #fff8db; border-left-color: #ffc107; }
+        .dia-evento.ev-est-EN_CURSO   { background: #fff1e6; border-left-color: #fd7e14; }
+        .dia-evento.ev-est-NUEVO      { background: #e7f0ff; border-left-color: #0d6efd; }
+        .dia-evento.ev-est-DESCARTADO { background: #f1f2f4; border-left-color: #6c757d; color: #6c757d; }
+        .dia-evento .est-ev { margin-left: 6px; vertical-align: middle; }
         .tipo-icono { width: 34px; height: 34px; border-radius: 8px; display: inline-flex;
                       align-items: center; justify-content: center; color: #fff; }
         @media (max-width: 576px) {
@@ -165,7 +193,7 @@
                 {# Tocarla muestra cuales son: el numero solo no dice que
                    camioneta hay que ir a resolver. #}
                 <button type="button" class="tarjeta-estado e-{{ clave }}"
-                        onclick="verEstado('{{ clave }}', '{{ titulo }}')"
+                        onclick='verEstado({{ clave|tojson }}, {{ titulo|tojson }})'
                         {% if not resumen[clave] %}disabled{% endif %}>
                     <div class="h3 mb-0">{{ resumen[clave] }}</div>
                     <div class="fw-semibold">{{ titulo }}</div>
@@ -212,7 +240,7 @@
                                  title="Ver qué se hizo el {{ dia.etiqueta_larga }}"{% endif %}>
                                 <div class="numero">{{ dia.numero }}</div>
                                 {% for e in dia.eventos %}
-                                    <span class="chip {{ e.clase }}" data-clase="{{ e.clase }}">
+                                    <span class="chip {{ e.clase }} {{ 'ev-est-' ~ e.estado_evento if e.estado_evento }}" data-clase="{{ e.clase }}">
                                         <i class="bi bi-{{ e.icono }}"></i> {{ e.texto }}
                                     </span>
                                 {% endfor %}
@@ -338,7 +366,7 @@
                                     </span>
                                     {% if session.rol in ('soporte', 'admin') %}
                                         <button class="btn btn-sm btn-success"
-                                                onclick='abrirRegistrar({{ f.camioneta_id }}, "{{ f.tipo }}", "{{ f.patente }}", "{{ f.etiqueta }}", {{ f.km_actual if f.km_actual is not none else "null" }})'>
+                                                onclick='abrirRegistrar({{ f.camioneta_id }}, {{ f.tipo|tojson }}, {{ f.patente|tojson }}, {{ f.etiqueta|tojson }}, {{ f.km_actual if f.km_actual is not none else "null" }})'>
                                             <i class="bi bi-check2"></i> Registrar
                                         </button>
                                         <button class="btn btn-sm btn-outline-secondary" title="Configurar"
@@ -462,7 +490,15 @@
                         <tr>
                             <td>{{ h.fecha_realizado }}</td>
                             <td><strong>{{ h.patente }}</strong></td>
-                            <td>{{ tipos[h.tipo].etiqueta if h.tipo in tipos else h.tipo }}</td>
+                            <td>
+                                {{ tipos[h.tipo].etiqueta if h.tipo in tipos else h.tipo }}
+                                {% if h.estado_evento %}
+                                    <span class="est-ev est-{{ h.estado_evento }}"
+                                          title="Estado del reporte del que salió">
+                                        {{ estados_evento.get(h.estado_evento, h.estado_evento) }}
+                                    </span>
+                                {% endif %}
+                            </td>
                             <td class="text-muted small">
                                 {# Cada tipo muestra lo suyo: al lavado no le
                                    importan los km y a la VTV le importa por
@@ -526,6 +562,8 @@
             <div class="modal-body">
                 <input type="hidden" name="camioneta_id" id="reg-camioneta">
                 <input type="hidden" name="tipo" id="reg-tipo">
+                {# El reporte del técnico del que sale este registro, si sale de uno. #}
+                <input type="hidden" name="evento_id" id="reg-evento-id">
                 <p class="mb-3">
                     <strong id="reg-titulo"></strong><br>
                     <small class="text-muted" id="reg-ayuda"></small>
@@ -843,6 +881,15 @@
         });
     }
 
+    // Escapa texto para meterlo en HTML (contenido o atributos). Observaciones,
+    // detalles y nombres los escribe una persona: insertarlos crudos con
+    // innerHTML permitía ejecutar código en la sesión de quien mira.
+    function escapar(texto) {
+        const div = document.createElement('div');
+        div.textContent = texto === null || texto === undefined ? '' : texto;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     // ==========================================
     // DETALLE DE UN DÍA
     // ==========================================
@@ -861,7 +908,8 @@
             // vencimientos que caen ese dia no tienen detalle que mostrar.
             const abrible = e.registro_id && REGISTROS[e.registro_id];
             const fila = document.createElement(abrible ? 'button' : 'div');
-            fila.className = 'dia-evento ' + e.clase + (abrible ? ' dia-evento-abrible' : '');
+            fila.className = 'dia-evento ' + e.clase + (abrible ? ' dia-evento-abrible' : '')
+                + (e.estado_evento ? ' ev-est-' + e.estado_evento : '');
             if (abrible) {
                 fila.type = 'button';
                 fila.title = 'Ver el detalle';
@@ -876,8 +924,8 @@
             }
             fila.innerHTML =
                 `<i class="bi bi-${e.icono}" style="color:${e.color}; font-size:1.2rem;"></i>` +
-                `<div><strong>${e.texto}</strong>` +
-                (partes ? `<br><small class="text-muted">${partes}</small>` : '') +
+                `<div><strong>${escapar(e.texto)}</strong>` +
+                (partes ? `<br><small class="text-muted">${escapar(partes)}</small>` : '') +
                 `</div>` +
                 (abrible ? '<i class="bi bi-chevron-right dia-evento-flecha"></i>' : '');
             cont.appendChild(fila);
@@ -897,14 +945,15 @@
                 '<th>Camioneta</th><th>Técnico</th><th>Control</th><th>Turno</th>' +
                 '<th>Hora</th><th>Km</th><th></th></tr></thead><tbody>' +
                 dia.controles.map(c => `<tr class="dia-control" title="Ver en el historial"
-                    onclick="verControlEnHistorial('${c.patente}', ${c.id})">
-                    <td><strong>${c.patente}</strong></td>
-                    <td>${c.tecnico}</td>
+                    data-patente="${escapar(c.patente)}"
+                    onclick="verControlEnHistorial(this.dataset.patente, ${Number(c.id)})">
+                    <td><strong>${escapar(c.patente)}</strong></td>
+                    <td>${escapar(c.tecnico)}</td>
                     <td>${c.tipo === 'RETIRO'
                         ? '<span class="badge bg-warning text-dark">Retiro</span>'
                         : '<span class="badge bg-primary">Devolución</span>'}
-                        ${c.forzado_por ? '<span class="badge bg-warning text-dark" title="Cerrado a mano por ' + c.forzado_por + '">manual</span>' : ''}</td>
-                    <td>${c.jornada}</td><td>${c.hora}</td><td>${c.km || '—'}</td>
+                        ${c.forzado_por ? '<span class="badge bg-warning text-dark" title="Cerrado a mano por ' + escapar(c.forzado_por) + '">manual</span>' : ''}</td>
+                    <td>${escapar(c.jornada)}</td><td>${escapar(c.hora)}</td><td>${escapar(c.km || '—')}</td>
                     <td class="text-muted"><i class="bi bi-chevron-right"></i></td>
                 </tr>`).join('') + '</tbody></table>';
         }
@@ -935,12 +984,12 @@
             ? '<p class="text-muted mb-0">No hay nada en este estado.</p>'
             : Object.keys(porPatente).sort().map(patente => `
                 <div class="estado-grupo">
-                    <div class="estado-patente">${patente}</div>
+                    <div class="estado-patente">${escapar(patente)}</div>
                     ${porPatente[patente].map(v => `
                         <div class="estado-item">
-                            <strong>${v.etiqueta}</strong>
-                            <span class="text-muted">${v.detalle || ''}</span>
-                            ${v.fecha_vencimiento ? `<span class="estado-dato">${v.fecha_vencimiento}</span>` : ''}
+                            <strong>${escapar(v.etiqueta)}</strong>
+                            <span class="text-muted">${escapar(v.detalle || '')}</span>
+                            ${v.fecha_vencimiento ? `<span class="estado-dato">${escapar(v.fecha_vencimiento)}</span>` : ''}
                             ${v.km_vencimiento ? `<span class="estado-dato">${v.km_vencimiento.toLocaleString('es-AR')} km</span>` : ''}
                         </div>`).join('')}
                 </div>`).join('');
@@ -996,6 +1045,7 @@
     // registro serializado adentro del onclick y las comillas del JSON
     // partian el atributo: el boton quedaba roto.
     const REGISTROS = {};
+    const ESTADOS_EVENTO = {{ estados_evento|tojson }};
     {{ historial|tojson }}.forEach(r => { REGISTROS[r.id] = r; });
 
     // Arma las casillas de "que se cambio" (solo el service las usa).
@@ -1090,6 +1140,7 @@
 
         const detalle = params.get('detalle');
         if (detalle) document.getElementById('reg-obs').value = detalle;
+        document.getElementById('reg-evento-id').value = params.get('evento') || '';
     });
 
     function abrirRegistrar(camionetaId, tipo, patente, etiqueta, kmActual) {
@@ -1098,6 +1149,7 @@
         document.getElementById('reg-titulo').textContent = `${etiqueta} de ${patente}`;
         document.getElementById('reg-fecha').value = HOY;
         document.getElementById('reg-obs').value = '';
+        document.getElementById('reg-evento-id').value = '';
 
         const config = TIPOS[tipo] || {};
         document.getElementById('reg-ayuda').textContent = config.ayuda || '';
@@ -1134,13 +1186,16 @@
             filas.push(['Kilometraje', r.km_realizado.toLocaleString('es-AR') + ' km']);
         }
         filas.push(['Registro', r.registrado_por || '—']);
+        if (r.estado_evento) {
+            filas.push(['Reporte', ESTADOS_EVENTO[r.estado_evento] || r.estado_evento]);
+        }
 
         const detalle = r.detalle
             ? `<div class="det-bloque">
                    <div class="det-bloque-titulo">¿Qué se hizo?</div>
                    <div class="det-items">
                        ${r.detalle.split(',').map(t =>
-                           `<span class="det-item">${t.trim()}</span>`).join('')}
+                           `<span class="det-item">${escapar(t.trim())}</span>`).join('')}
                    </div>
                </div>`
             : '';
@@ -1148,13 +1203,13 @@
         const observacion = r.observacion
             ? `<div class="det-bloque">
                    <div class="det-bloque-titulo">Observación</div>
-                   <p class="mb-0">${r.observacion}</p>
+                   <p class="mb-0">${escapar(r.observacion)}</p>
                </div>`
             : '';
 
         document.getElementById('det-cuerpo').innerHTML = `
             <dl class="det-datos">
-                ${filas.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}
+                ${filas.map(([k, v]) => `<dt>${escapar(k)}</dt><dd>${escapar(v)}</dd>`).join('')}
             </dl>
             ${detalle}
             ${observacion}`;
