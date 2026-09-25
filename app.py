@@ -4399,9 +4399,11 @@ def retiro_urgencia():
                 error=f'{abierto["tecnico_nombre"]} tiene {camioneta["patente"]} '
                       'retirada y no la devolvió: no está disponible.'))
 
-        # Un retiro de urgencia a medio hacer todavía no figura como custodia
-        # (no está finalizado), así que hay que buscarlo aparte: si no, pedir
-        # la misma camioneta otra vez abría un segundo control en paralelo.
+        # Un retiro sin terminar sobre esta camioneta. Pasa con los que quedaron
+        # de la version anterior, que abria el control y te mandaba a hacerlo.
+        # Se cierra como retiro de urgencia en vez de mandar al control: pedir
+        # el control es justamente lo que no corresponde en una urgencia, y
+        # mientras ese control siga abierto la camioneta figura como hueco.
         en_curso = conexion.execute('''
             SELECT ct.id FROM controles_tecnicos ct
             JOIN asignaciones a ON ct.asignacion_id = a.id
@@ -4410,7 +4412,19 @@ def retiro_urgencia():
             ORDER BY ct.id DESC LIMIT 1
         ''', (camioneta_id, usuario_id)).fetchone()
         if en_curso:
-            return redirect(url_for('realizar_control', control_id=en_curso['id']))
+            conexion.execute('''
+                UPDATE controles_tecnicos
+                SET finalizado = 1, urgencia = 1, fecha_hora_fin = ?,
+                    observacion = ?
+                WHERE id = ?
+            ''', (momento.isoformat(),
+                  f'Retiro de urgencia por guardia ({caracter}), sin control de '
+                  f'retiro: {motivo}',
+                  en_curso['id']))
+            conexion.commit()
+            return redirect(url_for('tecnico',
+                mensaje=f'Retiraste {camioneta["patente"]} de urgencia. Queda a tu '
+                        f'nombre: cuando la traigas, hacé la devolución desde arriba.'))
 
         fecha = momento.strftime('%Y-%m-%d')
         jornada = jornada_actual(momento)

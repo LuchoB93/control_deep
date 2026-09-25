@@ -8,10 +8,18 @@
 
 {% set seccion_activa = seccion_activa|default('') %}
 
-<button class="btn-toggle-sidebar" id="btn-sidebar" onclick="alternarSidebar()"
-        aria-label="Mostrar u ocultar el menú">
-    <i class="bi bi-list"></i>
-</button>
+{# La barra se trae su propio CSS: aparece en pantallas que no cargan
+   style.css, y sin esto quedaba sin ningún formato. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}">
+
+{# El botón va en una franja opaca. Suelto y fijo, tapaba todo lo que
+   scrolleaba por debajo. #}
+<div class="barra-superior">
+    <button class="btn-toggle-sidebar" id="btn-sidebar" onclick="alternarSidebar()"
+            aria-label="Mostrar u ocultar el menú">
+        <i class="bi bi-list"></i>
+    </button>
+</div>
 
 <div class="admin-sidebar" id="sidebar">
     <div class="sidebar-header">

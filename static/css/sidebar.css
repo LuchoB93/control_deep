@@ -1,0 +1,215 @@
+/* ============================================
+   BARRA LATERAL DE ULTRAHUB
+   ============================================
+   Vive en su propio archivo porque la barra aparece tambien en pantallas que
+   no cargan style.css (el calendario usa Bootstrap y sus estilos propios).
+   El parcial _sidebar.html se trae este archivo solo: donde este la barra,
+   estan sus estilos.                                                        */
+
+.admin-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 270px;
+    /* 100vh en el celular mide MAS que la pantalla visible: no descuenta la
+       barra de direcciones del navegador. 100dvh sigue el alto real. */
+    height: 100vh;
+    height: 100dvh;
+    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.3s ease;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.2);
+    overflow: hidden;  /* el scroll vive en .sidebar-nav */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.admin-sidebar .sidebar-header {
+    padding: 20px 20px 15px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.admin-sidebar .sidebar-header h2 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #fff;
+}
+
+.admin-sidebar .sidebar-header .sidebar-subtitle {
+    font-size: 0.75rem;
+    opacity: 0.7;
+}
+
+.sidebar-nav {
+    flex: 1;
+    min-height: 0;  /* sin esto un hijo flex no se encoge y no hay scroll */
+    padding: 10px 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+}
+
+.sidebar-nav::-webkit-scrollbar { width: 3px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar-nav::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+}
+
+.admin-sidebar .sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    font-size: 0.95rem;
+}
+
+.admin-sidebar .sidebar-link:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    text-decoration: none;
+}
+
+.admin-sidebar .sidebar-link.active {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-left-color: #667eea;
+}
+
+.admin-sidebar .sidebar-link i {
+    font-size: 1.1rem;
+    width: 24px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.admin-sidebar .sidebar-link span {
+    flex: 1;
+}
+
+.admin-sidebar .badge-proximamente {
+    font-size: 0.55rem;
+    background: #ffc107;
+    color: #000;
+    padding: 2px 6px;
+    border-radius: 10px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.admin-sidebar .sidebar-badge {
+    margin-left: auto;
+    flex-shrink: 0;
+    background: #dc3545;
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+}
+
+.sidebar-volver {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin-top: 6px;
+    padding-top: 6px;
+    flex-shrink: 0;
+}
+
+.sidebar-footer {
+    padding: 15px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.sidebar-footer .user-name {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #fff;
+}
+
+/* ============================================
+   FRANJA SUPERIOR Y BOTON
+   ============================================
+   El boton estaba suelto y fijo, asi que todo lo que scrolleaba le pasaba
+   por debajo y quedaba tapado. Ahora vive en una franja opaca: el contenido
+   se esconde detras, como en cualquier barra superior.                     */
+
+.barra-superior {
+    position: fixed;
+    top: 0;
+    left: 270px;
+    right: 0;
+    height: 56px;
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    background: #f5f6fa;
+    border-bottom: 1px solid #e4e5ee;
+    transition: left 0.3s ease;
+}
+
+body.sidebar-oculta .barra-superior {
+    left: 0;
+}
+
+.btn-toggle-sidebar {
+    background: #fff;
+    color: #1a1a2e;
+    border: 1px solid #dfe0e8;
+    border-radius: 10px;
+    padding: 7px 12px;
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.btn-toggle-sidebar:hover {
+    background: #f2f3f8;
+}
+
+/* El contenido arranca debajo de la franja. */
+.admin-main {
+    margin-left: 270px;
+    padding: 20px 30px;
+    padding-top: 74px;
+    min-height: 100vh;
+    transition: margin-left 0.3s ease;
+}
+
+body.sidebar-oculta .admin-sidebar {
+    transform: translateX(-100%);
+}
+
+body.sidebar-oculta .admin-main {
+    margin-left: 0;
+}
+
+@media (max-width: 768px) {
+    .admin-sidebar {
+        width: 280px;
+    }
+    .admin-main {
+        margin-left: 0;
+        padding: 15px;
+        padding-top: 70px;
+    }
+    .barra-superior {
+        left: 0;
+    }
+}

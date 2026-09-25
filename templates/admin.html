@@ -864,8 +864,13 @@
                                        calendario de la camioneta. Se ofrece, no se
                                        hace solo: hay arreglos que no son un trabajo
                                        que valga la pena registrar. #}
+                                    {# El mensaje va en un data-*, no dentro del onclick:
+                                       ahi sus comillas cierran el atributo y el
+                                       boton queda roto. #}
                                     <button type="button" class="ev-al-calendario"
-                                            onclick="pasarAlCalendario({{ e.camioneta_id }}, {{ e.mensaje|tojson }})">
+                                            data-camioneta="{{ e.camioneta_id }}"
+                                            data-mensaje="{{ e.mensaje }}"
+                                            onclick="pasarAlCalendario(this)">
                                         <i class="bi bi-calendar-plus"></i>
                                         Registrarlo en el calendario
                                     </button>
@@ -1411,11 +1416,11 @@
         // Pasar un reporte resuelto al calendario. No lo registra solo: lleva
         // al calendario con la camioneta y el texto a mano, y soporte decide
         // si ese arreglo merece quedar anotado como trabajo.
-        function pasarAlCalendario(camionetaId, mensaje) {
+        function pasarAlCalendario(boton) {
             const params = new URLSearchParams({
                 seccion: 'evento',
-                camioneta: camionetaId,
-                detalle: mensaje
+                camioneta: boton.dataset.camioneta,
+                detalle: boton.dataset.mensaje || ''
             });
             window.location.href = '/calendario?' + params.toString();
         }

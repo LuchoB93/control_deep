@@ -2124,164 +2124,6 @@ section h2 {
     color: #17a2b8;
 }
 
-/* ============================================
-   ADMIN - SIDEBAR Y NAVEGACIÓN
-   ============================================ */
-
-.admin-sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 270px;
-    /* 100vh en el celular mide MAS que la pantalla visible: no descuenta la
-       barra de direcciones del navegador. Con eso el pie (nombre + Salir) y
-       los ultimos links quedaban abajo del corte y no habia forma de llegar.
-       100dvh sigue el alto real que se ve en cada momento. El 100vh queda
-       arriba como respaldo para navegadores viejos que no entienden dvh. */
-    height: 100vh;
-    height: 100dvh;
-    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    color: white;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    transition: transform 0.3s ease;
-    box-shadow: 2px 0 10px rgba(0,0,0,0.2);
-    overflow: hidden;  /* el scroll vive en .sidebar-nav, no acá */
-}
-
-.admin-sidebar .sidebar-header {
-    padding: 20px 20px 15px 20px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-    flex-shrink: 0;  /* ✅ Evita que se comprima */
-}
-
-.admin-sidebar .sidebar-header h2 {
-    margin: 0;
-    font-size: 1.3rem;
-    font-weight: 600;
-}
-
-.admin-sidebar .sidebar-header .sidebar-subtitle {
-    font-size: 0.75rem;
-    opacity: 0.7;
-}
-
-.sidebar-nav {
-    flex: 1;
-    min-height: 0;  /* sin esto un hijo flex no se encoge y el scroll no aparece */
-    padding: 10px 0;
-    overflow-y: auto;  /* el encabezado y el pie quedan fijos; scrollea solo la lista */
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;  /* scroll con inercia en iOS */
-    overscroll-behavior: contain;  /* llegar al final no arrastra la página de atrás */
-}
-
-/* ✅ Ocultar scrollbar pero permitir scroll (opcional) */
-.sidebar-nav::-webkit-scrollbar {
-    width: 3px;
-}
-.sidebar-nav::-webkit-scrollbar-track {
-    background: transparent;
-}
-.sidebar-nav::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.2);
-    border-radius: 10px;
-}
-
-.sidebar-link {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 20px;
-    color: rgba(255,255,255,0.7);
-    text-decoration: none;
-    transition: all 0.2s ease;
-    border-left: 3px solid transparent;
-    cursor: pointer;
-    white-space: nowrap;  /* ✅ Evita que el texto se rompa */
-}
-
-.sidebar-link:hover {
-    background: rgba(255,255,255,0.05);
-    color: white;
-    text-decoration: none;
-}
-
-.sidebar-link.active {
-    background: rgba(255,255,255,0.1);
-    color: white;
-    border-left-color: #667eea;
-}
-
-.sidebar-link i {
-    font-size: 1.1rem;
-    width: 24px;
-    text-align: center;
-    flex-shrink: 0;  /* ✅ Evita que el icono se comprima */
-}
-
-.sidebar-link span {
-    flex: 1;
-}
-
-.sidebar-link .badge-proximamente {
-    font-size: 0.55rem;
-    background: #ffc107;
-    color: #000;
-    padding: 2px 6px;
-    border-radius: 10px;
-    margin-left: auto;
-    flex-shrink: 0;
-}
-
-.sidebar-footer {
-    padding: 15px 20px;
-    border-top: 1px solid rgba(255,255,255,0.1);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-shrink: 0;  /* ✅ Evita que se comprima */
-}
-
-/* ✅ Nombre de usuario más grande y sin emoji */
-.sidebar-footer .user-name {
-    font-size: 1rem;
-    font-weight: 500;
-    color: white;
-}
-
-.sidebar-footer .btn-danger {
-    padding: 4px 12px;
-    font-size: 0.75rem;
-}
-
-.admin-main {
-    /* Igual al ancho de la barra. Estaba en 250 con una barra de 270, asi
-       que el contenido se le metia 20px por debajo. */
-    margin-left: 270px;
-    transition: margin-left 0.3s ease;
-    padding: 20px 30px;
-    min-height: 100vh;
-    background: #f5f6fa;
-}
-
-.btn-toggle-sidebar {
-    display: none;
-    position: fixed;
-    top: 15px;
-    left: 15px;
-    z-index: 1001;
-    background: #1a1a2e;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 1.2rem;
-    cursor: pointer;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-}
-
 .seccion-content {
     animation: fadeIn 0.3s ease;
 }
@@ -2310,74 +2152,13 @@ section h2 {
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* ============================================
-   SIDEBAR - RESPONSIVE Y PLEGADO
-   ============================================
-   Antes la barra solo se ocultaba en el celular. Ahora se puede plegar
-   siempre, y al plegarse queda el boton de hamburguesa para traerla de
-   vuelta. El estado lo guarda el navegador, asi que si la escondes sigue
-   escondida al cambiar de pantalla.                                       */
-
-/* Plegada: se va para la izquierda y el contenido ocupa todo el ancho. */
-body.sidebar-oculta .admin-sidebar {
-    transform: translateX(-100%);
-}
-
-body.sidebar-oculta .admin-main {
-    margin-left: 0;
-}
-
-/* El boton vive al lado de la barra cuando esta abierta, y arriba a la
-   izquierda cuando esta plegada. Se mueve con la misma animacion. */
-.btn-toggle-sidebar {
-    display: block;
-    position: fixed;
-    top: 14px;
-    left: 284px;
-    z-index: 1001;
-    background: #fff;
-    color: #1a1a2e;
-    border: 1px solid #dfe0e8;
-    border-radius: 10px;
-    padding: 8px 12px;
-    font-size: 1.15rem;
-    line-height: 1;
-    cursor: pointer;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
-    transition: left 0.3s ease, background 0.15s ease;
-}
-
-.btn-toggle-sidebar:hover {
-    background: #f2f3f8;
-}
-
-body.sidebar-oculta .btn-toggle-sidebar {
-    left: 14px;
-}
-
-/* El contenido deja lugar arriba para que el boton no tape el titulo. */
-.admin-main {
-    padding-top: 62px;
-}
-
 @media (max-width: 768px) {
-    .admin-sidebar {
-        width: 280px;
-    }
-    .admin-main {
-        margin-left: 0;
-        padding: 15px;
-        padding-top: 66px;
-    }
-    /* En el celular la barra se superpone al contenido en vez de correrlo:
-       no hay ancho para las dos cosas. */
-    .btn-toggle-sidebar {
-        left: 14px;
-    }
     .seccion-header h1 {
         font-size: 1.3rem;
     }
 }
+
+
 
 /* Referencia "última vez OK" en los faltantes del panel del administrador */
 .ultima-ok {
@@ -3267,13 +3048,6 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
     border-radius: 10px;
 }
 
-/* Volver al selector desde adentro de un modulo. */
-.sidebar-volver {
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    margin-top: 6px;
-    padding-top: 6px;
-}
-
 /* ============================================
    HISTORIAL - TARJETAS Y LISTA DE CONTROLES
    ============================================ */
@@ -3665,18 +3439,6 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
     margin-top: 12px;
     padding-top: 12px;
     border-top: 1px dashed #dcdce4;
-}
-
-/* Globito de avisos en el sidebar (actividades resueltas sin mirar). */
-.sidebar-link .sidebar-badge {
-    margin-left: auto;
-    flex-shrink: 0;
-    background: #dc3545;
-    color: #fff;
-    font-size: 0.68rem;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 10px;
 }
 
 /* ============================================
