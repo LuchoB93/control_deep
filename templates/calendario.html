@@ -95,6 +95,11 @@
     </style>
 </head>
 <body>
+
+{% set seccion_activa = 'calendario' %}
+{% include '_sidebar.html' %}
+
+<div class="admin-main">
 <div class="container-fluid py-3" style="max-width: 1400px;">
 
     <div class="cal-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -350,7 +355,69 @@
     <!-- HISTORIAL -->
     <!-- ========================================== -->
     <div class="card mb-4">
-        <div class="card-header"><strong><i class="bi bi-clock-history"></i> Últimos trabajos registrados</strong></div>
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <strong><i class="bi bi-clock-history"></i> Trabajos registrados</strong>
+            <span class="text-muted small">{{ historial|length }} registro(s)</span>
+        </div>
+        <div class="card-body pb-0">
+            <form method="GET" action="{{ url_for('calendario') }}" class="hist-filtros">
+                {# Se conserva el mes que se esta mirando: filtrar la tabla de
+                   abajo no tiene por que mover el calendario de arriba. #}
+                <input type="hidden" name="anio" value="{{ anio }}">
+                <input type="hidden" name="mes" value="{{ mes }}">
+
+                <div class="hist-filtro">
+                    <label for="h-patente">Camioneta</label>
+                    <select name="h_patente" id="h-patente" class="form-control form-control-sm">
+                        <option value="">Todas</option>
+                        {% for c in camionetas %}
+                            <option value="{{ c.patente }}"
+                                    {% if filtros_historial.patente == c.patente %}selected{% endif %}>
+                                {{ c.patente }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="hist-filtro">
+                    <label for="h-tipo">Trabajo</label>
+                    <select name="h_tipo" id="h-tipo" class="form-control form-control-sm">
+                        <option value="">Todos</option>
+                        {% for clave, cfg in tipos.items() %}
+                            <option value="{{ clave }}"
+                                    {% if filtros_historial.tipo == clave %}selected{% endif %}>
+                                {{ cfg.etiqueta }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="hist-filtro">
+                    <label for="h-desde">Desde</label>
+                    <input type="date" name="h_desde" id="h-desde"
+                           class="form-control form-control-sm"
+                           value="{{ filtros_historial.desde }}">
+                </div>
+
+                <div class="hist-filtro">
+                    <label for="h-hasta">Hasta</label>
+                    <input type="date" name="h_hasta" id="h-hasta"
+                           class="form-control form-control-sm"
+                           value="{{ filtros_historial.hasta }}">
+                </div>
+
+                <div class="hist-filtro hist-filtro-accion">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-search"></i> Filtrar
+                    </button>
+                    <a href="{{ url_for('calendario', anio=anio, mes=mes) }}"
+                       class="btn btn-secondary btn-sm">
+                        <i class="bi bi-x-circle"></i> Limpiar
+                    </a>
+                </div>
+            </form>
+        </div>
+
         <div class="table-responsive">
             <table class="table table-sm table-hover mb-0">
                 <thead class="table-light">
@@ -744,13 +811,29 @@
         for (const e of dia.eventos) {
             const partes = [e.detalle, e.observacion, e.quien ? 'Registró ' + e.quien : '']
                 .filter(Boolean).join(' · ');
-            const fila = document.createElement('div');
-            fila.className = 'dia-evento ' + e.clase;
+            // Los trabajos ya hechos abren su tarjeta de detalle; los
+            // vencimientos que caen ese dia no tienen detalle que mostrar.
+            const abrible = e.registro_id && REGISTROS[e.registro_id];
+            const fila = document.createElement(abrible ? 'button' : 'div');
+            fila.className = 'dia-evento ' + e.clase + (abrible ? ' dia-evento-abrible' : '');
+            if (abrible) {
+                fila.type = 'button';
+                fila.title = 'Ver el detalle';
+                fila.addEventListener('click', function () {
+                    // Se cierra la del dia para que no queden dos ventanas
+                    // encimadas, y recien ahi se abre el detalle.
+                    const modalDia = bootstrap.Modal.getInstance(
+                        document.getElementById('modal-dia'));
+                    if (modalDia) modalDia.hide();
+                    abrirDetalle(e.registro_id);
+                });
+            }
             fila.innerHTML =
                 `<i class="bi bi-${e.icono}" style="color:${e.color}; font-size:1.2rem;"></i>` +
                 `<div><strong>${e.texto}</strong>` +
                 (partes ? `<br><small class="text-muted">${partes}</small>` : '') +
-                `</div>`;
+                `</div>` +
+                (abrible ? '<i class="bi bi-chevron-right dia-evento-flecha"></i>' : '');
             cont.appendChild(fila);
         }
 
@@ -905,6 +988,22 @@
         });
     });
 
+    // Cuando soporte cierra un reporte y elige registrarlo, llega aca con la
+    // camioneta y el texto en la URL: se abre el formulario ya cargado.
+    document.addEventListener('DOMContentLoaded', function () {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('seccion') !== 'evento') return;
+        const camionetaId = parseInt(params.get('camioneta'), 10);
+        if (!camionetaId) return;
+
+        const fila = document.querySelector(`[data-camioneta="${camionetaId}"]`);
+        const patente = fila ? fila.querySelector('strong').textContent.trim() : '';
+        abrirRegistrar(camionetaId, 'EVENTO', patente, 'Evento', null);
+
+        const detalle = params.get('detalle');
+        if (detalle) document.getElementById('reg-obs').value = detalle;
+    });
+
     function abrirRegistrar(camionetaId, tipo, patente, etiqueta, kmActual) {
         document.getElementById('reg-camioneta').value = camionetaId;
         document.getElementById('reg-tipo').value = tipo;
@@ -1018,5 +1117,6 @@
         new bootstrap.Modal(document.getElementById('modal-configurar')).show();
     }
 </script>
+</div>
 </body>
 </html>

@@ -393,6 +393,28 @@ MOTIVOS_REPOSICION = {
     'PERDIDA': 'Pérdida',
 }
 
+# Que tan grave es lo que se rompio. Lo elige el tecnico, que es el que lo
+# esta viendo; soporte decide que hacer con eso.
+IMPORTANCIA_EVENTO = {
+    'BAJA': {'etiqueta': 'Baja', 'ayuda': 'Puede esperar', 'color': '#198754'},
+    'MEDIA': {'etiqueta': 'Media', 'ayuda': 'Esta semana', 'color': '#ffc107'},
+    'ALTA': {'etiqueta': 'Alta', 'ayuda': 'Hay que verlo ya', 'color': '#fd7e14'},
+    'URGENTE': {'etiqueta': 'Urgente', 'ayuda': 'La camioneta no deberia salir',
+                'color': '#dc3545'},
+}
+
+# En que anda el reporte. DESCARTADO es para lo que resulto no ser nada o ya
+# estaba resuelto: cerrarlo como RESUELTO mentiria sobre un arreglo que nunca
+# se hizo.
+ESTADOS_EVENTO = {
+    'NUEVO': 'Nuevo',
+    'EN_CURSO': 'En curso',
+    'RESUELTO': 'Resuelto',
+    'DESCARTADO': 'Descartado',
+}
+
+ESTADOS_EVENTO_ABIERTOS = ('NUEVO', 'EN_CURSO')
+
 # Por qué un control quedó sin hacer sin que nadie haya fallado: ese día la
 # camioneta directamente no salió. Es lo que distingue "nadie la controló" de
 # "no había nada que controlar".
@@ -1431,6 +1453,34 @@ def crear_base_de_datos():
         ON reclamos_coordinados (fecha, activo)
     ''')
 
+    # Eventos que reporta el tecnico fuera del control: algo se rompio y hay
+    # que avisar ahora, no en el proximo retiro. No traba la camioneta ni
+    # siquiera cuando es urgente: sacarla de circulacion es una decision de
+    # una persona, no del sistema.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS eventos_reportados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            camioneta_id INTEGER NOT NULL,
+            mensaje TEXT NOT NULL,
+            importancia TEXT NOT NULL,
+            estado TEXT NOT NULL DEFAULT 'NUEVO',
+            reportado_por TEXT,
+            reportado_por_id INTEGER,
+            fecha TEXT NOT NULL,
+            foto_ruta TEXT,
+            atendido_por TEXT,
+            fecha_atendido TEXT,
+            comentario_soporte TEXT,
+            visto INTEGER DEFAULT 0,
+            FOREIGN KEY (camioneta_id) REFERENCES camionetas(id),
+            FOREIGN KEY (reportado_por_id) REFERENCES usuarios(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_eventos_reportados
+        ON eventos_reportados (estado, fecha)
+    """)
+
     # Controles que nunca se hicieron porque ese día la camioneta no salió:
     # feriado, el técnico faltó, la camioneta estaba en el taller. No es lo
     # mismo que un control olvidado. Mientras el hueco sigue abierto la
@@ -2187,7 +2237,9 @@ def retiro_abierto(conexion, camioneta_id):
     puede retirarla ni devolverla hasta que él la entregue revisada.
     """
     retiro = conexion.execute('''
-        SELECT ct.fecha, ct.jornada, a.id AS asignacion_id, a.tecnico_id,
+        SELECT ct.fecha, ct.jornada, ct.observacion,
+               COALESCE(ct.urgencia, 0) AS urgencia,
+               a.id AS asignacion_id, a.tecnico_id,
                u.nombre AS tecnico_nombre
         FROM controles_tecnicos ct
         JOIN asignaciones a ON ct.asignacion_id = a.id
@@ -2303,6 +2355,10 @@ def _detalle_custodia(conexion, camioneta, abierto, momento):
         'tecnico': abierto['tecnico_nombre'],
         'retirada_fecha': abierto['fecha'],
         'retirada_jornada': abierto['jornada'],
+        # Salio de urgencia: no se le hizo el control de retiro, asi que la
+        # pantalla tiene que decirlo en vez del texto de siempre.
+        'urgencia': bool(abierto['urgencia']),
+        'observacion_retiro': abierto['observacion'] or '',
         'asignacion_devolucion_id': destino['id'] if destino else abierto['asignacion_id'],
         'fecha_devolucion': destino['fecha'] if destino else abierto['fecha'],
         'jornada_devolucion': destino['jornada'] if destino else abierto['jornada'],
@@ -3117,8 +3173,8 @@ def calendario_mes(conexion, anio, mes, momento=None):
         eventos.setdefault(dia, []).append(evento)
 
     for fila in conexion.execute('''
-            SELECT h.tipo, h.fecha_realizado, h.km_realizado, h.registrado_por,
-                   h.observacion, c.patente
+            SELECT h.id, h.tipo, h.fecha_realizado, h.km_realizado,
+                   h.registrado_por, h.observacion, c.patente
             FROM vencimientos_historial h
             JOIN camionetas c ON h.camioneta_id = c.id
             WHERE h.fecha_realizado BETWEEN ? AND ?
@@ -3127,6 +3183,8 @@ def calendario_mes(conexion, anio, mes, momento=None):
         config = TIPOS_VENCIMIENTO.get(fila['tipo'], {})
         agregar(fila['fecha_realizado'][:10], {
             'clase': 'hecho',
+            # El id deja que la ventana del dia abra el detalle del trabajo.
+            'registro_id': fila['id'],
             'tipo': fila['tipo'],
             'etiqueta': config.get('etiqueta', fila['tipo']),
             'icono': config.get('icono', 'check'),
@@ -3400,8 +3458,15 @@ def resumen_inicio(conexion, momento=None):
     activas = conexion.execute(
         'SELECT COUNT(*) AS n FROM camionetas WHERE activa = 1').fetchone()['n']
 
+    # Problemas que avisaron los tecnicos y todavia nadie cerro.
+    reportes = consultar_eventos(conexion, solo_abiertos=True)
+
     return {
         'fecha': hoy,
+        'eventos': reportes[:5],
+        'eventos_total': len(reportes),
+        'eventos_urgentes': sum(1 for e in reportes if e['importancia'] == 'URGENTE'),
+        'eventos_sin_ver': eventos_sin_ver(conexion),
         'pendientes': pendientes[:6],
         'pendientes_total': len(pendientes),
         'trabadas': trabadas,
@@ -3476,6 +3541,20 @@ def admin():
             actividades_sin_ver = resoluciones_sin_ver(conexion)
             # Tarjetas de la pantalla de Inicio.
             inicio = resumen_inicio(conexion)
+            # Problemas que reportaron los tecnicos fuera del control.
+            filtro_ev_estado = (request.args.get('ev_estado') or '').strip()
+            try:
+                filtro_ev_camioneta = int(request.args.get('ev_camioneta'))
+            except (TypeError, ValueError):
+                filtro_ev_camioneta = None
+            eventos = consultar_eventos(
+                conexion,
+                estado=filtro_ev_estado if filtro_ev_estado != 'abiertos' else None,
+                solo_abiertos=filtro_ev_estado == 'abiertos',
+                camioneta_id=filtro_ev_camioneta,
+                importancia=(request.args.get('ev_importancia') or '').upper())
+            eventos_nuevos = eventos_sin_ver(conexion)
+
             # Turnos justificados, con sus filtros.
             justificados = justificaciones_vigentes(
                 conexion, limite=200,
@@ -3499,10 +3578,22 @@ def admin():
             actividades_sin_ver = 0
             inicio = None
             justificados = []
+            eventos = []
+            eventos_nuevos = 0
         
     finally:
         conexion.close()
     
+    # Mirar la seccion es haberse enterado: se apaga el globito.
+    if request.args.get('seccion') == 'eventos':
+        conexion = get_db()
+        try:
+            conexion.execute(
+                "UPDATE eventos_reportados SET visto = 1 WHERE estado = 'NUEVO'")
+            conexion.commit()
+        finally:
+            conexion.close()
+
     mensaje = request.args.get('mensaje', '')
     error = request.args.get('error', '')
     
@@ -3526,6 +3617,15 @@ def admin():
     return render_template('admin.html',
                          inicio=inicio,
                          justificados=justificados,
+                         eventos=eventos,
+                         eventos_sin_ver=eventos_nuevos,
+                         estados_evento=ESTADOS_EVENTO,
+                         importancia_evento=IMPORTANCIA_EVENTO,
+                         filtros_eventos={
+                             'estado': request.args.get('ev_estado', ''),
+                             'importancia': (request.args.get('ev_importancia') or '').upper(),
+                             'camioneta': request.args.get('ev_camioneta', ''),
+                         },
                          filtros_justificados={
                              'patente': request.args.get('j_patente', ''),
                              'motivo': (request.args.get('j_motivo') or '').upper(),
@@ -3934,6 +4034,10 @@ def tecnico():
     deudas = [c for c in custodias
               if not asignacion or c['camioneta_id'] != asignacion['camioneta_id']]
 
+    # Las que sacó de urgencia van aparte y arriba de todo: son las que se
+    # llevó sin revisar, y la devolución es lo único que queda pendiente.
+    urgencias = [c for c in custodias if c.get('urgencia')]
+
     # El hueco de la camioneta de hoy se resuelve desde la tarjeta del día; el
     # resto va en su propio panel.
     faltantes_otros = [f for f in faltantes
@@ -3985,6 +4089,10 @@ def tecnico():
                          necesita_retiro=necesita_retiro,
                          necesita_devolucion=necesita_devolucion,
                          deudas=deudas,
+                         urgencias=urgencias,
+                         camionetas_todas=obtener_camionetas(),
+                         importancia_evento=IMPORTANCIA_EVENTO,
+                         mis_eventos=consultar_eventos_de(usuario_id),
                          faltantes=faltantes_otros,
                          falta_de_hoy=falta_de_hoy,
                          trabada_por_hueco=trabada_por_hueco,
@@ -4344,28 +4452,38 @@ def retiro_urgencia():
 
         asignacion_id, fecha_control, jornada_control = asignacion
         cursor = conexion.cursor()
+        # finalizado = 1 sin ningun elemento revisado: la camioneta salio y no
+        # se reviso, que es la verdad de lo que paso. Si quedara sin finalizar,
+        # el turno figuraria como control faltante y trabaria la camioneta para
+        # todos, incluido el que la acaba de sacar.
         cursor.execute('''
             INSERT INTO controles_tecnicos
                 (asignacion_id, fecha, jornada, tipo_control, finalizado,
-                 fecha_hora_inicio, observacion, urgencia)
-            VALUES (?, ?, ?, 'RETIRO', 0, ?, ?, 1)
+                 fecha_hora_inicio, fecha_hora_fin, observacion, urgencia)
+            VALUES (?, ?, ?, 'RETIRO', 1, ?, ?, ?, 1)
         ''', (asignacion_id, fecha_control, jornada_control, momento.isoformat(),
-              f'Retiro de urgencia por guardia ({caracter}): {motivo}'))
+              momento.isoformat(),
+              f'Retiro de urgencia por guardia ({caracter}), sin control de '
+              f'retiro: {motivo}'))
         control_id = cursor.lastrowid
 
         crear_notificacion(
             'RETIRO_URGENCIA',
             f'🚨 {session.get("nombre")} retiró {camioneta["patente"]} de urgencia '
-            f'por guardia ({caracter}). Motivo: {motivo}',
+            f'por guardia ({caracter}), SIN control de retiro. Motivo: {motivo}',
             patente=camioneta['patente'],
             destinatario_rol='soporte',
             conexion=conexion)
 
+        patente_retirada = camioneta['patente']
         conexion.commit()
     finally:
         conexion.close()
 
-    return redirect(url_for('realizar_control', control_id=control_id))
+    return redirect(url_for('tecnico',
+                            mensaje=f'Retiraste {patente_retirada} de urgencia. '
+                                    f'Queda a tu nombre: cuando la traigas, '
+                                    f'hacé la devolución desde arriba.'))
 
 
 @app.route('/realizar-control/<int:control_id>')
@@ -5456,11 +5574,16 @@ def api_alertas():
         pendientes = controles_pendientes(conexion)
         vencimientos = vencimientos_alerta(conexion)
         notificaciones = obtener_notificaciones(session.get('rol'), conexion=conexion)
+        # Solo los graves: un espejo roto de importancia baja no tiene por que
+        # estar en el mismo lugar que una camioneta trabada.
+        reportes = [e for e in consultar_eventos(conexion, solo_abiertos=True)
+                    if e['importancia'] in ('ALTA', 'URGENTE')]
     finally:
         conexion.close()
 
     return render_template('_alertas.html', pendientes_control=pendientes,
                            vencimientos=vencimientos,
+                           eventos_alerta=reportes,
                            notificaciones=notificaciones)
 
 
@@ -6537,6 +6660,209 @@ def reclamos_borrar():
 
 
 
+
+# ============================================
+# EVENTOS REPORTADOS
+# ============================================
+
+def consultar_eventos(conexion, estado=None, camioneta_id=None, importancia=None,
+                      solo_abiertos=False, limite=200):
+    """Los eventos reportados, con la camioneta y quien los reporto."""
+    where = ['1 = 1']
+    parametros = []
+    if estado in ESTADOS_EVENTO:
+        where.append('e.estado = ?')
+        parametros.append(estado)
+    if solo_abiertos:
+        where.append("e.estado IN ('NUEVO', 'EN_CURSO')")
+    if camioneta_id:
+        where.append('e.camioneta_id = ?')
+        parametros.append(camioneta_id)
+    if importancia in IMPORTANCIA_EVENTO:
+        where.append('e.importancia = ?')
+        parametros.append(importancia)
+
+    filas = conexion.execute(f"""
+        SELECT e.*, c.patente
+        FROM eventos_reportados e
+        JOIN camionetas c ON e.camioneta_id = c.id
+        WHERE {' AND '.join(where)}
+        ORDER BY
+            CASE e.estado WHEN 'NUEVO' THEN 0 WHEN 'EN_CURSO' THEN 1 ELSE 2 END,
+            CASE e.importancia WHEN 'URGENTE' THEN 0 WHEN 'ALTA' THEN 1
+                               WHEN 'MEDIA' THEN 2 ELSE 3 END,
+            e.fecha DESC
+        LIMIT ?
+    """, parametros + [limite]).fetchall()
+
+    salida = []
+    for fila in filas:
+        evento = dict(fila)
+        config = IMPORTANCIA_EVENTO.get(fila['importancia'], {})
+        evento['importancia_etiqueta'] = config.get('etiqueta', fila['importancia'])
+        evento['importancia_color'] = config.get('color', '#6c757d')
+        evento['estado_etiqueta'] = ESTADOS_EVENTO.get(fila['estado'], fila['estado'])
+        evento['abierto'] = fila['estado'] in ESTADOS_EVENTO_ABIERTOS
+        salida.append(evento)
+    return salida
+
+
+def eventos_sin_ver(conexion):
+    """Cuantos reportes nuevos todavia no miro soporte. Es el globito."""
+    fila = conexion.execute("""
+        SELECT COUNT(*) AS n FROM eventos_reportados
+        WHERE estado = 'NUEVO' AND COALESCE(visto, 0) = 0
+    """).fetchone()
+    return fila['n'] if fila else 0
+
+
+
+def consultar_eventos_de(usuario_id, limite=10):
+    """Los ultimos reportes de una persona, para que vea en que quedaron."""
+    conexion = get_db()
+    try:
+        filas = conexion.execute("""
+            SELECT e.*, c.patente
+            FROM eventos_reportados e
+            JOIN camionetas c ON e.camioneta_id = c.id
+            WHERE e.reportado_por_id = ?
+            ORDER BY e.fecha DESC
+            LIMIT ?
+        """, (usuario_id, limite)).fetchall()
+    finally:
+        conexion.close()
+
+    salida = []
+    for fila in filas:
+        evento = dict(fila)
+        config = IMPORTANCIA_EVENTO.get(fila['importancia'], {})
+        evento['importancia_etiqueta'] = config.get('etiqueta', fila['importancia'])
+        evento['importancia_color'] = config.get('color', '#6c757d')
+        evento['estado_etiqueta'] = ESTADOS_EVENTO.get(fila['estado'], fila['estado'])
+        evento['abierto'] = fila['estado'] in ESTADOS_EVENTO_ABIERTOS
+        salida.append(evento)
+    return salida
+
+@app.route('/eventos/reportar', methods=['POST'])
+def reportar_evento():
+    """Avisar que algo se rompio, sin esperar al proximo control.
+
+    Cualquiera que entre al sistema puede reportar: el que ve el espejo roto
+    no siempre es el que maneja esa camioneta.
+    """
+    if 'usuario_id' not in session:
+        return redirect(url_for('login'))
+
+    volver = request.form.get('volver') or url_for('tecnico')
+
+    try:
+        camioneta_id = int(request.form.get('camioneta_id', ''))
+    except (TypeError, ValueError):
+        return redirect(volver + '?error=Eleg%C3%AD una camioneta.')
+
+    mensaje = (request.form.get('mensaje') or '').strip()
+    if not mensaje:
+        return redirect(volver + '?error=Cont%C3%A1 qu%C3%A9 pas%C3%B3.')
+
+    importancia = (request.form.get('importancia') or '').strip().upper()
+    if importancia not in IMPORTANCIA_EVENTO:
+        return redirect(volver + '?error=Eleg%C3%AD qu%C3%A9 tan urgente es.')
+
+    conexion = get_db()
+    try:
+        camioneta = conexion.execute(
+            'SELECT id, patente FROM camionetas WHERE id = ? AND activa = 1',
+            (camioneta_id,)).fetchone()
+        if camioneta is None:
+            return redirect(volver + '?error=Camioneta no encontrada.')
+
+        conexion.execute("""
+            INSERT INTO eventos_reportados
+                (camioneta_id, mensaje, importancia, estado, reportado_por,
+                 reportado_por_id, fecha, visto)
+            VALUES (?, ?, ?, 'NUEVO', ?, ?, ?, 0)
+        """, (camioneta_id, mensaje, importancia, session.get('nombre'),
+              session.get('usuario_id'), ahora().isoformat()))
+
+        # Soporte se entera en el momento, que es todo el sentido de esto.
+        etiqueta = IMPORTANCIA_EVENTO[importancia]['etiqueta']
+        crear_notificacion(
+            'EVENTO_REPORTADO',
+            f'\u26a0\ufe0f {session.get("nombre")} reportó un problema en '
+            f'{camioneta["patente"]} ({etiqueta}): {mensaje}',
+            patente=camioneta['patente'],
+            destinatario_rol='admin',
+            enlace='/admin?seccion=eventos',
+            conexion=conexion)
+        conexion.commit()
+        patente = camioneta['patente']
+    finally:
+        conexion.close()
+
+    return redirect(volver + f'?mensaje=Reportaste el problema de {patente}. '
+                             'Soporte ya lo ve.')
+
+
+@app.route('/eventos/atender', methods=['POST'])
+def atender_evento():
+    """Soporte mueve el reporte de estado y deja su comentario."""
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        evento_id = int(request.form.get('evento_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('admin', seccion='eventos', error='Evento inválido.'))
+
+    estado = (request.form.get('estado') or '').strip().upper()
+    if estado not in ESTADOS_EVENTO:
+        return redirect(url_for('admin', seccion='eventos', error='Estado inválido.'))
+
+    comentario = (request.form.get('comentario') or '').strip()
+    # Cerrar sin decir nada deja al tecnico sin saber si se arreglo o no.
+    if estado in ('RESUELTO', 'DESCARTADO') and not comentario:
+        return redirect(url_for('admin', seccion='eventos',
+                                error='Conta qué se hizo antes de cerrarlo.'))
+
+    conexion = get_db()
+    try:
+        evento = conexion.execute('''
+            SELECT e.*, c.patente
+            FROM eventos_reportados e
+            JOIN camionetas c ON e.camioneta_id = c.id
+            WHERE e.id = ?
+        ''', (evento_id,)).fetchone()
+        if evento is None:
+            return redirect(url_for('admin', seccion='eventos',
+                                    error='Ese evento no existe.'))
+
+        cerrado = estado in ('RESUELTO', 'DESCARTADO')
+        conexion.execute("""
+            UPDATE eventos_reportados
+            SET estado = ?, comentario_soporte = ?, atendido_por = ?,
+                fecha_atendido = ?, visto = 1
+            WHERE id = ?
+        """, (estado, comentario or evento['comentario_soporte'],
+              session.get('nombre'),
+              ahora().isoformat() if cerrado else evento['fecha_atendido'],
+              evento_id))
+
+        # El que lo reporto tiene que enterarse de en que quedo.
+        if cerrado and evento['reportado_por_id']:
+            crear_notificacion(
+                'EVENTO_ATENDIDO',
+                f'\u2705 Soporte cerró tu reporte de {evento["patente"]} '
+                f'({ESTADOS_EVENTO[estado].lower()}): {comentario}',
+                destinatario_rol='tecnico',
+                conexion=conexion)
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin', seccion='eventos',
+                            mensaje=f'Evento marcado como '
+                                    f'{ESTADOS_EVENTO[estado].lower()}.'))
+
 # ============================================
 # CONTROLES JUSTIFICADOS
 # ============================================
@@ -7029,15 +7355,36 @@ def calendario():
         dias_indice = {d['fecha']: d for semana in semanas for d in semana if d['del_mes']}
         camionetas = obtener_camionetas()
 
-        historial = [dict(f) for f in conexion.execute('''
+        # Filtros de los trabajos ya registrados. Sin esto, para ver que se le
+        # hizo a una camioneta habia que leer los ultimos 40 de toda la flota.
+        where_h, parametros_h = ['1 = 1'], []
+        filtro_h_patente = (request.args.get('h_patente') or '').strip()
+        filtro_h_tipo = (request.args.get('h_tipo') or '').strip().upper()
+        filtro_h_desde = (request.args.get('h_desde') or '').strip()
+        filtro_h_hasta = (request.args.get('h_hasta') or '').strip()
+        if filtro_h_patente:
+            where_h.append('c.patente = ?')
+            parametros_h.append(filtro_h_patente)
+        if filtro_h_tipo in TIPOS_VENCIMIENTO:
+            where_h.append('h.tipo = ?')
+            parametros_h.append(filtro_h_tipo)
+        if _fecha_iso(filtro_h_desde):
+            where_h.append('h.fecha_realizado >= ?')
+            parametros_h.append(filtro_h_desde)
+        if _fecha_iso(filtro_h_hasta):
+            where_h.append('h.fecha_realizado <= ?')
+            parametros_h.append(filtro_h_hasta)
+
+        historial = [dict(f) for f in conexion.execute(f'''
             SELECT h.id, h.camioneta_id, h.tipo, h.fecha_realizado,
                    h.km_realizado, h.registrado_por, h.observacion,
                    h.detalle, h.meses_vigencia, c.patente
             FROM vencimientos_historial h
             JOIN camionetas c ON h.camioneta_id = c.id
+            WHERE {' AND '.join(where_h)}
             ORDER BY h.fecha_realizado DESC, h.id DESC
-            LIMIT 40
-        ''')]
+            LIMIT 200
+        ''', parametros_h)]
     finally:
         conexion.close()
 
@@ -7091,6 +7438,12 @@ def calendario():
                            } for clave, cfg in TIPOS_VENCIMIENTO.items()},
                            meses_vtv=MESES_VTV,
                            tipos_evento=TIPOS_EVENTO,
+                           filtros_historial={
+                               'patente': filtro_h_patente,
+                               'tipo': filtro_h_tipo,
+                               'desde': filtro_h_desde,
+                               'hasta': filtro_h_hasta,
+                           },
                            anio=anio,
                            mes=mes,
                            nombre_mes=MESES[mes - 1],

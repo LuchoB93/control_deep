@@ -8,6 +8,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+
+{% set seccion_activa = 'tiempos' %}
+{% include '_sidebar.html' %}
+
+<div class="admin-main">
     <div class="config-container">
         <div class="seccion-header">
             <h1><i class="bi bi-stopwatch"></i> Tiempos de control</h1>
@@ -163,5 +168,6 @@
             </table>
         </div>
     </div>
+</div>
 </body>
 </html>

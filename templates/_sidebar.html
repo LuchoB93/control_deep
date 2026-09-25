@@ -1,0 +1,181 @@
+{# Barra lateral del módulo Camionetas. La usan el panel y las pantallas que
+   viven aparte (calendario, distribución, configuración...), para que no haya
+   que volver al panel cada vez que uno quiere cambiar de sección.
+
+   Los links son URL de verdad. Dentro del panel, el JS los intercepta y
+   cambia de sección sin recargar; desde afuera funcionan como links comunes.
+   Un solo parcial sirve para los dos casos. #}
+
+{% set seccion_activa = seccion_activa|default('') %}
+
+<button class="btn-toggle-sidebar" id="btn-sidebar" onclick="alternarSidebar()"
+        aria-label="Mostrar u ocultar el menú">
+    <i class="bi bi-list"></i>
+</button>
+
+<div class="admin-sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h2>🚐 UltraHub</h2>
+        <span class="sidebar-subtitle">
+            {% if session.rol == 'admin' %}Administrador
+            {% elif session.rol == 'jefe' %}Jefe de flota
+            {% else %}Soporte técnico{% endif %}
+        </span>
+    </div>
+
+    <nav class="sidebar-nav">
+        {# El jefe no entra al panel de soporte: el sistema lo rebota a /jefe.
+           Se le muestran solo las pantallas que si puede ver. #}
+        {% if session.rol == 'jefe' %}
+            <a href="{{ url_for('jefe') }}" class="sidebar-link">
+                <i class="bi bi-speedometer2"></i>
+                <span>Estado de la flota</span>
+            </a>
+            <a href="{{ url_for('distribucion') }}"
+               class="sidebar-link {{ 'active' if seccion_activa == 'distribucion' }}">
+                <i class="bi bi-people"></i>
+                <span>Distribución semanal</span>
+            </a>
+            <a href="{{ url_for('calendario') }}"
+               class="sidebar-link {{ 'active' if seccion_activa == 'calendario' }}">
+                <i class="bi bi-calendar3"></i>
+                <span>Calendario</span>
+            </a>
+            <a href="{{ url_for('reclamos') }}"
+               class="sidebar-link {{ 'active' if seccion_activa == 'reclamos' }}">
+                <i class="bi bi-chat-left-text"></i>
+                <span>Actividades coordinadas</span>
+            </a>
+        {% else %}
+        <a href="{{ url_for('admin', seccion='inicio') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'inicio' }}"
+           data-section="inicio">
+            <i class="bi bi-speedometer2"></i>
+            <span>Inicio</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='asignaciones') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'asignaciones' }}"
+           data-section="asignaciones">
+            <i class="bi bi-calendar-check"></i>
+            <span>Asignaciones</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='reportes') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'reportes' }}"
+           data-section="reportes">
+            <i class="bi bi-clipboard-data"></i>
+            <span>Reportes</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='historial') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'historial' }}"
+           data-section="historial">
+            <i class="bi bi-clock-history"></i>
+            <span>Historial</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='justificados') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'justificados' }}"
+           data-section="justificados">
+            <i class="bi bi-calendar-x"></i>
+            <span>Turnos justificados</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='eventos') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'eventos' }}"
+           data-section="eventos">
+            <i class="bi bi-exclamation-triangle"></i>
+            <span>Eventos reportados</span>
+            {% if eventos_sin_ver %}
+                <span class="badge sidebar-badge">{{ eventos_sin_ver }}</span>
+            {% endif %}
+        </a>
+        <a href="{{ url_for('reclamos') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'reclamos' }}">
+            <i class="bi bi-chat-left-text"></i>
+            <span>Actividades coordinadas</span>
+            {# Cuántas cerró un técnico y soporte todavía no miró. Se apaga
+               sola al entrar a la pantalla. #}
+            {% if actividades_sin_ver %}
+                <span class="badge sidebar-badge">{{ actividades_sin_ver }}</span>
+            {% endif %}
+        </a>
+        <a href="{{ url_for('distribucion') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'distribucion' }}">
+            <i class="bi bi-people"></i>
+            <span>Distribución semanal</span>
+        </a>
+        <a href="{{ url_for('calendario') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'calendario' }}">
+            <i class="bi bi-calendar3"></i>
+            <span>Calendario</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='remitos') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'remitos' }}"
+           data-section="remitos">
+            <i class="bi bi-file-pdf"></i>
+            <span>Remitos</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='firma') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'firma' }}"
+           data-section="firma">
+            <i class="bi bi-pen"></i>
+            <span>Mi Firma</span>
+        </a>
+        <a href="{{ url_for('admin', seccion='tecnicos') }}"
+           class="sidebar-link {{ 'active' if seccion_activa == 'tecnicos' }}"
+           data-section="tecnicos">
+            <i class="bi bi-people"></i>
+            <span>Técnicos</span>
+            <span class="badge badge-proximamente">Próximamente</span>
+        </a>
+        {% if session.rol == 'admin' %}
+            <a href="{{ url_for('admin_tiempos') }}"
+               class="sidebar-link {{ 'active' if seccion_activa == 'tiempos' }}">
+                <i class="bi bi-stopwatch"></i>
+                <span>Tiempos de control</span>
+            </a>
+            <a href="{{ url_for('admin_configuracion') }}"
+               class="sidebar-link {{ 'active' if seccion_activa == 'configuracion' }}">
+                <i class="bi bi-gear"></i>
+                <span>Configuración</span>
+            </a>
+        {% endif %}
+        {% endif %}
+    </nav>
+
+    <div class="sidebar-volver">
+        <a href="{{ url_for('modulos') }}" class="sidebar-link">
+            <i class="bi bi-grid-3x3-gap"></i>
+            <span>Otros módulos</span>
+        </a>
+    </div>
+
+    <div class="sidebar-footer">
+        <span class="user-name">{{ session.nombre }}</span>
+        <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm">Salir</a>
+    </div>
+</div>
+
+<script>
+    // Mostrar u ocultar la barra. El estado se guarda: si la escondiste, sigue
+    // escondida al cambiar de pantalla, que es lo que uno espera de un menú.
+    function alternarSidebar() {
+        const oculta = document.body.classList.toggle('sidebar-oculta');
+        try {
+            localStorage.setItem('ultrahubSidebarOculta', oculta ? '1' : '0');
+        } catch (e) {
+            // Modo incógnito o almacenamiento bloqueado: se pierde la
+            // preferencia, pero la barra igual se abre y se cierra.
+        }
+    }
+
+    // Se aplica antes de que la página termine de cargar para que la barra no
+    // aparezca y desaparezca de un salto.
+    (function () {
+        let oculta = false;
+        try {
+            oculta = localStorage.getItem('ultrahubSidebarOculta') === '1';
+        } catch (e) { /* sin almacenamiento: queda visible */ }
+        // En el celular arranca siempre oculta: ocupa toda la pantalla.
+        if (oculta || window.innerWidth < 768) {
+            document.body.classList.add('sidebar-oculta');
+        }
+    })();
+</script>

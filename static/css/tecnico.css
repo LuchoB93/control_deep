@@ -551,3 +551,112 @@ body.sin-scroll {
     gap: 8px;
     margin-top: 10px;
 }
+
+/* ============================================
+   REPORTAR UN PROBLEMA
+   ============================================ */
+.reporte-pie {
+    margin: 28px 0 8px 0;
+    text-align: center;
+}
+
+.reporte-abrir {
+    width: 100%;
+    max-width: 420px;
+    padding: 13px 20px;
+    font-size: 0.98rem;
+    font-weight: 600;
+    border-radius: 12px;
+}
+
+.reporte-pie-ayuda {
+    margin: 9px auto 0 auto;
+    max-width: 420px;
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+
+/* Los cuatro niveles como botones grandes: en el celular, con una mano, un
+   desplegable chiquito es peor que cuatro blancos de toque. */
+.reporte-importancia {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+}
+
+.reporte-nivel {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0;
+    padding: 10px 12px;
+    border: 1.5px solid #e2e2ea;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.reporte-nivel:has(input:checked) {
+    border-color: var(--nivel, #667eea);
+    background: color-mix(in srgb, var(--nivel, #667eea) 10%, #fff);
+}
+
+.reporte-nivel input[type="radio"] {
+    width: 19px;
+    height: 19px;
+    flex-shrink: 0;
+    accent-color: var(--nivel, #667eea);
+}
+
+.reporte-nivel span {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+}
+
+.reporte-nivel small {
+    font-size: 0.73rem;
+    color: #777;
+}
+
+/* ---------- Lo que uno reportó ---------- */
+.mi-evento {
+    padding: 11px 13px;
+    border: 1px solid #ececf2;
+    border-radius: 8px;
+    margin-bottom: 9px;
+}
+
+.mi-evento-cerrado {
+    background: #fafafc;
+    opacity: 0.85;
+}
+
+.mi-evento-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 5px;
+}
+
+.mi-evento-fecha {
+    margin-left: auto;
+    font-size: 0.76rem;
+    color: #999;
+}
+
+.mi-evento-texto {
+    font-size: 0.9rem;
+    color: #333;
+    white-space: pre-wrap;
+}
+
+.mi-evento-respuesta {
+    margin-top: 8px;
+    padding: 7px 10px;
+    background: #f1f8f4;
+    border-left: 3px solid #198754;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}

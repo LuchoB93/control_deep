@@ -8,6 +8,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+
+{% set seccion_activa = 'configuracion' %}
+{% include '_sidebar.html' %}
+
+<div class="admin-main">
 <div class="container config-container">
 
     <div class="seccion-header d-flex justify-content-between align-items-center flex-wrap">
@@ -354,5 +359,6 @@
 
     verSeccion({{ seccion|tojson }});
 </script>
+</div>
 </body>
 </html>

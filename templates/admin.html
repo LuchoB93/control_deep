@@ -12,97 +12,13 @@
     <!-- ========================================== -->
     <!-- SIDEBAR / NAVEGACIÓN LATERAL -->
     <!-- ========================================== -->
-    <div class="admin-sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <h2>🚐 Control</h2>
-            <span class="sidebar-subtitle">
-                {% if session.rol == 'admin' %}Administrador{% else %}Soporte técnico{% endif %}
-            </span>
-        </div>
-        <nav class="sidebar-nav">
-            <a href="#" class="sidebar-link active" data-section="inicio" onclick="cambiarSeccion('inicio')">
-                <i class="bi bi-speedometer2"></i>
-                <span>Inicio</span>
-            </a>
-            <a href="#" class="sidebar-link" data-section="asignaciones" onclick="cambiarSeccion('asignaciones')">
-                <i class="bi bi-calendar-check"></i>
-                <span>Asignaciones</span>
-            </a>
-            <a href="#" class="sidebar-link" data-section="reportes" onclick="cambiarSeccion('reportes')">
-                <i class="bi bi-clipboard-data"></i>
-                <span>Reportes</span>
-            </a>
-            <a href="#" class="sidebar-link" data-section="historial" onclick="cambiarSeccion('historial')">
-                <i class="bi bi-clock-history"></i>
-                <span>Historial</span>
-            </a>
-            <a href="#" class="sidebar-link" data-section="justificados" onclick="cambiarSeccion('justificados')">
-                <i class="bi bi-calendar-x"></i>
-                <span>Turnos justificados</span>
-            </a>
-            <a href="{{ url_for('reclamos') }}" class="sidebar-link">
-                <i class="bi bi-chat-left-text"></i>
-                <span>Actividades coordinadas</span>
-                {# Cuantas cerro un tecnico y soporte todavia no miro. Se apaga
-                   solo al entrar a la pantalla. #}
-                {% if actividades_sin_ver %}
-                    <span class="badge sidebar-badge">{{ actividades_sin_ver }}</span>
-                {% endif %}
-            </a>
-            <a href="{{ url_for('distribucion') }}" class="sidebar-link">
-                <i class="bi bi-people"></i>
-                <span>Distribución semanal</span>
-            </a>
-            <a href="{{ url_for('calendario') }}" class="sidebar-link">
-                <i class="bi bi-calendar3"></i>
-                <span>Calendario</span>
-            </a>
-            <a href="#" class="sidebar-link" data-section="remitos" onclick="cambiarSeccion('remitos')">
-                <i class="bi bi-file-pdf"></i>
-                <span>Remitos</span>
-            </a>
-            <a href="#" class="sidebar-link" data-section="firma" onclick="cambiarSeccion('firma')">
-                <i class="bi bi-pen"></i>
-                <span>Mi Firma</span>
-            </a>
-            <a href="#" class="sidebar-link" data-section="tecnicos" onclick="cambiarSeccion('tecnicos')">
-                <i class="bi bi-people"></i>
-                <span>Técnicos</span>
-                <span class="badge badge-proximamente">Próximamente</span>
-            </a>
-            {% if session.rol == 'admin' %}
-                <a href="{{ url_for('admin_tiempos') }}" class="sidebar-link">
-                    <i class="bi bi-stopwatch"></i>
-                    <span>Tiempos de control</span>
-                </a>
-                <a href="{{ url_for('admin_configuracion') }}" class="sidebar-link">
-                    <i class="bi bi-gear"></i>
-                    <span>Configuración</span>
-                </a>
-            {% endif %}
-        </nav>
-        <div class="sidebar-volver">
-            <a href="{{ url_for('modulos') }}" class="sidebar-link">
-                <i class="bi bi-grid-3x3-gap"></i>
-                <span>Otros módulos</span>
-            </a>
-        </div>
-
-        <div class="sidebar-footer">
-            <span class="user-name">{{ session.nombre }}</span>
-            <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm">Salir</a>
-        </div>
-    </div>
+    {% include '_sidebar.html' %}
 
     <!-- ========================================== -->
     <!-- CONTENIDO PRINCIPAL -->
     <!-- ========================================== -->
     <div class="admin-main" id="main-content">
         
-        <!-- Botón para toggle sidebar en móviles -->
-        <button class="btn-toggle-sidebar" onclick="toggleSidebar()">
-            <i class="bi bi-list"></i>
-        </button>
 
         <!-- ========================================== -->
         <!-- ALERTAS (remitos + controles vencidos) -->
@@ -274,6 +190,47 @@
                     {% endif %}
                     <button type="button" class="inicio-ir" onclick="cambiarSeccion('remitos')">
                         Ver remitos <i class="bi bi-arrow-right"></i>
+                    </button>
+                </div>
+
+                {# --- Problemas reportados por los tecnicos --- #}
+                <div class="inicio-tarjeta {{ 'inicio-alerta' if inicio.eventos_urgentes else ('inicio-aviso' if inicio.eventos_total) }}">
+                    <div class="inicio-tarjeta-top">
+                        <span class="inicio-titulo">
+                            <i class="bi bi-exclamation-triangle"></i> Problemas reportados
+                        </span>
+                        <span class="inicio-numero">{{ inicio.eventos_total }}</span>
+                    </div>
+
+                    {% if inicio.eventos %}
+                        <p class="inicio-pie">
+                            {{ inicio.eventos_total }} sin cerrar
+                            {% if inicio.eventos_urgentes %}
+                                · <strong class="text-danger">
+                                    {{ inicio.eventos_urgentes }} urgente(s)
+                                  </strong>
+                            {% endif %}
+                        </p>
+                        <ul class="inicio-lista">
+                            {% for e in inicio.eventos %}
+                                <li>
+                                    <strong>{{ e.patente }}</strong>
+                                    <span class="badge" style="background: {{ e.importancia_color }};">
+                                        {{ e.importancia_etiqueta }}
+                                    </span>
+                                    {{ e.mensaje[:48] }}{% if e.mensaje|length > 48 %}...{% endif %}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="inicio-vacio">
+                            <i class="bi bi-check-circle"></i> Nadie reportó nada.
+                        </p>
+                    {% endif %}
+
+                    <button type="button" class="inicio-ir"
+                            onclick="cambiarSeccion('eventos')">
+                        Ver reportes <i class="bi bi-arrow-right"></i>
                     </button>
                 </div>
 
@@ -765,6 +722,165 @@
             </div>
         </div>
 
+<!-- ========================================== -->
+        <!-- SECCIÓN: EVENTOS REPORTADOS -->
+        <!-- ========================================== -->
+        <div id="seccion-eventos" class="seccion-content" style="display:none;">
+            <div class="seccion-header">
+                <h1><i class="bi bi-exclamation-triangle"></i> Eventos reportados</h1>
+                <p class="text-muted">
+                    Problemas que avisaron los técnicos fuera del control diario:
+                    algo se rompió y no podía esperar al próximo retiro.
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <form method="GET" action="{{ url_for('admin') }}" class="hist-filtros">
+                        <input type="hidden" name="seccion" value="eventos">
+
+                        <div class="hist-filtro">
+                            <label for="ev-estado">Estado</label>
+                            <select name="ev_estado" id="ev-estado" class="form-control form-control-sm">
+                                <option value="">Todos</option>
+                                <option value="abiertos"
+                                        {% if filtros_eventos.estado == 'abiertos' %}selected{% endif %}>
+                                    Solo los abiertos
+                                </option>
+                                {% for clave, etiqueta in estados_evento.items() %}
+                                    <option value="{{ clave }}"
+                                            {% if filtros_eventos.estado == clave %}selected{% endif %}>
+                                        {{ etiqueta }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="ev-importancia">Importancia</label>
+                            <select name="ev_importancia" id="ev-importancia" class="form-control form-control-sm">
+                                <option value="">Todas</option>
+                                {% for clave, cfg in importancia_evento.items() %}
+                                    <option value="{{ clave }}"
+                                            {% if filtros_eventos.importancia == clave %}selected{% endif %}>
+                                        {{ cfg.etiqueta }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro">
+                            <label for="ev-camioneta">Camioneta</label>
+                            <select name="ev_camioneta" id="ev-camioneta" class="form-control form-control-sm">
+                                <option value="">Todas</option>
+                                {% for c in camionetas %}
+                                    <option value="{{ c.id }}"
+                                            {% if filtros_eventos.camioneta == c.id|string %}selected{% endif %}>
+                                        {{ c.patente }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="hist-filtro hist-filtro-accion">
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="bi bi-search"></i> Filtrar
+                            </button>
+                            <a href="{{ url_for('admin', seccion='eventos') }}"
+                               class="btn btn-secondary btn-sm">
+                                <i class="bi bi-x-circle"></i> Limpiar
+                            </a>
+                        </div>
+                    </form>
+
+                    <div class="ev-lista">
+                        {% for e in eventos %}
+                            <div class="ev-item ev-{{ e.importancia|lower }} {{ 'ev-cerrado' if not e.abierto }}">
+                                <div class="ev-item-top">
+                                    <span class="ev-patente">{{ e.patente }}</span>
+
+                                    <span class="badge" style="background: {{ e.importancia_color }};">
+                                        {{ e.importancia_etiqueta }}
+                                    </span>
+
+                                    {% if e.estado == 'NUEVO' %}
+                                        <span class="badge bg-primary">Nuevo</span>
+                                    {% elif e.estado == 'EN_CURSO' %}
+                                        <span class="badge bg-warning text-dark">En curso</span>
+                                    {% elif e.estado == 'RESUELTO' %}
+                                        <span class="badge bg-success">Resuelto</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Descartado</span>
+                                    {% endif %}
+
+                                    <span class="ev-fecha">
+                                        {{ e.fecha[:16]|replace('T', ' ') }}
+                                    </span>
+                                </div>
+
+                                <div class="ev-mensaje">{{ e.mensaje }}</div>
+
+                                <div class="ev-meta">
+                                    Reportó {{ e.reportado_por or '—' }}
+                                    {% if e.atendido_por %}
+                                        · atendió {{ e.atendido_por }}
+                                    {% endif %}
+                                </div>
+
+                                {% if e.comentario_soporte %}
+                                    <div class="ev-respuesta">
+                                        <i class="bi bi-chat-right-quote"></i>
+                                        <strong>{{ e.atendido_por }}:</strong>
+                                        {{ e.comentario_soporte }}
+                                    </div>
+                                {% endif %}
+
+                                {% if e.abierto %}
+                                    <form method="POST" action="{{ url_for('atender_evento') }}"
+                                          class="ev-acciones">
+                                        <input type="hidden" name="evento_id" value="{{ e.id }}">
+                                        <input type="text" name="comentario" class="form-control form-control-sm"
+                                               placeholder="Qué se hizo (obligatorio para cerrarlo)"
+                                               value="{{ e.comentario_soporte or '' }}">
+                                        <div class="ev-botones">
+                                            {% if e.estado == 'NUEVO' %}
+                                                <button type="submit" name="estado" value="EN_CURSO"
+                                                        class="btn btn-warning btn-sm">
+                                                    <i class="bi bi-tools"></i> Lo estoy viendo
+                                                </button>
+                                            {% endif %}
+                                            <button type="submit" name="estado" value="RESUELTO"
+                                                    class="btn btn-success btn-sm">
+                                                <i class="bi bi-check-lg"></i> Resuelto
+                                            </button>
+                                            <button type="submit" name="estado" value="DESCARTADO"
+                                                    class="btn btn-outline-secondary btn-sm">
+                                                <i class="bi bi-slash-circle"></i> Descartar
+                                            </button>
+                                        </div>
+                                    </form>
+                                {% elif e.estado == 'RESUELTO' %}
+                                    {# Lo que se arregló suele merecer quedar en el
+                                       calendario de la camioneta. Se ofrece, no se
+                                       hace solo: hay arreglos que no son un trabajo
+                                       que valga la pena registrar. #}
+                                    <button type="button" class="ev-al-calendario"
+                                            onclick="pasarAlCalendario({{ e.camioneta_id }}, {{ e.mensaje|tojson }})">
+                                        <i class="bi bi-calendar-plus"></i>
+                                        Registrarlo en el calendario
+                                    </button>
+                                {% endif %}
+                            </div>
+                        {% else %}
+                            <p class="text-muted text-center py-4">
+                                No hay eventos reportados con esos filtros.
+                            </p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- ========================================== -->
         <!-- SECCIÓN: TURNOS JUSTIFICADOS -->
         <!-- ========================================== -->
@@ -1043,7 +1159,7 @@
             }
             
             if (window.innerWidth < 768) {
-                document.getElementById('sidebar').classList.remove('active');
+                document.body.classList.add('sidebar-oculta');
             }
             
             localStorage.setItem('ultrahubSeccion', seccion);
@@ -1291,6 +1407,18 @@
             if (e.key === 'ArrowRight') moverFoto(1);
             if (e.key === 'ArrowLeft') moverFoto(-1);
         });
+
+        // Pasar un reporte resuelto al calendario. No lo registra solo: lleva
+        // al calendario con la camioneta y el texto a mano, y soporte decide
+        // si ese arreglo merece quedar anotado como trabajo.
+        function pasarAlCalendario(camionetaId, mensaje) {
+            const params = new URLSearchParams({
+                seccion: 'evento',
+                camioneta: camionetaId,
+                detalle: mensaje
+            });
+            window.location.href = '/calendario?' + params.toString();
+        }
 
         function abrirEditarJustificacion(id) {
             const form = document.getElementById('just-editar-' + id);
@@ -1579,12 +1707,6 @@
                 ${bloqueFotos}`;
         }
 
-        // ==========================================
-        // TOGGLE SIDEBAR (Móviles)
-        // ==========================================
-        function toggleSidebar() {
-            document.getElementById('sidebar').classList.toggle('active');
-        }
 
         // ==========================================
         // PLEGAR / DESPLEGAR ALERTAS DE CONTROL
@@ -1752,6 +1874,18 @@
         // ==========================================
         // INICIALIZACIÓN
         // ==========================================
+        // Los links de la barra son URL de verdad para que funcionen desde las
+        // pantallas que estan aparte. Adentro del panel se interceptan: cambiar
+        // de seccion no necesita recargar la pagina.
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('.sidebar-link[data-section]').forEach(function (link) {
+                link.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    cambiarSeccion(link.dataset.section);
+                });
+            });
+        });
+
         document.addEventListener('DOMContentLoaded', function() {
             const pedida = {{ seccion_inicial|tojson }};
             const patentePedida = {{ patente_inicial|tojson }};

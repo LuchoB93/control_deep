@@ -8,6 +8,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+
+{% set seccion_activa = 'distribucion' %}
+{% include '_sidebar.html' %}
+
+<div class="admin-main">
 <div class="config-container">
 
     <div class="seccion-header">
@@ -314,5 +319,6 @@
     }
 </script>
 {% endif %}
+</div>
 </body>
 </html>

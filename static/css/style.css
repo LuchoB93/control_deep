@@ -2257,7 +2257,10 @@ section h2 {
 }
 
 .admin-main {
-    margin-left: 250px;
+    /* Igual al ancho de la barra. Estaba en 250 con una barra de 270, asi
+       que el contenido se le metia 20px por debajo. */
+    margin-left: 270px;
+    transition: margin-left 0.3s ease;
     padding: 20px 30px;
     min-height: 100vh;
     background: #f5f6fa;
@@ -2308,28 +2311,74 @@ section h2 {
 }
 
 /* ============================================
-   SIDEBAR - RESPONSIVE
-   ============================================ */
+   SIDEBAR - RESPONSIVE Y PLEGADO
+   ============================================
+   Antes la barra solo se ocultaba en el celular. Ahora se puede plegar
+   siempre, y al plegarse queda el boton de hamburguesa para traerla de
+   vuelta. El estado lo guarda el navegador, asi que si la escondes sigue
+   escondida al cambiar de pantalla.                                       */
+
+/* Plegada: se va para la izquierda y el contenido ocupa todo el ancho. */
+body.sidebar-oculta .admin-sidebar {
+    transform: translateX(-100%);
+}
+
+body.sidebar-oculta .admin-main {
+    margin-left: 0;
+}
+
+/* El boton vive al lado de la barra cuando esta abierta, y arriba a la
+   izquierda cuando esta plegada. Se mueve con la misma animacion. */
+.btn-toggle-sidebar {
+    display: block;
+    position: fixed;
+    top: 14px;
+    left: 284px;
+    z-index: 1001;
+    background: #fff;
+    color: #1a1a2e;
+    border: 1px solid #dfe0e8;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+    transition: left 0.3s ease, background 0.15s ease;
+}
+
+.btn-toggle-sidebar:hover {
+    background: #f2f3f8;
+}
+
+body.sidebar-oculta .btn-toggle-sidebar {
+    left: 14px;
+}
+
+/* El contenido deja lugar arriba para que el boton no tape el titulo. */
+.admin-main {
+    padding-top: 62px;
+}
+
 @media (max-width: 768px) {
     .admin-sidebar {
-        transform: translateX(-100%);
         width: 280px;
-    }
-    .admin-sidebar.active {
-        transform: translateX(0);
     }
     .admin-main {
         margin-left: 0;
         padding: 15px;
-        padding-top: 70px;
+        padding-top: 66px;
     }
+    /* En el celular la barra se superpone al contenido en vez de correrlo:
+       no hay ancho para las dos cosas. */
     .btn-toggle-sidebar {
-        display: block;
+        left: 14px;
     }
     .seccion-header h1 {
         font-size: 1.3rem;
     }
 }
+
 /* Referencia "última vez OK" en los faltantes del panel del administrador */
 .ultima-ok {
     display: inline-block;
@@ -4327,4 +4376,129 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
         height: 38px;
         font-size: 1.1rem;
     }
+}
+
+/* ============================================
+   EVENTOS REPORTADOS (soporte)
+   ============================================ */
+.ev-lista {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.ev-item {
+    padding: 13px 15px;
+    background: #fff;
+    border: 1px solid #e6e6ec;
+    border-left: 4px solid #6c757d;
+    border-radius: 8px;
+}
+
+/* El borde izquierdo dice de un vistazo que tan grave es. */
+.ev-item.ev-baja { border-left-color: #198754; }
+.ev-item.ev-media { border-left-color: #ffc107; }
+.ev-item.ev-alta { border-left-color: #fd7e14; }
+.ev-item.ev-urgente { border-left-color: #dc3545; }
+
+.ev-item.ev-cerrado {
+    background: #fafafc;
+    opacity: 0.8;
+}
+
+.ev-item-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 7px;
+}
+
+.ev-patente {
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}
+
+.ev-fecha {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: #888;
+}
+
+.ev-mensaje {
+    white-space: pre-wrap;
+    font-size: 0.93rem;
+    color: #222;
+}
+
+.ev-meta {
+    margin-top: 5px;
+    font-size: 0.76rem;
+    color: #888;
+}
+
+.ev-respuesta {
+    margin-top: 9px;
+    padding: 8px 11px;
+    background: #f1f8f4;
+    border-left: 3px solid #198754;
+    border-radius: 4px;
+    font-size: 0.87rem;
+}
+
+.ev-acciones {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 11px;
+    padding-top: 11px;
+    border-top: 1px dashed #dcdce4;
+}
+
+.ev-acciones input[type="text"] {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.ev-botones {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.ev-al-calendario {
+    margin-top: 10px;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: #667eea;
+    cursor: pointer;
+}
+
+.ev-al-calendario:hover {
+    text-decoration: underline;
+}
+
+/* Trabajo de la ventana del dia que se puede tocar para ver su detalle. */
+.dia-evento-abrible {
+    width: 100%;
+    border: none;
+    background: none;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.dia-evento-abrible:hover {
+    background: #f2f3f9;
+}
+
+.dia-evento-flecha {
+    margin-left: auto;
+    color: #adb5bd;
 }

@@ -1,7 +1,9 @@
 {# Panel único de alertas del soporte: remitos pendientes y controles vencidos.
    Se refresca solo desde /api/alertas, así que no depende de recargar la página. #}
 {% set vencimientos = vencimientos|default([]) %}
-{% set total = notificaciones|length + pendientes_control|length + vencimientos|length %}
+{% set eventos_alerta = eventos_alerta|default([]) %}
+{% set total = notificaciones|length + pendientes_control|length
+               + vencimientos|length + eventos_alerta|length %}
 {% if total %}
 <div class="alerta-controles">
     <div class="alerta-controles-header">
@@ -96,6 +98,33 @@
                     {% endif %}
                     <button type="button" class="alerta-cerrar" title="Descartar alerta"
                             onclick="descartarControl(this)">&times;</button>
+                </div>
+            </div>
+        {% endfor %}
+
+        {# Problemas graves que reportaron los tecnicos. Los de importancia
+           baja y media no entran aca: viven en su seccion. #}
+        {% for e in eventos_alerta %}
+            <div class="alerta-item" data-clave="evento-{{ e.id }}">
+                <div class="alerta-item-texto">
+                    <i class="bi bi-exclamation-triangle-fill"
+                       style="color: {{ e.importancia_color }};"></i>
+                    <span class="badge" style="background: {{ e.importancia_color }};">
+                        {{ e.importancia_etiqueta }}
+                    </span>
+                    <strong>{{ e.patente }}</strong>
+                    &middot; {{ e.mensaje }}
+                    <br>
+                    <small class="text-muted">
+                        Reportó {{ e.reportado_por }} &middot;
+                        {{ e.fecha[:16]|replace('T', ' ') }}
+                        {% if e.estado == 'EN_CURSO' %} &middot; en curso{% endif %}
+                    </small>
+                </div>
+                <div class="alerta-item-acciones">
+                    <a href="/admin?seccion=eventos" class="btn btn-sm btn-primary">
+                        Atender
+                    </a>
                 </div>
             </div>
         {% endfor %}

@@ -65,6 +65,55 @@
         {# Camionetas que este técnico retiró y no devolvió. Va antes que todo
            y fuera del if de asignación: la deuda puede ser de otro día y de una
            camioneta que hoy no tiene asignada. #}
+        {# Camionetas sacadas de urgencia por guardia. Van arriba de todo
+           porque es lo que el técnico necesita ver al volver: la tiene a su
+           nombre y no se le hizo el control de retiro. #}
+        {% if urgencias %}
+            {% for u in urgencias %}
+                <div class="card border-dark mb-4 urgencia-abierta">
+                    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-shield-check"></i>
+                            Retiraste {{ u.patente }} de urgencia
+                        </h5>
+                        <span class="badge bg-light text-dark">Guardia</span>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-2">
+                            La sacaste el {{ u.retirada_fecha }} ({{ u.retirada_jornada }})
+                            <strong>sin control de retiro</strong>, que es lo que corresponde
+                            a una salida de urgencia. Queda a tu nombre hasta que la devuelvas.
+                        </p>
+                        {% if u.observacion_retiro %}
+                            <p class="text-muted small mb-3">
+                                <i class="bi bi-chat-left-text"></i> {{ u.observacion_retiro }}
+                            </p>
+                        {% endif %}
+                        <p class="mb-3">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>El control completo se hace al devolverla.</strong>
+                        </p>
+
+                        {% if u.control_activo_id %}
+                            <a href="{{ url_for('realizar_control', control_id=u.control_activo_id) }}"
+                               class="btn btn-dark btn-lg">
+                                <i class="bi bi-arrow-right"></i> Continuar la devolución
+                            </a>
+                        {% else %}
+                            <form method="POST" action="{{ url_for('iniciar_control') }}" class="mb-0">
+                                <input type="hidden" name="asignacion_id" value="{{ u.asignacion_devolucion_id }}">
+                                <input type="hidden" name="jornada" value="{{ u.jornada_devolucion }}">
+                                <button type="submit" name="tipo_control" value="DEVOLUCION"
+                                        class="btn btn-dark btn-lg">
+                                    <i class="bi bi-box-arrow-in-left"></i> Hacer la devolución
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        {% endif %}
+
         {% if deudas %}
             <div class="card border-danger mb-4">
                 <div class="card-header bg-danger text-white">
@@ -88,9 +137,22 @@
                                     d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <div>
                                 <strong><i class="bi bi-truck"></i> {{ d.patente }}</strong>
+                                {% if d.urgencia %}
+                                    <span class="badge bg-dark">
+                                        <i class="bi bi-shield-check"></i> Retiro de urgencia
+                                    </span>
+                                {% endif %}
                                 <br>
                                 <small>
-                                    Retirada el {{ d.retirada_fecha }} ({{ d.retirada_jornada }}){% if d.zona %} · zona {{ d.zona }}{% endif %}.
+                                    {% if d.urgencia %}
+                                        {# Salió de guardia: no hubo control de retiro, así que
+                                           la revisión completa se hace recién al devolverla. #}
+                                        La sacaste de urgencia el {{ d.retirada_fecha }}
+                                        ({{ d.retirada_jornada }}), sin control de retiro.
+                                        <strong>El control se hace al devolverla.</strong>
+                                    {% else %}
+                                        Retirada el {{ d.retirada_fecha }} ({{ d.retirada_jornada }}){% if d.zona %} · zona {{ d.zona }}{% endif %}.
+                                    {% endif %}
                                     {% if d.control_activo_id %}
                                         <strong>La empezaste y quedó sin terminar.</strong>
                                     {% endif %}
@@ -582,6 +644,118 @@
             </div>
         {% endif %}
 
+        {# Reportar algo que se rompio fuera del control. Va al pie, como el
+           retiro de urgencia: es la excepcion, no la tarea del dia. #}
+        <div class="reporte-pie">
+            <button type="button" class="btn btn-outline-danger reporte-abrir"
+                    onclick="abrirReporte()">
+                <i class="bi bi-exclamation-triangle"></i>
+                Reportar un problema de una camioneta
+            </button>
+            <p class="reporte-pie-ayuda">
+                Se rompio algo y no puede esperar al proximo control.
+            </p>
+        </div>
+
+        {% if mis_eventos %}
+            <div class="card mb-4 mt-3">
+                <div class="card-header">
+                    <strong><i class="bi bi-list-check"></i> Lo que reportaste</strong>
+                </div>
+                <div class="card-body">
+                    {% for e in mis_eventos %}
+                        <div class="mi-evento {{ 'mi-evento-cerrado' if not e.abierto }}">
+                            <div class="mi-evento-top">
+                                <strong>{{ e.patente }}</strong>
+                                <span class="badge" style="background: {{ e.importancia_color }};">
+                                    {{ e.importancia_etiqueta }}
+                                </span>
+                                {% if e.estado == 'NUEVO' %}
+                                    <span class="badge bg-primary">Soporte no lo vio todavia</span>
+                                {% elif e.estado == 'EN_CURSO' %}
+                                    <span class="badge bg-warning text-dark">Lo estan viendo</span>
+                                {% elif e.estado == 'RESUELTO' %}
+                                    <span class="badge bg-success">Resuelto</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Descartado</span>
+                                {% endif %}
+                                <span class="mi-evento-fecha">
+                                    {{ e.fecha[:10] }}
+                                </span>
+                            </div>
+                            <div class="mi-evento-texto">{{ e.mensaje }}</div>
+                            {% if e.comentario_soporte %}
+                                <div class="mi-evento-respuesta">
+                                    <i class="bi bi-chat-right-quote"></i>
+                                    <strong>{{ e.atendido_por }}:</strong> {{ e.comentario_soporte }}
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
+        <div class="urgencia-fondo" id="reporte-fondo" hidden onclick="cerrarReporte()"></div>
+
+        <div class="urgencia-hoja" id="reporte-hoja" hidden
+             role="dialog" aria-modal="true" aria-labelledby="reporte-titulo">
+            <div class="urgencia-hoja-barra"></div>
+
+            <div class="urgencia-hoja-header">
+                <h5 id="reporte-titulo" class="mb-0">
+                    <i class="bi bi-exclamation-triangle"></i> Reportar un problema
+                </h5>
+                <button type="button" class="urgencia-cerrar" aria-label="Cerrar"
+                        onclick="cerrarReporte()">&times;</button>
+            </div>
+
+            <form method="POST" action="{{ url_for('reportar_evento') }}" class="urgencia-form">
+                <input type="hidden" name="volver" value="{{ url_for('tecnico') }}">
+
+                <div class="urgencia-campo">
+                    <label for="reporte-camioneta">Camioneta</label>
+                    <select name="camioneta_id" id="reporte-camioneta"
+                            class="form-select" required>
+                        <option value="">Elegi una</option>
+                        {% for c in camionetas_todas %}
+                            <option value="{{ c.id }}"
+                                    {% if asignacion and asignacion.camioneta_id == c.id %}selected{% endif %}>
+                                {{ c.patente }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="urgencia-campo">
+                    <label for="reporte-mensaje">Que paso</label>
+                    <textarea name="mensaje" id="reporte-mensaje" class="form-control"
+                              rows="3" required
+                              placeholder="Ej: se rompio el espejo derecho, quedo colgando"></textarea>
+                </div>
+
+                <div class="urgencia-campo">
+                    <label>Que tan urgente es</label>
+                    <div class="reporte-importancia">
+                        {% for clave, cfg in importancia_evento.items() %}
+                            <label class="reporte-nivel" style="--nivel: {{ cfg.color }};">
+                                <input type="radio" name="importancia" value="{{ clave }}"
+                                       {% if clave == 'MEDIA' %}checked{% endif %} required>
+                                <span>
+                                    <strong>{{ cfg.etiqueta }}</strong>
+                                    <small>{{ cfg.ayuda }}</small>
+                                </span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-danger btn-block">
+                    <i class="bi bi-send"></i> Enviar a soporte
+                </button>
+            </form>
+        </div>
+
         {# Retiro de urgencia: vive al pie porque es la excepción, no la tarea
            del día. El botón abre una hoja desde abajo para que se pueda
            completar con el pulgar, sin scrollear hasta la tarjeta de guardia. #}
@@ -661,6 +835,39 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // ==========================================
+        // REPORTAR UN PROBLEMA (hoja deslizante)
+        // ==========================================
+
+        function abrirReporte() {
+            const hoja = document.getElementById('reporte-hoja');
+            const fondo = document.getElementById('reporte-fondo');
+            fondo.hidden = false;
+            hoja.hidden = false;
+            void hoja.offsetHeight;   // fuerza el dibujado antes de animar
+            fondo.classList.add('visible');
+            hoja.classList.add('visible');
+            document.body.classList.add('sin-scroll');
+        }
+
+        function cerrarReporte() {
+            const hoja = document.getElementById('reporte-hoja');
+            const fondo = document.getElementById('reporte-fondo');
+            hoja.classList.remove('visible');
+            fondo.classList.remove('visible');
+            document.body.classList.remove('sin-scroll');
+            setTimeout(function () {
+                if (!hoja.classList.contains('visible')) {
+                    hoja.hidden = true;
+                    fondo.hidden = true;
+                }
+            }, 300);
+        }
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') cerrarReporte();
+        });
+
         // ==========================================
         // CIERRE DE ACTIVIDADES COORDINADAS
         // ==========================================

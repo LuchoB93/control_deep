@@ -8,6 +8,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+
+{% set seccion_activa = 'reclamos' %}
+{% include '_sidebar.html' %}
+
+<div class="admin-main">
 <div class="config-container">
 
     <div class="seccion-header">
@@ -296,5 +301,6 @@
         if (form) form.hidden = !form.hidden;
     }
 </script>
+</div>
 </body>
 </html>
