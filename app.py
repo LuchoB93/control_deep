@@ -415,6 +415,34 @@ ESTADOS_EVENTO = {
 
 ESTADOS_EVENTO_ABIERTOS = ('NUEVO', 'EN_CURSO')
 
+# Que nivel saca la camioneta de circulacion apenas se reporta. Solo el mas
+# grave: trabar por cualquier aviso dejaria la flota parada por un espejo.
+# Se destraba cuando soporte mira el reporte y decide, no por si sola.
+IMPORTANCIA_QUE_BLOQUEA = ('URGENTE',)
+
+
+def camionetas_bloqueadas(conexion):
+    """{camioneta_id: evento} de las camionetas que no se pueden retirar.
+
+    Un reporte urgente las saca de circulacion hasta que soporte lo mire. La
+    idea es que un tecnico no pueda dar de baja una camioneta por su cuenta,
+    pero que tampoco tenga que salir con algo que el vio mal.
+    """
+    filas = conexion.execute("""
+        SELECT e.*, c.patente
+        FROM eventos_reportados e
+        JOIN camionetas c ON e.camioneta_id = c.id
+        WHERE COALESCE(e.bloquea, 0) = 1
+          AND e.estado IN ('NUEVO', 'EN_CURSO')
+        ORDER BY e.fecha DESC
+    """).fetchall()
+
+    bloqueadas = {}
+    for fila in filas:
+        # La mas nueva de cada camioneta: es la que explica por que esta parada.
+        bloqueadas.setdefault(fila['camioneta_id'], dict(fila))
+    return bloqueadas
+
 # Por qué un control quedó sin hacer sin que nadie haya fallado: ese día la
 # camioneta directamente no salió. Es lo que distingue "nadie la controló" de
 # "no había nada que controlar".
@@ -1472,6 +1500,10 @@ def crear_base_de_datos():
             fecha_atendido TEXT,
             comentario_soporte TEXT,
             visto INTEGER DEFAULT 0,
+            bloquea INTEGER DEFAULT 0,
+            fuera_de_servicio INTEGER DEFAULT 0,
+            revisado_por TEXT,
+            fecha_revision TEXT,
             FOREIGN KEY (camioneta_id) REFERENCES camionetas(id),
             FOREIGN KEY (reportado_por_id) REFERENCES usuarios(id)
         )
@@ -1657,6 +1689,14 @@ def aplicar_migraciones(conexion):
         ],
         'usuarios': [
             ('firma', 'TEXT'),
+        ],
+        # bloquea: la camioneta no se puede retirar mientras valga 1.
+        # fuera_de_servicio: soporte miro el reporte y confirmo que es grave.
+        'eventos_reportados': [
+            ('bloquea', 'INTEGER DEFAULT 0'),
+            ('fuera_de_servicio', 'INTEGER DEFAULT 0'),
+            ('revisado_por', 'TEXT'),
+            ('fecha_revision', 'TEXT'),
         ],
         # El técnico ahora marca la actividad como resuelta o como no resuelta,
         # y soporte puede corregir el mensaje. Todo va en columnas nuevas: las
@@ -3537,6 +3577,10 @@ def admin():
             vencimientos = vencimientos_alerta(conexion)
             # Una tarjeta por camioneta para la sección Historial.
             resumen_historial = resumen_historial_flota(conexion)
+            # Camionetas paradas por un reporte grave, para marcarlas en la
+            # planilla: soporte la puede seguir asignando, pero tiene que
+            # saber que hoy esa camioneta no sale.
+            bloqueadas = camionetas_bloqueadas(conexion)
             # Actividades que un técnico cerró y soporte todavía no miró.
             actividades_sin_ver = resoluciones_sin_ver(conexion)
             # Tarjetas de la pantalla de Inicio.
@@ -3575,6 +3619,7 @@ def admin():
             pendientes_control = []
             vencimientos = []
             resumen_historial = []
+            bloqueadas = {}
             actividades_sin_ver = 0
             inicio = None
             justificados = []
@@ -3608,6 +3653,7 @@ def admin():
         planilla.append({
             'camioneta_id': camioneta['id'],
             'camioneta_patente': camioneta['patente'],
+            'bloqueo': bloqueadas.get(camioneta['id']),
             'asignacion_id': info['asignacion_id'],
             'tecnico_id': info['tecnico_id'],
             'tecnico2_id': info['tecnico2_id'],
@@ -4266,6 +4312,16 @@ def iniciar_control():
         # técnico puede retirar y devolver todos los días aunque la camioneta
         # sea suya toda la semana: es un control de más, nunca de menos.
         if tipo_control == 'RETIRO':
+            # Alguien reporto algo grave y todavia no lo miraron. La camioneta
+            # no sale hasta que soporte diga si puede o no.
+            bloqueada = camionetas_bloqueadas(conexion).get(asignacion['camioneta_id'])
+            if bloqueada is not None:
+                return redirect(url_for('tecnico',
+                    error=f'\U0001f512 {bloqueada["patente"]} está fuera de '
+                          f'circulación: {bloqueada["reportado_por"]} reportó '
+                          f'\u201c{bloqueada["mensaje"]}\u201d y soporte todavía no '
+                          f'lo revisó.'))
+
             if abierto is not None:
                 return redirect(url_for('tecnico',
                     error='⚠️ Ya tenés esta camioneta retirada. Lo que corresponde '
@@ -4978,13 +5034,20 @@ def jefe():
             ORDER BY r.fecha_hora DESC
         ''').fetchall()
         
+        # Camionetas paradas por un reporte grave. Van con su propio estado:
+        # no es lo mismo que le falte un elemento a que no pueda salir.
+        bloqueadas = camionetas_bloqueadas(conexion)
+        bloqueadas_por_patente = {b['patente']: b for b in bloqueadas.values()}
+
         resumen_flota = {}
         for camioneta in camionetas:
             patente = camioneta['patente']
+            parada = bloqueadas_por_patente.get(patente)
             resumen_flota[patente] = {
-                'estado_general': 'OK', 
+                'estado_general': 'FUERA_DE_SERVICIO' if parada else 'OK',
                 'historial': [],
-                'ultimo_registro': 'Sin registros'
+                'ultimo_registro': 'Sin registros',
+                'bloqueo': parada,
             }
         
         # `reportes` viene ordenado de más nuevo a más viejo.
@@ -5007,7 +5070,9 @@ def jefe():
                     'comentario_resolucion': r['comentario_resolucion'] or '-'
                 })
                 
-                if r['estado'] == 'FALLA':
+                if resumen_flota[patente]['estado_general'] == 'FUERA_DE_SERVICIO':
+                    pass  # ya esta en el peor estado: no lo pisa nada
+                elif r['estado'] == 'FALLA':
                     resumen_flota[patente]['estado_general'] = 'FALLA'
                 elif r['estado'] == 'FALTANTE' and resumen_flota[patente]['estado_general'] != 'FALLA':
                     resumen_flota[patente]['estado_general'] = 'ALERTA'
@@ -6790,13 +6855,14 @@ def reportar_evento():
         if camioneta is None:
             return redirect(volver + '?error=Camioneta no encontrada.')
 
+        bloquea = 1 if importancia in IMPORTANCIA_QUE_BLOQUEA else 0
         conexion.execute("""
             INSERT INTO eventos_reportados
                 (camioneta_id, mensaje, importancia, estado, reportado_por,
-                 reportado_por_id, fecha, visto)
-            VALUES (?, ?, ?, 'NUEVO', ?, ?, ?, 0)
+                 reportado_por_id, fecha, visto, bloquea)
+            VALUES (?, ?, ?, 'NUEVO', ?, ?, ?, 0, ?)
         """, (camioneta_id, mensaje, importancia, session.get('nombre'),
-              session.get('usuario_id'), ahora().isoformat()))
+              session.get('usuario_id'), ahora().isoformat(), bloquea))
 
         # Soporte se entera en el momento, que es todo el sentido de esto.
         etiqueta = IMPORTANCIA_EVENTO[importancia]['etiqueta']
@@ -6813,9 +6879,81 @@ def reportar_evento():
     finally:
         conexion.close()
 
-    return redirect(volver + f'?mensaje=Reportaste el problema de {patente}. '
-                             'Soporte ya lo ve.')
+    if bloquea:
+        aviso = (f'Reportaste un problema urgente en {patente}. Queda fuera de '
+                 f'circulación hasta que soporte lo revise.')
+    else:
+        aviso = f'Reportaste el problema de {patente}. Soporte ya lo ve.'
+    return redirect(volver + '?mensaje=' + aviso)
 
+
+
+@app.route('/eventos/revisar', methods=['POST'])
+def revisar_evento():
+    """Soporte decide si la camioneta puede salir o queda fuera de servicio.
+
+    Es el paso que evita que una camioneta quede parada porque si, y tambien
+    que salga con algo grave porque nadie miro. La decision es de soporte y
+    queda registrada con nombre y fecha.
+    """
+    if not autorizado('soporte', 'admin'):
+        return redirect(url_for('login'))
+
+    try:
+        evento_id = int(request.form.get('evento_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('admin', seccion='eventos', error='Evento inválido.'))
+
+    decision = (request.form.get('decision') or '').strip().upper()
+    if decision not in ('LIBERAR', 'FUERA_DE_SERVICIO'):
+        return redirect(url_for('admin', seccion='eventos',
+                                error='Elegí si puede salir o queda fuera de servicio.'))
+
+    comentario = (request.form.get('comentario') or '').strip()
+    if not comentario:
+        return redirect(url_for('admin', seccion='eventos',
+                                error='Conta qué viste antes de decidir.'))
+
+    conexion = get_db()
+    try:
+        evento = conexion.execute('''
+            SELECT e.*, c.patente
+            FROM eventos_reportados e
+            JOIN camionetas c ON e.camioneta_id = c.id
+            WHERE e.id = ?
+        ''', (evento_id,)).fetchone()
+        if evento is None:
+            return redirect(url_for('admin', seccion='eventos',
+                                    error='Ese evento no existe.'))
+
+        libera = decision == 'LIBERAR'
+        conexion.execute("""
+            UPDATE eventos_reportados
+            SET bloquea = ?, fuera_de_servicio = ?, revisado_por = ?,
+                fecha_revision = ?, comentario_soporte = ?, estado = 'EN_CURSO',
+                visto = 1
+            WHERE id = ?
+        """, (0 if libera else 1, 0 if libera else 1, session.get('nombre'),
+              ahora().isoformat(), comentario, evento_id))
+
+        crear_notificacion(
+            'EVENTO_REVISADO',
+            (f'\u2705 {evento["patente"]} revisada por {session.get("nombre")}: '
+             f'puede salir. {comentario}') if libera else
+            (f'\U0001f6d1 {evento["patente"]} queda FUERA DE SERVICIO según '
+             f'{session.get("nombre")}: {comentario}'),
+            patente=evento['patente'],
+            destinatario_rol='todos',
+            conexion=conexion)
+        conexion.commit()
+        patente = evento['patente']
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin', seccion='eventos',
+                            mensaje=(f'{patente} liberada: puede volver a salir.'
+                                     if libera else
+                                     f'{patente} queda fuera de servicio.')))
 
 @app.route('/eventos/atender', methods=['POST'])
 def atender_evento():
@@ -6854,11 +6992,13 @@ def atender_evento():
         conexion.execute("""
             UPDATE eventos_reportados
             SET estado = ?, comentario_soporte = ?, atendido_por = ?,
-                fecha_atendido = ?, visto = 1
+                fecha_atendido = ?, visto = 1,
+                bloquea = CASE WHEN ? THEN 0 ELSE bloquea END
             WHERE id = ?
         """, (estado, comentario or evento['comentario_soporte'],
               session.get('nombre'),
               ahora().isoformat() if cerrado else evento['fecha_atendido'],
+              1 if cerrado else 0,
               evento_id))
 
         # El que lo reporto tiene que enterarse de en que quedo.

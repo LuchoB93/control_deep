@@ -4264,3 +4264,47 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
     margin-left: auto;
     color: #adb5bd;
 }
+
+/* Camioneta parada por un reporte grave. */
+.planilla-bloqueo {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 3px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #fff;
+    background: #212529;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.ev-bloqueo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    padding: 9px 12px;
+    background: #f1f1f4;
+    border-left: 3px solid #212529;
+    border-radius: 4px;
+    font-size: 0.87rem;
+}
+
+.ev-bloqueo-ok {
+    background: #f1f8f4;
+    border-left-color: #198754;
+}
+
+.jefe-bloqueo {
+    margin-top: 6px;
+    padding: 6px 9px;
+    background: rgba(0, 0, 0, 0.05);
+    border-left: 3px solid #212529;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    color: #333;
+}

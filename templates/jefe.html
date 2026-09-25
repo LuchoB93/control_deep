@@ -40,25 +40,33 @@
 
         <!-- Resumen rápido de flota -->
         <div class="row">
-            <div class="col-md-3 col-6">
+            <div class="col-md-2 col-6">
                 <div class="stat-card primary">
                     <div class="number">{{ resumen_flota|length }}</div>
                     <div class="label"><i class="bi bi-truck"></i> Camionetas Activas</div>
                 </div>
             </div>
-            <div class="col-md-3 col-6">
+            <div class="col-md-2 col-6">
+                {# Paradas por un reporte grave que soporte todavia no reviso, o
+                   que reviso y confirmo. No pueden salir. #}
+                <div class="stat-card danger">
+                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'FUERA_DE_SERVICIO')|list|length }}</div>
+                    <div class="label"><i class="bi bi-lock-fill"></i> Fuera de servicio</div>
+                </div>
+            </div>
+            <div class="col-md-2 col-6">
                 <div class="stat-card danger">
                     <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'FALLA')|list|length }}</div>
                     <div class="label"><i class="bi bi-exclamation-triangle"></i> Con Fallas</div>
                 </div>
             </div>
-            <div class="col-md-3 col-6">
+            <div class="col-md-2 col-6">
                 <div class="stat-card warning">
                     <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'ALERTA')|list|length }}</div>
                     <div class="label"><i class="bi bi-exclamation-circle"></i> En Alerta</div>
                 </div>
             </div>
-            <div class="col-md-3 col-6">
+            <div class="col-md-2 col-6">
                 <div class="stat-card success">
                     <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'OK')|list|length }}</div>
                     <div class="label"><i class="bi bi-check-circle"></i> En Orden</div>
@@ -78,7 +86,7 @@
                             <span class="estado-badge 
                                 {% if info.estado_general == 'OK' %}ok
                                 {% elif info.estado_general == 'ALERTA' %}alerta
-                                {% elif info.estado_general == 'FALLA' %}falla
+                                {% else %}falla
                                 {% endif %}">
                             </span>
                         </div>
@@ -86,10 +94,23 @@
                             <span class="badge 
                                 {% if info.estado_general == 'OK' %}bg-success
                                 {% elif info.estado_general == 'ALERTA' %}bg-warning text-dark
-                                {% elif info.estado_general == 'FALLA' %}bg-danger
+                                {% elif info.estado_general == 'FUERA_DE_SERVICIO' %}bg-dark
+                                {% else %}bg-danger
                                 {% endif %}">
-                                {{ info.estado_general }}
+                                {% if info.estado_general == 'FUERA_DE_SERVICIO' %}
+                                    <i class="bi bi-lock-fill"></i> FUERA DE SERVICIO
+                                {% else %}
+                                    {{ info.estado_general }}
+                                {% endif %}
                             </span>
+                            {% if info.bloqueo %}
+                                {# Por qué está parada: lo que reportó el técnico. #}
+                                <div class="jefe-bloqueo">
+                                    <i class="bi bi-exclamation-triangle-fill"></i>
+                                    {{ info.bloqueo.reportado_por }}:
+                                    {{ info.bloqueo.mensaje }}
+                                </div>
+                            {% endif %}
                             <span class="text-muted ms-2 ultimo-registro">
                                 <i class="bi bi-clock"></i> {{ info.ultimo_registro }}
                             </span>

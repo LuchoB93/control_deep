@@ -416,7 +416,23 @@
                             <tbody>
                                 {% for fila in planilla %}
                                 <tr class="fila-asignacion">
-                                    <td><strong>{{ fila.camioneta_patente }}</strong></td>
+                                    <td>
+                                        <strong>{{ fila.camioneta_patente }}</strong>
+                                        {% if fila.bloqueo %}
+                                            {# Reporte grave sin revisar: se puede
+                                               asignar igual, pero hoy no sale. #}
+                                            <br>
+                                            <span class="planilla-bloqueo">
+                                                <i class="bi bi-lock-fill"></i>
+                                                Fuera de circulación
+                                            </span>
+                                            <br>
+                                            <small class="text-muted">
+                                                {{ fila.bloqueo.reportado_por }}:
+                                                {{ fila.bloqueo.mensaje[:50] }}
+                                            </small>
+                                        {% endif %}
+                                    </td>
                                     <td>
                                         <select name="zona_{{ fila.camioneta_id }}" class="zona-select">
                                             <option value="">Sin zona</option>
@@ -813,6 +829,11 @@
                                         <span class="badge bg-secondary">Descartado</span>
                                     {% endif %}
 
+                                    {% if e.bloquea %}
+                                        <span class="badge bg-dark">
+                                            <i class="bi bi-lock-fill"></i> Fuera de circulación
+                                        </span>
+                                    {% endif %}
                                     <span class="ev-fecha">
                                         {{ e.fecha[:16]|replace('T', ' ') }}
                                     </span>
@@ -832,6 +853,45 @@
                                         <i class="bi bi-chat-right-quote"></i>
                                         <strong>{{ e.atendido_por }}:</strong>
                                         {{ e.comentario_soporte }}
+                                    </div>
+                                {% endif %}
+
+                                {% if e.bloquea %}
+                                    {# La camioneta esta parada por este reporte.
+                                       Sale de circulacion sola, pero para volver
+                                       hace falta que alguien de soporte diga que
+                                       la miro: es lo que evita que un tecnico la
+                                       de de baja por su cuenta, y tambien que
+                                       salga con algo grave porque nadie chequeo. #}
+                                    <div class="ev-bloqueo">
+                                        <i class="bi bi-lock-fill"></i>
+                                        <strong>{{ e.patente }} está fuera de circulación.</strong>
+                                        Nadie la puede retirar hasta que la revises.
+                                    </div>
+                                    <form method="POST" action="{{ url_for('revisar_evento') }}"
+                                          class="ev-acciones">
+                                        <input type="hidden" name="evento_id" value="{{ e.id }}">
+                                        <input type="text" name="comentario"
+                                               class="form-control form-control-sm"
+                                               required
+                                               placeholder="Qué viste al revisarla (obligatorio)">
+                                        <div class="ev-botones">
+                                            <button type="submit" name="decision" value="LIBERAR"
+                                                    class="btn btn-success btn-sm">
+                                                <i class="bi bi-check-lg"></i> La revisé, puede salir
+                                            </button>
+                                            <button type="submit" name="decision" value="FUERA_DE_SERVICIO"
+                                                    class="btn btn-danger btn-sm">
+                                                <i class="bi bi-slash-circle"></i> Confirmo: fuera de servicio
+                                            </button>
+                                        </div>
+                                    </form>
+                                {% endif %}
+
+                                {% if e.fuera_de_servicio and not e.bloquea %}
+                                    <div class="ev-bloqueo ev-bloqueo-ok">
+                                        <i class="bi bi-unlock"></i>
+                                        Revisada por {{ e.revisado_por }}: puede circular.
                                     </div>
                                 {% endif %}
 
