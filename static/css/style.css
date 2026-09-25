@@ -4164,9 +4164,12 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
 .ev-item.ev-alta { border-left-color: #fd7e14; }
 .ev-item.ev-urgente { border-left-color: #dc3545; }
 
+/* Cerrado: se distingue por el fondo y el borde, no apagando el texto.
+   Con opacidad el mensaje quedaba ilegible, que es justo lo que uno viene a
+   leer cuando mira un reporte viejo. */
 .ev-item.ev-cerrado {
-    background: #fafafc;
-    opacity: 0.8;
+    background: #f7f7fa;
+    border-left-color: #adb5bd;
 }
 
 .ev-item-top {
@@ -4307,4 +4310,20 @@ a.tarjeta-patente:hover .tp-patente { color: #2a5298; }
     border-radius: 4px;
     font-size: 0.78rem;
     color: #333;
+}
+
+/* Fila de control en la ventana del dia: lleva al historial. */
+.dia-control {
+    cursor: pointer;
+}
+
+.dia-control:hover {
+    background: #f2f3f9;
+}
+
+/* El control al que llegaste desde el calendario, para no perderlo de vista
+   entre los demas de la lista. */
+.hist-item-resaltado {
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.25);
 }

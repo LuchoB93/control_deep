@@ -919,7 +919,9 @@
                                             </button>
                                         </div>
                                     </form>
-                                {% elif e.estado == 'RESUELTO' %}
+                                {% endif %}
+
+                                {% if e.estado in ('EN_CURSO', 'RESUELTO') %}
                                     {# Lo que se arregló suele merecer quedar en el
                                        calendario de la camioneta. Se ofrece, no se
                                        hace solo: hay arreglos que no son un trabajo
@@ -1039,11 +1041,26 @@
 
                                     <span class="just-acciones">
                                         {% if not j.anulado %}
-                                            <button type="button" class="btn btn-sm btn-outline-primary"
-                                                    title="Corregir el motivo"
-                                                    onclick="abrirEditarJustificacion({{ j.id }})">
-                                                <i class="bi bi-pencil"></i>
-                                            </button>
+                                            {# Soporte corrige solo mientras se pueda
+                                               deshacer; el admin, siempre. #}
+                                            {% if j.editable %}
+                                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                                        title="Corregir el motivo"
+                                                        onclick="abrirEditarJustificacion({{ j.id }})">
+                                                    <i class="bi bi-pencil"></i>
+                                                </button>
+                                            {% endif %}
+                                            {% if j.borrable %}
+                                                <form method="POST" class="d-inline"
+                                                      action="{{ url_for('borrar_justificacion') }}"
+                                                      onsubmit="return confirm('¿Borrar esta justificación? El turno vuelve a figurar como pendiente.');">
+                                                    <input type="hidden" name="justificacion_id" value="{{ j.id }}">
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                                            title="Borrar">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </form>
+                                            {% endif %}
                                             {% if j.anulable %}
                                                 {# Solo dentro de los 10 minutos: deshacer
                                                    vuelve a trabar la camioneta. #}
@@ -1071,7 +1088,14 @@
                                         · deshecha por {{ j.anulado_por }}
                                     {% endif %}
                                     {% if not j.anulado and not j.anulable %}
-                                        · <span class="text-muted">ya no se puede deshacer</span>
+                                        ·
+                                        <span class="text-muted">
+                                            {% if j.editable %}
+                                                ya no se puede deshacer
+                                            {% else %}
+                                                ya no se puede deshacer ni corregir
+                                            {% endif %}
+                                        </span>
                                     {% endif %}
                                 </div>
 
@@ -1081,7 +1105,7 @@
                                     </div>
                                 {% endif %}
 
-                                {% if not j.anulado %}
+                                {% if not j.anulado and j.editable %}
                                     <form method="POST" class="just-editar" id="just-editar-{{ j.id }}" hidden
                                           action="{{ url_for('editar_justificacion') }}">
                                         <input type="hidden" name="justificacion_id" value="{{ j.id }}">
@@ -1680,6 +1704,21 @@
             if (patente) filtrarHistorialPor(patente);
         }
 
+        // La lista llega por fetch, asi que el control puede no estar todavia.
+        // Se espera a que aparezca, con un tope para no quedar probando al
+        // pedo si ese control no entra en la tanda que se cargo.
+        function abrirControlCuandoCargue(id, intentos) {
+            intentos = intentos === undefined ? 20 : intentos;
+            const fila = document.getElementById('hist-item-' + id);
+            if (fila) {
+                alternarControl(id);
+                fila.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                fila.classList.add('hist-item-resaltado');
+                return;
+            }
+            if (intentos > 0) setTimeout(() => abrirControlCuandoCargue(id, intentos - 1), 150);
+        }
+
         function alternarControl(id) {
             const detalle = document.getElementById(`hist-detalle-${id}`);
             const item = document.getElementById(`hist-item-${id}`);
@@ -1958,6 +1997,12 @@
             cambiarSeccion(seccionGuardada);
             if (pedida === 'historial' && patentePedida) {
                 filtrarHistorialPor(patentePedida);
+            }
+            // Llegaste desde el calendario tocando un control: se abre ese
+            // control apenas termina de cargar la lista.
+            const controlPedido = {{ control_inicial|tojson }};
+            if (pedida === 'historial' && controlPedido) {
+                abrirControlCuandoCargue(parseInt(controlPedido, 10));
             }
             
             // Cargar notificaciones al iniciar

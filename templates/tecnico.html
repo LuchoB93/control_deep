@@ -647,14 +647,22 @@
         {# Reportar algo que se rompio fuera del control. Va al pie, como el
            retiro de urgencia: es la excepcion, no la tarea del dia. #}
         <div class="reporte-pie">
-            <button type="button" class="btn btn-outline-danger reporte-abrir"
-                    onclick="abrirReporte()">
-                <i class="bi bi-exclamation-triangle"></i>
-                Reportar un problema de una camioneta
-            </button>
-            <p class="reporte-pie-ayuda">
-                Se rompio algo y no puede esperar al proximo control.
-            </p>
+            {% if camioneta_reporte %}
+                <button type="button" class="btn btn-outline-danger reporte-abrir"
+                        onclick="abrirReporte()">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    Reportar un problema de {{ camioneta_reporte.patente }}
+                </button>
+                <p class="reporte-pie-ayuda">
+                    Se rompió algo y no puede esperar al próximo control.
+                </p>
+            {% else %}
+                <p class="reporte-pie-ayuda">
+                    <i class="bi bi-info-circle"></i>
+                    Para reportar un problema necesitás tener una camioneta
+                    asignada o retirada. Hoy no tenés ninguna.
+                </p>
+            {% endif %}
         </div>
 
         {% if mis_eventos %}
@@ -696,6 +704,7 @@
             </div>
         {% endif %}
 
+        {% if camioneta_reporte %}
         <div class="urgencia-fondo" id="reporte-fondo" hidden onclick="cerrarReporte()"></div>
 
         <div class="urgencia-hoja" id="reporte-hoja" hidden
@@ -713,18 +722,18 @@
             <form method="POST" action="{{ url_for('reportar_evento') }}" class="urgencia-form">
                 <input type="hidden" name="volver" value="{{ url_for('tecnico') }}">
 
+                {# La camioneta no se elige: es la que tiene asignada. Un reporte
+                   urgente la saca de circulación, así que no puede depender de
+                   un desplegable mal tocado. #}
                 <div class="urgencia-campo">
-                    <label for="reporte-camioneta">Camioneta</label>
-                    <select name="camioneta_id" id="reporte-camioneta"
-                            class="form-select" required>
-                        <option value="">Elegi una</option>
-                        {% for c in camionetas_todas %}
-                            <option value="{{ c.id }}"
-                                    {% if asignacion and asignacion.camioneta_id == c.id %}selected{% endif %}>
-                                {{ c.patente }}
-                            </option>
-                        {% endfor %}
-                    </select>
+                    <label>Camioneta</label>
+                    <div class="reporte-camioneta-fija">
+                        <i class="bi bi-truck"></i>
+                        <strong>{{ camioneta_reporte.patente }}</strong>
+                        <small>la que tenés hoy</small>
+                    </div>
+                    <input type="hidden" name="camioneta_id"
+                           value="{{ camioneta_reporte.id }}">
                 </div>
 
                 <div class="urgencia-campo">
@@ -755,6 +764,7 @@
                 </button>
             </form>
         </div>
+        {% endif %}
 
         {# Retiro de urgencia: vive al pie porque es la excepción, no la tarea
            del día. El botón abre una hoja desde abajo para que se pueda

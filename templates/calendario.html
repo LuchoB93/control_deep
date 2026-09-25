@@ -35,7 +35,30 @@
         .chip.vencido { background: #fdeaea; border-left-color: #dc3545; font-weight: 600; }
         .chip.control { background: #eef1f5; border-left-color: #6c757d; color: #6c757d; }
 
-        .tarjeta-estado { border-radius: 10px; padding: 14px; color: #fff; }
+        /* Ahora es un boton: ocupa todo el ancho y se puede tocar. */
+        .tarjeta-estado { border-radius: 10px; padding: 14px; color: #fff;
+                          width: 100%; border: none; text-align: left;
+                          cursor: pointer; display: block;
+                          transition: filter .15s ease, transform .1s ease; }
+        .tarjeta-estado:hover:not(:disabled) { filter: brightness(1.08); }
+        .tarjeta-estado:active:not(:disabled) { transform: translateY(1px); }
+        /* Sin nada que mostrar no se toca, pero se sigue leyendo bien. */
+        .tarjeta-estado:disabled { cursor: default; }
+        /* El texto de ayuda iba con opacity .75 y sobre el color se perdia. */
+        .tarjeta-ayuda { font-size: .78rem; color: rgba(255,255,255,.92); }
+        .tarjeta-ver { display: inline-block; margin-top: 6px; font-size: .74rem;
+                       font-weight: 700; color: #fff;
+                       border-bottom: 1px solid rgba(255,255,255,.55); }
+
+        /* Listado de lo que hay en cada estado */
+        .estado-grupo { margin-bottom: 14px; }
+        .estado-patente { font-weight: 700; letter-spacing: .4px;
+                          padding-bottom: 5px; margin-bottom: 6px;
+                          border-bottom: 2px solid #ececf2; }
+        .estado-item { display: flex; flex-wrap: wrap; align-items: center;
+                       gap: 8px; padding: 5px 0; font-size: .88rem; }
+        .estado-dato { margin-left: auto; font-size: .8rem; color: #555;
+                       background: #f2f3f8; border-radius: 12px; padding: 2px 9px; }
         .e-VENCIDO    { background: #dc3545; }
         .e-POR_VENCER { background: #fd7e14; }
         .e-SIN_DATOS  { background: #6c757d; }
@@ -139,11 +162,18 @@
             ('SIN_DATOS', 'Sin cargar', 'Falta la fecha o el kilometraje'),
             ('AL_DIA', 'Al día', 'Sin novedades')] %}
             <div class="col-6 col-lg-3">
-                <div class="tarjeta-estado e-{{ clave }}">
+                {# Tocarla muestra cuales son: el numero solo no dice que
+                   camioneta hay que ir a resolver. #}
+                <button type="button" class="tarjeta-estado e-{{ clave }}"
+                        onclick="verEstado('{{ clave }}', '{{ titulo }}')"
+                        {% if not resumen[clave] %}disabled{% endif %}>
                     <div class="h3 mb-0">{{ resumen[clave] }}</div>
                     <div class="fw-semibold">{{ titulo }}</div>
-                    <small class="opacity-75">{{ ayuda }}</small>
-                </div>
+                    <small class="tarjeta-ayuda">{{ ayuda }}</small>
+                    {% if resumen[clave] %}
+                        <span class="tarjeta-ver">Ver cuáles <i class="bi bi-arrow-right"></i></span>
+                    {% endif %}
+                </button>
             </div>
         {% endfor %}
     </div>
@@ -551,7 +581,7 @@
                     <label class="form-label">
                         Aclaración <span class="text-muted" id="reg-aclaracion-obliga">(opcional)</span>
                     </label>
-                    <input type="text" class="form-control" name="otros" id="reg-aclaracion"
+                    <input type="text" class="form-control" name="aclaracion" id="reg-aclaracion"
                            placeholder="Ej: las dos delanteras · raja del lado del acompañante">
                 </div>
 
@@ -568,6 +598,22 @@
                 <button type="submit" class="btn btn-success">Registrar</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Que hay en cada estado -->
+<div class="modal fade" id="modal-estado" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="estado-titulo"></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="estado-cuerpo"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -643,7 +689,7 @@
                     <label class="form-label">
                         Aclaración <span class="text-muted" id="ed-aclaracion-obliga">(opcional)</span>
                     </label>
-                    <input type="text" class="form-control" name="otros" id="ed-aclaracion">
+                    <input type="text" class="form-control" name="aclaracion" id="ed-aclaracion">
                 </div>
 
                 <div class="mb-0">
@@ -849,8 +895,9 @@
             lista.innerHTML =
                 '<table class="table table-sm mb-0"><thead class="table-light"><tr>' +
                 '<th>Camioneta</th><th>Técnico</th><th>Control</th><th>Turno</th>' +
-                '<th>Hora</th><th>Km</th></tr></thead><tbody>' +
-                dia.controles.map(c => `<tr>
+                '<th>Hora</th><th>Km</th><th></th></tr></thead><tbody>' +
+                dia.controles.map(c => `<tr class="dia-control" title="Ver en el historial"
+                    onclick="verControlEnHistorial('${c.patente}', ${c.id})">
                     <td><strong>${c.patente}</strong></td>
                     <td>${c.tecnico}</td>
                     <td>${c.tipo === 'RETIRO'
@@ -858,6 +905,7 @@
                         : '<span class="badge bg-primary">Devolución</span>'}
                         ${c.forzado_por ? '<span class="badge bg-warning text-dark" title="Cerrado a mano por ' + c.forzado_por + '">manual</span>' : ''}</td>
                     <td>${c.jornada}</td><td>${c.hora}</td><td>${c.km || '—'}</td>
+                    <td class="text-muted"><i class="bi bi-chevron-right"></i></td>
                 </tr>`).join('') + '</tbody></table>';
         }
 
@@ -865,6 +913,46 @@
             dia.eventos.length > 0 || dia.controles.length > 0;
 
         new bootstrap.Modal(document.getElementById('modal-dia')).show();
+    }
+
+    // El calendario es otra pantalla, asi que no puede abrir el detalle del
+    // control aca: lleva al historial del panel, ya filtrado por esa camioneta.
+    // Todos los vencimientos, planos, para poder listar cada estado.
+    const VENCIMIENTOS = {{ vencimientos_js|tojson }};
+
+    function verEstado(estado, titulo) {
+        const items = VENCIMIENTOS.filter(v => v.estado === estado);
+        document.getElementById('estado-titulo').textContent =
+            `${titulo} · ${items.length}`;
+
+        // Agrupadas por camioneta: lo que uno quiere saber es a cual hay que
+        // ir, no cuantos vencimientos hay sueltos.
+        const porPatente = {};
+        items.forEach(v => { (porPatente[v.patente] = porPatente[v.patente] || []).push(v); });
+
+        document.getElementById('estado-cuerpo').innerHTML =
+            items.length === 0
+            ? '<p class="text-muted mb-0">No hay nada en este estado.</p>'
+            : Object.keys(porPatente).sort().map(patente => `
+                <div class="estado-grupo">
+                    <div class="estado-patente">${patente}</div>
+                    ${porPatente[patente].map(v => `
+                        <div class="estado-item">
+                            <strong>${v.etiqueta}</strong>
+                            <span class="text-muted">${v.detalle || ''}</span>
+                            ${v.fecha_vencimiento ? `<span class="estado-dato">${v.fecha_vencimiento}</span>` : ''}
+                            ${v.km_vencimiento ? `<span class="estado-dato">${v.km_vencimiento.toLocaleString('es-AR')} km</span>` : ''}
+                        </div>`).join('')}
+                </div>`).join('');
+
+        new bootstrap.Modal(document.getElementById('modal-estado')).show();
+    }
+
+    function verControlEnHistorial(patente, controlId) {
+        const params = new URLSearchParams({
+            seccion: 'historial', patente: patente, control: controlId
+        });
+        window.location.href = '/admin?' + params.toString();
     }
 
     function alternarControlesDia() {

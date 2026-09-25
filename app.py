@@ -1177,6 +1177,15 @@ def destino_tras_login(rol):
     return url_for('modulos')
 
 
+def es_admin():
+    """True si el que esta logueado es administrador.
+
+    El admin es el unico que puede corregir y borrar registros viejos: es la
+    valvula de escape para lo que se cargo mal y ya no esta en plazo.
+    """
+    return session.get('rol') == 'admin'
+
+
 def autorizado(*roles):
     """True si el usuario logueado tiene alguno de esos roles.
 
@@ -3265,7 +3274,7 @@ def calendario_mes(conexion, anio, mes, momento=None):
     # queda para cuando se abre el día.
     controles = {}
     for fila in conexion.execute('''
-            SELECT ct.fecha, ct.jornada, ct.tipo_control, ct.kilometraje,
+            SELECT ct.id, ct.fecha, ct.jornada, ct.tipo_control, ct.kilometraje,
                    ct.fecha_hora_fin, ct.forzado_por,
                    c.patente, u.nombre AS tecnico
             FROM controles_tecnicos ct
@@ -3277,6 +3286,9 @@ def calendario_mes(conexion, anio, mes, momento=None):
         ''', (desde, hasta)):
         fin = _a_fecha(fila['fecha_hora_fin'])
         controles.setdefault(fila['fecha'][:10], []).append({
+            # El id deja abrir ese control en el historial desde la ventana
+            # del dia: antes la tabla solo se podia leer.
+            'id': fila['id'],
             'patente': fila['patente'],
             'tecnico': fila['tecnico'],
             'tipo': fila['tipo_control'],
@@ -3685,6 +3697,7 @@ def admin():
                          paginas_historial=PAGINAS_HISTORIAL,
                          seccion_inicial=request.args.get('seccion', ''),
                          patente_inicial=request.args.get('patente', ''),
+                         control_inicial=request.args.get('control', ''),
                          pendientes_control=pendientes_control,
                          vencimientos=vencimientos,
                          zonas=zonas,
@@ -4084,6 +4097,18 @@ def tecnico():
     # llevó sin revisar, y la devolución es lo único que queda pendiente.
     urgencias = [c for c in custodias if c.get('urgencia')]
 
+    # Sobre qué camioneta puede reportar un problema: la de su jornada, o la
+    # que tenga retirada si la conserva de otro turno. Si no tiene ninguna no
+    # reporta: un reporte urgente saca una camioneta de circulación, y eso no
+    # puede salir de alguien que hoy no la manejó.
+    camioneta_del_tecnico = None
+    if asignacion:
+        camioneta_del_tecnico = {'id': asignacion['camioneta_id'],
+                                 'patente': asignacion['camioneta_patente']}
+    elif custodias:
+        camioneta_del_tecnico = {'id': custodias[0]['camioneta_id'],
+                                 'patente': custodias[0]['patente']}
+
     # El hueco de la camioneta de hoy se resuelve desde la tarjeta del día; el
     # resto va en su propio panel.
     faltantes_otros = [f for f in faltantes
@@ -4136,7 +4161,7 @@ def tecnico():
                          necesita_devolucion=necesita_devolucion,
                          deudas=deudas,
                          urgencias=urgencias,
-                         camionetas_todas=obtener_camionetas(),
+                         camioneta_reporte=camioneta_del_tecnico,
                          importancia_evento=IMPORTANCIA_EVENTO,
                          mis_eventos=consultar_eventos_de(usuario_id),
                          faltantes=faltantes_otros,
@@ -6855,6 +6880,21 @@ def reportar_evento():
         if camioneta is None:
             return redirect(volver + '?error=Camioneta no encontrada.')
 
+        # El técnico solo reporta sobre la suya. Sin esto, cambiando el id del
+        # formulario podría sacar de circulación una camioneta que no maneja.
+        if session.get('rol') == 'tecnico':
+            propias = {c['camioneta_id']
+                       for c in custodias_abiertas(conexion,
+                                                   tecnico_id=session['usuario_id'])}
+            asignada = conexion.execute("""
+                SELECT camioneta_id FROM asignaciones
+                WHERE tecnico_id = ? AND fecha = ?
+            """, (session['usuario_id'], ahora().strftime('%Y-%m-%d'))).fetchall()
+            propias.update(fila['camioneta_id'] for fila in asignada)
+            if camioneta_id not in propias:
+                return redirect(volver + '?error=Solo pod' + '%C3%A9s reportar sobre '
+                                'la camioneta que ten' + '%C3%A9s asignada.')
+
         bloquea = 1 if importancia in IMPORTANCIA_QUE_BLOQUEA else 0
         conexion.execute("""
             INSERT INTO eventos_reportados
@@ -7084,6 +7124,12 @@ def justificaciones_vigentes(conexion, limite=50, patente=None, motivo=None,
         registro = dict(fila)
         registro['motivo_etiqueta'] = MOTIVOS_NO_REALIZADO.get(fila['motivo'], fila['motivo'])
         registro['anulable'] = puede_anularse(fila, momento)
+        # El admin corrige siempre; soporte, solo mientras se pueda deshacer.
+        # Pasado ese rato el registro queda firme: si soporte pudiera cambiar
+        # el motivo despues, la constancia de por que la camioneta estuvo sin
+        # control dejaria de servir para nada.
+        registro['editable'] = es_admin() or registro['anulable']
+        registro['borrable'] = es_admin()
         salida.append(registro)
     return salida
 
@@ -7234,6 +7280,13 @@ def editar_justificacion():
             return redirect(url_for('admin',
                                     error='Esa justificación ya no está vigente.'))
 
+        # Mismo plazo que para deshacer. El admin no lo tiene.
+        if not es_admin() and not puede_anularse(fila):
+            return redirect(url_for('admin', seccion='justificados',
+                                    error='Pasaron más de 10 minutos: esta '
+                                          'justificación ya no se puede corregir. '
+                                          'Pedísela a un administrador.'))
+
         conexion.execute("""
             UPDATE controles_justificados SET motivo = ?, comentario = ?
             WHERE id = ?
@@ -7245,6 +7298,45 @@ def editar_justificacion():
     return redirect(url_for('admin', seccion='justificados',
                             mensaje='Justificación corregida.'))
 
+
+
+@app.route('/controles/justificar/borrar', methods=['POST'])
+def borrar_justificacion():
+    """Borra una justificación del todo. Solo el administrador.
+
+    Es distinto de deshacerla: deshacer devuelve el turno a pendiente y deja
+    el rastro de que alguien la había justificado. Esto la saca como si nunca
+    hubiera existido, y por eso queda reservado al admin.
+    """
+    if not es_admin():
+        return redirect(url_for('admin', seccion='justificados',
+                                error='Solo un administrador puede borrar una '
+                                      'justificación.'))
+
+    try:
+        justificacion_id = int(request.form.get('justificacion_id', ''))
+    except (TypeError, ValueError):
+        return redirect(url_for('admin', seccion='justificados',
+                                error='Justificación inválida.'))
+
+    conexion = get_db()
+    try:
+        fila = conexion.execute(
+            'SELECT * FROM controles_justificados WHERE id = ?',
+            (justificacion_id,)).fetchone()
+        if fila is None:
+            return redirect(url_for('admin', seccion='justificados',
+                                    error='Esa justificación no existe.'))
+
+        conexion.execute('DELETE FROM controles_justificados WHERE id = ?',
+                         (justificacion_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+    return redirect(url_for('admin', seccion='justificados',
+                            mensaje='Justificación borrada: el turno vuelve a '
+                                    'figurar como pendiente.'))
 
 @app.route('/controles/justificar/anular', methods=['POST'])
 def anular_justificacion():
@@ -7575,6 +7667,18 @@ def calendario():
 
     return render_template('calendario.html',
                            camionetas_estado=camionetas_estado,
+                           # Lo mismo, plano, para que la pantalla pueda listar
+                           # que hay en cada estado sin volver a pedirlo.
+                           vencimientos_js=[{
+                               'patente': f['patente'],
+                               'tipo': f['tipo'],
+                               'etiqueta': f['etiqueta'],
+                               'estado': f['estado'],
+                               'detalle': f['detalle'],
+                               'fecha_vencimiento': f['fecha_vencimiento'],
+                               'km_vencimiento': f['km_vencimiento'],
+                               'camioneta_id': f['camioneta_id'],
+                           } for f in filas],
                            dias_indice=dias_indice,
                            resumen=resumen,
                            semanas=semanas,
@@ -7682,7 +7786,9 @@ def _leer_registro(conexion, tipo, camioneta_id, excepto_id=None):
         que = (request.form.get('evento') or '').strip()
         if que not in TIPOS_EVENTO:
             return None, 'Elegí qué se hizo.'
-        aclaracion = (request.form.get('otros') or '').strip()
+        # Campo propio: compartir el name con el del service hacia que el
+        # servidor leyera el del service (vacio) y rechazara la carga.
+        aclaracion = (request.form.get('aclaracion') or '').strip()
         if que == 'Otro' and not aclaracion:
             return None, 'Si elegís "Otro", aclará qué se hizo.'
         detalle = f'{que}: {aclaracion}' if aclaracion else que

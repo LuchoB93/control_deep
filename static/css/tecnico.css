@@ -628,8 +628,8 @@ body.sin-scroll {
 }
 
 .mi-evento-cerrado {
-    background: #fafafc;
-    opacity: 0.85;
+    background: #f7f7fa;
+    border-color: #dcdce4;
 }
 
 .mi-evento-top {
@@ -659,4 +659,26 @@ body.sin-scroll {
     border-left: 3px solid #198754;
     border-radius: 4px;
     font-size: 0.85rem;
+}
+
+/* La camioneta del reporte no se elige: se muestra. */
+.reporte-camioneta-fija {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 13px;
+    background: #f6f7fb;
+    border: 1.5px solid #e2e2ea;
+    border-radius: 10px;
+}
+
+.reporte-camioneta-fija strong {
+    font-size: 1.05rem;
+    letter-spacing: 0.4px;
+}
+
+.reporte-camioneta-fija small {
+    margin-left: auto;
+    color: #888;
+    font-size: 0.76rem;
 }
