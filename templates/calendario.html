@@ -138,6 +138,15 @@
         .dia-evento .est-ev { margin-left: 6px; vertical-align: middle; }
         .tipo-icono { width: 34px; height: 34px; border-radius: 8px; display: inline-flex;
                       align-items: center; justify-content: center; color: #fff; }
+        /* Trabajos registrados: filtros en una sola barra y pie para desplegar. */
+        .hist-barra { background: #f8f9fb; border: 1px solid #e9ecef; border-radius: 10px;
+                      padding: 2px 12px 12px; margin: 0; }
+        .hist-barra label { font-size: .72rem; font-weight: 600; text-transform: uppercase;
+                            letter-spacing: .3px; color: #6c757d; margin-bottom: 3px; }
+        .hist-pie { display: flex; justify-content: space-between; align-items: center;
+                    flex-wrap: wrap; gap: 8px; padding: 10px 16px;
+                    border-top: 1px solid #e9ecef; background: #fbfcfd; }
+
         @media (max-width: 576px) {
             .cal-header { padding: 14px; }
             .celda { min-height: 76px; }
@@ -412,19 +421,25 @@
     <!-- ========================================== -->
     <!-- HISTORIAL -->
     <!-- ========================================== -->
+    {% set filtro_activo = filtros_historial.patente or filtros_historial.tipo
+                           or filtros_historial.desde or filtros_historial.hasta %}
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
             <strong><i class="bi bi-clock-history"></i> Trabajos registrados</strong>
-            <span class="text-muted small">{{ historial|length }} registro(s)</span>
+            <span class="text-muted small">
+                {% if filtro_activo %}<span class="badge bg-primary me-1">Filtrado</span>{% endif %}
+                {{ historial|length }} registro(s)
+            </span>
         </div>
-        <div class="card-body pb-0">
-            <form method="GET" action="{{ url_for('calendario') }}" class="hist-filtros">
+        <div class="card-body pb-3">
+            <form method="GET" action="{{ url_for('calendario') }}"
+                  class="hist-barra row g-2 align-items-end">
                 {# Se conserva el mes que se esta mirando: filtrar la tabla de
                    abajo no tiene por que mover el calendario de arriba. #}
                 <input type="hidden" name="anio" value="{{ anio }}">
                 <input type="hidden" name="mes" value="{{ mes }}">
 
-                <div class="hist-filtro">
+                <div class="col-12 col-sm-6 col-lg-3">
                     <label for="h-patente">Camioneta</label>
                     <select name="h_patente" id="h-patente" class="form-control form-control-sm">
                         <option value="">Todas</option>
@@ -437,7 +452,7 @@
                     </select>
                 </div>
 
-                <div class="hist-filtro">
+                <div class="col-12 col-sm-6 col-lg-3">
                     <label for="h-tipo">Trabajo</label>
                     <select name="h_tipo" id="h-tipo" class="form-control form-control-sm">
                         <option value="">Todos</option>
@@ -450,33 +465,35 @@
                     </select>
                 </div>
 
-                <div class="hist-filtro">
+                <div class="col-6 col-lg-2">
                     <label for="h-desde">Desde</label>
                     <input type="date" name="h_desde" id="h-desde"
                            class="form-control form-control-sm"
                            value="{{ filtros_historial.desde }}">
                 </div>
 
-                <div class="hist-filtro">
+                <div class="col-6 col-lg-2">
                     <label for="h-hasta">Hasta</label>
                     <input type="date" name="h_hasta" id="h-hasta"
                            class="form-control form-control-sm"
                            value="{{ filtros_historial.hasta }}">
                 </div>
 
-                <div class="hist-filtro hist-filtro-accion">
-                    <button type="submit" class="btn btn-primary btn-sm">
+                <div class="col-12 col-lg-2 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm flex-fill">
                         <i class="bi bi-search"></i> Filtrar
                     </button>
-                    <a href="{{ url_for('calendario', anio=anio, mes=mes) }}"
-                       class="btn btn-secondary btn-sm">
-                        <i class="bi bi-x-circle"></i> Limpiar
-                    </a>
+                    {% if filtro_activo %}
+                        <a href="{{ url_for('calendario', anio=anio, mes=mes) }}"
+                           class="btn btn-outline-secondary btn-sm" title="Quitar los filtros">
+                            <i class="bi bi-x-lg"></i>
+                        </a>
+                    {% endif %}
                 </div>
             </form>
         </div>
 
-        <div class="table-responsive">
+        <div class="table-responsive border-top">
             <table class="table table-sm table-hover mb-0">
                 <thead class="table-light">
                     <tr>
@@ -486,8 +503,10 @@
                     </tr>
                 </thead>
                 <tbody>
+                    {# De entrada se ven los ultimos 10 (HIST_POR_TANDA en el JS); el resto
+                       se despliega con el boton de abajo. #}
                     {% for h in historial %}
-                        <tr>
+                        <tr class="hist-fila{% if loop.index > 10 %} d-none{% endif %}">
                             <td>{{ h.fecha_realizado }}</td>
                             <td><strong>{{ h.patente }}</strong></td>
                             <td>
@@ -541,12 +560,33 @@
                         </tr>
                     {% else %}
                         <tr><td colspan="6" class="text-center text-muted py-4">
-                            Todavía no se registró ningún trabajo.
+                            {% if filtro_activo %}
+                                Ningún trabajo coincide con los filtros.
+                            {% else %}
+                                Todavía no se registró ningún trabajo.
+                            {% endif %}
                         </td></tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
+        {% if historial|length > 10 %}
+            <div class="hist-pie">
+                <span id="hist-mostrando" class="text-muted small"></span>
+                <div class="d-flex gap-2">
+                    <button type="button" id="hist-mas" class="btn btn-sm btn-outline-primary"
+                            onclick="histMostrar(HIST_POR_TANDA)">
+                        <i class="bi bi-chevron-down"></i> Ver 10 más
+                    </button>
+                    <button type="button" id="hist-todos" class="btn btn-sm btn-link"
+                            onclick="histMostrar(Infinity)">Ver todos</button>
+                    <button type="button" id="hist-menos" class="btn btn-sm btn-link d-none"
+                            onclick="histMostrar(-Infinity)">
+                        <i class="bi bi-chevron-up"></i> Mostrar menos
+                    </button>
+                </div>
+            </div>
+        {% endif %}
     </div>
 </div>
 
@@ -1047,6 +1087,35 @@
     const REGISTROS = {};
     const ESTADOS_EVENTO = {{ estados_evento|tojson }};
     {{ historial|tojson }}.forEach(r => { REGISTROS[r.id] = r; });
+
+    // Trabajos registrados: con la flota cargando datos la tabla se hacia
+    // eterna. Se ven los ultimos 10 y el resto se despliega de a tandas.
+    const HIST_POR_TANDA = 10;
+    let histVisibles = HIST_POR_TANDA;
+
+    function histMostrar(cuantos) {
+        const filas = document.querySelectorAll('.hist-fila');
+        histVisibles = Math.min(filas.length,
+                                Math.max(HIST_POR_TANDA, histVisibles + cuantos));
+        filas.forEach((f, i) => f.classList.toggle('d-none', i >= histVisibles));
+
+        const quedan = histVisibles < filas.length;
+        document.getElementById('hist-mas').classList.toggle('d-none', !quedan);
+        document.getElementById('hist-todos').classList.toggle('d-none', !quedan);
+        document.getElementById('hist-menos').classList.toggle('d-none', histVisibles <= HIST_POR_TANDA);
+        const faltan = filas.length - histVisibles;
+        document.getElementById('hist-mas').innerHTML =
+            `<i class="bi bi-chevron-down"></i> Ver ${Math.min(HIST_POR_TANDA, faltan)} más`;
+        document.getElementById('hist-mostrando').textContent =
+            `Mostrando ${histVisibles} de ${filas.length}`;
+
+        // Al plegar, que la tabla no quede fuera de la pantalla.
+        if (cuantos === -Infinity) {
+            document.getElementById('hist-mostrando').closest('.card')
+                    .scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+    if (document.getElementById('hist-mas')) histMostrar(0);
 
     // Arma las casillas de "que se cambio" (solo el service las usa).
     function pintarItems(contenedorId, items, marcados) {
