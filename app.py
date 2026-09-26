@@ -99,6 +99,23 @@ FOTOS_OBLIGATORIAS = os.environ.get('CONTROL_FOTOS_OBLIGATORIAS', '1').strip() !
 # en un mismo control pueden subirse varias juntas.
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
 
+# Cookie de sesión: inaccesible desde JavaScript y no enviada en requests
+# originados en otros sitios (freno básico contra CSRF).
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Producción detrás de Caddy (HTTPS). Las dos quedan apagadas en desarrollo:
+# con la cookie segura activada, entrar por http://IP:5000 no permitiría loguearse.
+DETRAS_DE_PROXY = os.environ.get('CONTROL_DETRAS_DE_PROXY', '0') == '1'
+COOKIE_SEGURA = os.environ.get('CONTROL_COOKIE_SEGURA', '0') == '1'
+if DETRAS_DE_PROXY:
+    # Sin esto Flask ve la IP de Caddy en vez de la del usuario, y cree que
+    # la conexión es http aunque el navegador esté en https.
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+if COOKIE_SEGURA:
+    app.config['SESSION_COOKIE_SECURE'] = True
+
 # Crear carpetas necesarias
 for _carpeta in (DATA_DIR, REMITOS_DIR, UPLOAD_FOLDER, FOTOS_DIR):
     _carpeta.mkdir(parents=True, exist_ok=True)
@@ -9178,6 +9195,9 @@ def create_app():
     if not FOTOS_OBLIGATORIAS:
         print("⚠️ CONTROL_FOTOS_OBLIGATORIAS=0: las fotos del control son "
               "opcionales. Solo para pruebas: sacarlo antes de producción.")
+    if DETRAS_DE_PROXY and not COOKIE_SEGURA:
+        print("⚠️ Detrás de proxy pero sin CONTROL_COOKIE_SEGURA=1: la cookie "
+              "de sesión podría viajar sin cifrar.")
     return app
 
 

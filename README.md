@@ -109,25 +109,81 @@ no existe.
 
 ## Producción con Docker
 
-```bash
-cp .env.example .env
-python -c "import secrets; print(secrets.token_hex(32))"   # pegar en .env
-docker compose up -d --build
-```
+Mientras se sigue desarrollando **no hace falta Docker**: se usa `servidor.bat`
+como siempre. Todo lo de producción está preparado pero solo se activa con
+`docker compose`.
+
+### Qué se levanta
+
+| Servicio  | Qué hace                                                        |
+|-----------|-----------------------------------------------------------------|
+| `caddy`   | Único expuesto (80/443). Saca y renueva solo el certificado HTTPS. |
+| `control` | La app (waitress). Sin puertos publicados: solo le habla Caddy.   |
+| `backup`  | Backup diario de la base y los archivos, sin acceso a la red.     |
 
 Los datos viven en volúmenes (`control-datos`, `control-remitos`,
 `control-firmas`, `control-fotos`), así que reconstruir la imagen no borra nada.
 
-### Backup
+### Requisitos de red (una sola vez)
 
-Lo irreemplazable es la base, los remitos y las fotos de los controles:
+1. IP pública fija para el servidor (idealmente en una DMZ).
+2. Registro DNS tipo `A` en DonWeb: `control.<dominio>` → esa IP.
+3. Firewall: abiertos solo 80 y 443 hacia el servidor. SSH solo desde la red interna.
+
+### Primer despliegue
 
 ```bash
-docker compose exec control python -c "import shutil,datetime; shutil.copy('/app/datos/database.db', '/app/datos/backup-' + datetime.date.today().isoformat() + '.db')"
-docker run --rm -v control-datos:/datos -v "$PWD":/backup alpine tar czf /backup/backup-datos.tar.gz /datos
-docker run --rm -v control-remitos:/remitos -v "$PWD":/backup alpine tar czf /backup/backup-remitos.tar.gz /remitos
-docker run --rm -v control-fotos:/fotos -v "$PWD":/backup alpine tar czf /backup/backup-fotos.tar.gz /fotos
+git clone <repo> control && cd control
+cp .env.example .env
+python3 -c "import secrets; print(secrets.token_hex(32))"   # clave NUEVA -> .env
+# en .env: CONTROL_DOMINIO=control.<dominio>
+docker compose up -d --build
+docker compose logs -f          # ver que Caddy obtenga el certificado
 ```
+
+Para probar la pila completa en una PC sin dominio, dejar `CONTROL_DOMINIO`
+sin definir y entrar a https://localhost (el navegador avisa del certificado
+interno; es normal).
+
+### Actualizar a una versión nueva
+
+```bash
+git pull
+docker compose up -d --build     # las migraciones corren solas al arrancar
+```
+
+### Backup
+
+El servicio `backup` corre todos los días a las `CONTROL_BACKUP_HORA` (3 AM) y
+guarda en `backups-produccion/` una copia de la base (`database_*.db`) y un
+`archivos_*.tar.gz` con remitos, firmas y fotos. Conserva `CONTROL_BACKUP_DIAS`
+días. **Copiar esa carpeta a otro equipo**: un backup en el mismo disco no
+sirve si el disco se rompe.
+
+Backup manual en cualquier momento:
+
+```bash
+docker compose run --rm backup python backup.py
+```
+
+Restaurar la base:
+
+```bash
+docker compose stop control
+docker run --rm -v control_control-datos:/datos -v "$PWD/backups-produccion":/b alpine   sh -c "cp /b/database_AAAA-MM-DD_HHMM.db /datos/database.db && rm -f /datos/database.db-wal /datos/database.db-shm"
+docker compose start control
+```
+
+(El nombre real del volumen se ve con `docker volume ls`.)
+
+### Checklist antes de publicar la versión final
+
+- [ ] `.env` de producción con clave nueva y **sin** `CONTROL_FOTOS_OBLIGATORIAS=0`.
+- [ ] Protección CSRF en los formularios (pendiente).
+- [ ] Límite de intentos de login (pendiente).
+- [ ] Borrar usuarios y datos de prueba; cambiar contraseñas por defecto.
+- [ ] Decidir acceso: VPN de la empresa o público (+ Cloudflare Access opcional).
+- [ ] Probar un restore del backup al menos una vez.
 
 ## Contraseñas
 

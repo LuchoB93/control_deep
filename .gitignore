@@ -25,3 +25,6 @@ Thumbs.db
 desktop.ini
 .claude/settings.local.json
 backups/
+
+# Backups generados en el servidor de producción
+backups-produccion/

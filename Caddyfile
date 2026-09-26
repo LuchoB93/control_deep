@@ -1,0 +1,22 @@
+# Caddy saca y renueva solo el certificado HTTPS (Let's Encrypt) para el
+# dominio de CONTROL_DOMINIO. Requisitos: el registro DNS ya apunta a la IP
+# pública del servidor y los puertos 80 y 443 están abiertos hacia él.
+# Con CONTROL_DOMINIO=localhost usa un certificado interno (para probar).
+{$CONTROL_DOMINIO:localhost} {
+	encode gzip
+
+	# Mismo tope que MAX_CONTENT_LENGTH de la app (fotos del control).
+	request_body {
+		max_size 50MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	reverse_proxy control:5000
+}

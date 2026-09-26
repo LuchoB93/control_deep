@@ -18,3 +18,9 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 .env
+
+# No van dentro de la imagen
+backups/
+backups-produccion/
+.claude/
+Caddyfile

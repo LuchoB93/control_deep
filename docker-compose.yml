@@ -1,27 +1,62 @@
+# Producción: Caddy (HTTPS) -> app -> volúmenes. Solo Caddy queda expuesto.
+# Desarrollo: no hace falta Docker, se sigue usando servidor.bat.
+#
+#   docker compose up -d --build
+#
+# Todo se configura en el archivo .env (ver .env.example).
+
+x-entorno-app: &entorno-app
+  TZ: America/Argentina/Buenos_Aires
+  # La base y los archivos generados viven en los volúmenes de abajo.
+  CONTROL_DATA_DIR: /app/datos
+  CONTROL_REMITOS_DIR: /app/remitos
+  CONTROL_FIRMAS_DIR: /app/static/firmas
+  CONTROL_FOTOS_DIR: /app/fotos
+
+x-volumenes-app: &volumenes-app
+  # Todo lo que no se puede perder vive fuera de la imagen: si se
+  # reconstruye el contenedor, los datos siguen estando.
+  - control-datos:/app/datos
+  - control-remitos:/app/remitos
+  - control-firmas:/app/static/firmas
+  - control-fotos:/app/fotos
+
 services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: control-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      CONTROL_DOMINIO: ${CONTROL_DOMINIO:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-datos:/data      # certificados: si se pierden, se vuelven a pedir
+      - caddy-config:/config
+    networks:
+      - frontend
+    depends_on:
+      - control
+
   control:
     build: .
     container_name: control-camionetas
     restart: unless-stopped
-    ports:
-      - "5000:5000"
+    # Sin "ports": la app no es accesible desde afuera, solo a través de Caddy.
+    expose:
+      - "5000"
     environment:
-      # OBLIGATORIA en producción: sin esta clave las sesiones se cierran en
-      # cada reinicio. Generar una con:  python -c "import secrets; print(secrets.token_hex(32))"
+      <<: *entorno-app
+      # OBLIGATORIA: sin esta clave las sesiones se cierran en cada reinicio.
       CONTROL_SECRET_KEY: ${CONTROL_SECRET_KEY:?definir CONTROL_SECRET_KEY en el archivo .env}
-      TZ: America/Argentina/Buenos_Aires
-      # La base y los archivos generados viven en los volúmenes de abajo.
-      CONTROL_DATA_DIR: /app/datos
-      CONTROL_REMITOS_DIR: /app/remitos
-      CONTROL_FIRMAS_DIR: /app/static/firmas
-      CONTROL_FOTOS_DIR: /app/fotos
-    volumes:
-      # Todo lo que no se puede perder vive fuera de la imagen: si se
-      # reconstruye el contenedor, los datos siguen estando.
-      - control-datos:/app/datos
-      - control-remitos:/app/remitos
-      - control-firmas:/app/static/firmas
-      - control-fotos:/app/fotos
+      CONTROL_DETRAS_DE_PROXY: "1"
+      CONTROL_COOKIE_SEGURA: "1"
+    volumes: *volumenes-app
+    networks:
+      - frontend
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/').status\""]
       interval: 30s
@@ -29,8 +64,35 @@ services:
       retries: 3
       start_period: 10s
 
+  backup:
+    build: .
+    container_name: control-backup
+    restart: unless-stopped
+    command: ["python", "backup.py", "--loop"]
+    # root para poder escribir en la carpeta del servidor que crea Docker.
+    # No tiene red (network_mode: none) y los archivos los monta solo lectura.
+    user: "0"
+    environment:
+      <<: *entorno-app
+      CONTROL_BACKUP_DIR: /backups
+      CONTROL_BACKUP_DIAS: ${CONTROL_BACKUP_DIAS:-30}
+      CONTROL_BACKUP_HORA: ${CONTROL_BACKUP_HORA:-3}
+    volumes:
+      - control-datos:/app/datos
+      - control-remitos:/app/remitos:ro
+      - control-firmas:/app/static/firmas:ro
+      - control-fotos:/app/fotos:ro
+      # Carpeta del servidor: desde acá se copian a otro equipo o disco.
+      - ${CONTROL_BACKUP_HOST_DIR:-./backups-produccion}:/backups
+    network_mode: none
+
+networks:
+  frontend:
+
 volumes:
   control-datos:
   control-remitos:
   control-firmas:
   control-fotos:
+  caddy-datos:
+  caddy-config:
