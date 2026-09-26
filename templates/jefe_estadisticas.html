@@ -1,208 +1,569 @@
-<div class="container-fluid">
-    <!-- Resumen general -->
-    <div class="row mb-4">
-        <div class="col-md-3 col-6">
-            <div class="stat-card primary">
-                <div class="number">{{ stats_generales.total_elementos_reportados or 0 }}</div>
-                <div class="label"><i class="bi bi-box"></i> Elementos Reportados</div>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estadísticas de la flota</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <style>
+        /* Estadisticas de jefatura. Oscuro a proposito: es una pantalla de
+           tablero para mirar numeros, no para cargar datos. */
+        :root {
+            --page: #0b1220;
+            --surface: #141d31;
+            --surface-2: #1a2540;
+            --line: #263049;
+            --ink: #e8edf5;
+            --ink-2: #a9b4c9;
+            --muted: #7d879c;
+            --series: #3987e5;
+            --good: #0ca30c;
+            --warning: #fab219;
+            --critical: #d03b3b;
+        }
+        body { background: var(--page); color: var(--ink);
+               font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+        .st-wrap { max-width: 1320px; margin: 0 auto; padding: 18px 16px 40px; }
+        .st-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+                   padding: 16px 18px; height: 100%; }
+        .st-titulo { font-size: .95rem; font-weight: 700; margin: 0; }
+        .st-subtitulo { font-size: .76rem; color: var(--ink-2); margin: 2px 0 12px; }
+        .st-tag { font-size: .7rem; font-weight: 700; border-radius: 6px; padding: 2px 8px;
+                  background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); }
+        .text-2 { color: var(--ink-2) !important; }
+        .text-m { color: var(--muted) !important; }
+
+        /* Filtros: una fila, arriba de todo */
+        .st-filtros { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+                      background: var(--surface); border: 1px solid var(--line);
+                      border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+        .st-periodo { display: inline-flex; background: var(--page); border: 1px solid var(--line);
+                      border-radius: 8px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+        .st-periodo a { color: var(--ink-2); font-size: .8rem; font-weight: 600; padding: 5px 11px;
+                        border-radius: 6px; text-decoration: none; }
+        .st-periodo a:hover { background: var(--surface-2); color: var(--ink); }
+        .st-periodo a.activo { background: var(--ink); color: var(--page); }
+        .st-custom { display: flex; gap: 6px; align-items: center; }
+        .st-custom input { background: var(--page); color: var(--ink); border: 1px solid var(--line);
+                           border-radius: 6px; padding: 4px 8px; font-size: .8rem; color-scheme: dark; }
+        .st-btn { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line);
+                  border-radius: 8px; font-size: .8rem; font-weight: 600; padding: 6px 12px; }
+        .st-btn:hover { border-color: var(--series); }
+        .st-btn-primario { background: var(--series); border-color: var(--series); color: #fff; }
+        .st-rango { font-size: .78rem; color: var(--muted); margin-left: auto; }
+
+        /* Indicadores */
+        .st-kpi { border-top: 3px solid var(--line); }
+        .st-kpi.k-disp { border-top-color: var(--series); }
+        .st-kpi-label { font-size: .72rem; font-weight: 700; letter-spacing: .5px;
+                        text-transform: uppercase; color: var(--ink-2);
+                        display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .st-kpi-icono { width: 30px; height: 30px; border-radius: 8px; background: var(--surface-2);
+                        display: inline-flex; align-items: center; justify-content: center;
+                        color: var(--ink-2); flex-shrink: 0; }
+        .st-kpi-valor { font-size: 2rem; font-weight: 700; line-height: 1.1; margin-top: 8px; }
+        .st-kpi.k-disp .st-kpi-valor { font-size: 3rem; }
+        .st-kpi-valor small { font-size: .9rem; font-weight: 500; color: var(--ink-2); }
+        .st-kpi-pie { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+                      font-size: .76rem; color: var(--ink-2); margin-top: 10px; padding-top: 10px;
+                      border-top: 1px solid var(--line); }
+        .st-delta { font-size: .78rem; font-weight: 700; margin-left: 6px; }
+        .st-delta.sube { color: var(--good); }
+        .st-delta.baja { color: var(--critical); }
+
+        /* Curva */
+        .st-grafico { position: relative; width: 100%; height: 260px; }
+        .st-grafico svg { display: block; width: 100%; height: 100%; overflow: visible; }
+        .st-tooltip { position: absolute; pointer-events: none; background: #0b1220;
+                      border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+                      font-size: .78rem; white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,.4);
+                      transform: translate(-50%, -110%); display: none; }
+        .st-tooltip strong { font-size: .95rem; display: block; }
+        .st-leyenda { display: flex; gap: 16px; font-size: .76rem; color: var(--ink-2); margin-bottom: 6px; }
+        .st-leyenda i { display: inline-block; width: 14px; height: 2px; vertical-align: middle;
+                        margin-right: 6px; border-radius: 1px; }
+        .st-resumen-curva { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+                            margin-top: 12px; }
+        .st-resumen-curva div { background: var(--page); border: 1px solid var(--line);
+                                border-radius: 8px; padding: 8px 10px; text-align: center; }
+        .st-resumen-curva b { display: block; font-size: 1.1rem; }
+        .st-resumen-curva span { font-size: .72rem; color: var(--muted); }
+        details.st-datos summary { font-size: .76rem; color: var(--muted); cursor: pointer; margin-top: 10px; }
+
+        /* Barras horizontales */
+        .st-barra-fila { margin-bottom: 12px; }
+        .st-barra-top { display: flex; justify-content: space-between; font-size: .82rem; gap: 8px; }
+        .st-barra-top span:last-child { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+        .st-barra { height: 8px; background: var(--surface-2); border-radius: 4px; margin-top: 5px; }
+        .st-barra div { height: 100%; border-radius: 0 4px 4px 0; background: var(--series);
+                        min-width: 3px; transition: filter .15s; }
+        .st-barra-fila:hover .st-barra div { filter: brightness(1.2); }
+        .st-barra-nota { font-size: .72rem; color: var(--muted); margin-top: 3px;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .st-vacio { color: var(--muted); font-size: .84rem; padding: 20px 0; text-align: center; }
+
+        /* Ranking */
+        .st-tabla { width: 100%; font-size: .84rem; border-collapse: collapse; }
+        .st-tabla th { font-size: .7rem; text-transform: uppercase; letter-spacing: .5px;
+                       color: var(--muted); font-weight: 700; padding: 8px 10px;
+                       border-bottom: 1px solid var(--line); white-space: nowrap; }
+        .st-tabla td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+        .st-tabla tr:last-child td { border-bottom: 0; }
+        .st-tabla tbody tr:hover { background: var(--surface-2); }
+        .st-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .st-tabla tr.fila-fuera { background: rgba(208, 59, 59, .08); }
+        .st-medidor { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+        .st-medidor-pista { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); }
+        .st-medidor-pista div { height: 100%; border-radius: 3px; }
+        .st-medidor span { font-variant-numeric: tabular-nums; width: 48px; text-align: right; }
+        .st-estado { display: inline-flex; align-items: center; gap: 5px; font-size: .74rem;
+                     font-weight: 700; border-radius: 20px; padding: 2px 9px;
+                     border: 1px solid var(--line); white-space: nowrap; }
+        .st-estado i { font-size: .8rem; }
+        .e-EN_ORDEN i { color: var(--good); }
+        .e-ALERTA i { color: var(--warning); }
+        .e-FUERA_DE_SERVICIO { border-color: rgba(208,59,59,.6); }
+        .e-FUERA_DE_SERVICIO i { color: var(--critical); }
+        .st-buscar { background: var(--page); color: var(--ink); border: 1px solid var(--line);
+                     border-radius: 8px; padding: 6px 10px; font-size: .82rem; min-width: 220px; }
+        .st-buscar::placeholder { color: var(--muted); }
+
+        /* Turnos */
+        .st-turnos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .st-turno { background: var(--page); border: 1px solid var(--line); border-radius: 8px;
+                    padding: 12px; text-align: center; }
+        .st-turno-nombre { font-size: .76rem; color: var(--ink-2); text-transform: capitalize; }
+        .st-turno-num { font-size: 1.8rem; font-weight: 700; line-height: 1.2; }
+        .st-turno-det { font-size: .72rem; color: var(--muted); }
+        .st-turno-chip { display: inline-block; margin-top: 8px; font-size: .72rem; font-weight: 700;
+                         border-radius: 6px; padding: 3px 8px; border: 1px solid var(--line); }
+        .st-chip-mant { display: inline-flex; gap: 6px; align-items: baseline; background: var(--page);
+                        border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+                        margin: 0 6px 6px 0; }
+        .st-chip-mant b { font-size: 1.15rem; }
+        .st-chip-mant span { font-size: .78rem; color: var(--ink-2); }
+        .st-nota { font-size: .74rem; color: var(--muted); margin: 10px 0 0; }
+
+        @media (max-width: 576px) {
+            .st-wrap { padding: 12px 10px 30px; }
+            .st-rango { margin-left: 0; width: 100%; }
+            .st-kpi.k-disp .st-kpi-valor { font-size: 2.4rem; }
+            .st-buscar { min-width: 0; width: 100%; }
+        }
+    </style>
+</head>
+<body>
+{% macro horas(h) -%}
+    {%- if h is none -%}—
+    {%- elif h < 1 -%}{{ (h * 60)|round|int }} <small>min</small>
+    {%- elif h < 48 -%}{{ h|round(1) }} <small>h</small>
+    {%- else -%}{{ (h / 24)|round(1) }} <small>días</small>{%- endif -%}
+{%- endmacro %}
+{% macro estado(e) -%}
+    <span class="st-estado e-{{ e }}">
+        {%- if e == 'FUERA_DE_SERVICIO' %}<i class="bi bi-lock-fill"></i> Fuera de servicio
+        {%- elif e == 'ALERTA' %}<i class="bi bi-exclamation-triangle-fill"></i> Alerta
+        {%- else %}<i class="bi bi-check-circle-fill"></i> En orden{% endif -%}
+    </span>
+{%- endmacro %}
+
+<div class="st-wrap">
+    {% set jefe_tab = 'estadisticas' %}
+    {% include '_jefe_header.html' %}
+
+    <!-- Filtros: el periodo manda sobre todo lo de abajo -->
+    <div class="st-filtros">
+        <div class="st-periodo">
+            {% for clave, etiqueta in periodos.items() if clave != 'custom' %}
+                <a href="{{ url_for('jefe_estadisticas', p=clave) }}"
+                   class="{{ 'activo' if periodo == clave }}">{{ etiqueta }}</a>
+            {% endfor %}
+        </div>
+        <form class="st-custom" method="GET" action="{{ url_for('jefe_estadisticas') }}">
+            <input type="hidden" name="p" value="custom">
+            <input type="date" name="desde" value="{{ desde }}" aria-label="Desde">
+            <input type="date" name="hasta" value="{{ hasta }}" aria-label="Hasta">
+            <button type="submit" class="st-btn {{ 'st-btn-primario' if periodo == 'custom' }}">Personalizado</button>
+        </form>
+        <span class="st-rango">
+            {{ desde }} al {{ hasta }} · {{ n_camionetas }} camionetas activas
+        </span>
+        <button type="button" class="st-btn" onclick="exportarCSV()">
+            <i class="bi bi-download"></i> Exportar CSV
+        </button>
+    </div>
+
+    <!-- Indicadores -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-6 col-xl-3">
+            <div class="st-card st-kpi k-disp">
+                <div class="st-kpi-label">Disponibilidad promedio
+                    <span class="st-kpi-icono"><i class="bi bi-activity"></i></span></div>
+                <div class="st-kpi-valor">{{ disponibilidad }}<small>%</small>
+                    {% if disponibilidad_delta %}
+                        <span class="st-delta {{ 'sube' if disponibilidad_delta > 0 else 'baja' }}">
+                            <i class="bi bi-arrow-{{ 'up' if disponibilidad_delta > 0 else 'down' }}"></i>
+                            {{ disponibilidad_delta|abs }} pts
+                        </span>
+                    {% endif %}
+                </div>
+                <div class="st-kpi-pie">
+                    <span>Meta: {{ meta_disponibilidad }}%</span>
+                    <span>
+                        {% if disponibilidad >= meta_disponibilidad %}<i class="bi bi-check-circle-fill" style="color:var(--good)"></i> Cumple
+                        {% else %}<i class="bi bi-x-circle-fill" style="color:var(--critical)"></i> Debajo de la meta{% endif %}
+                    </span>
+                </div>
             </div>
         </div>
-        <div class="col-md-3 col-6">
-            <div class="stat-card danger">
-                <div class="number">{{ stats_generales.total_faltantes or 0 }}</div>
-                <div class="label"><i class="bi bi-x-circle"></i> Faltantes</div>
+        <div class="col-md-6 col-xl-3">
+            <div class="st-card st-kpi">
+                <div class="st-kpi-label">Tiempo medio entre fallas
+                    <span class="st-kpi-icono"><i class="bi bi-hourglass-split"></i></span></div>
+                <div class="st-kpi-valor">
+                    {% if mtbf_dias is not none %}{{ mtbf_dias }} <small>días por unidad</small>
+                    {% else %}—<small> sin fallas graves</small>{% endif %}
+                </div>
+                <div class="st-kpi-pie">
+                    <span>{{ graves }} reporte(s) grave(s)</span>
+                    <span>de {{ reportes_total }} en total</span>
+                </div>
             </div>
         </div>
-        <div class="col-md-3 col-6">
-            <div class="stat-card warning">
-                <div class="number">{{ stats_generales.total_fallas or 0 }}</div>
-                <div class="label"><i class="bi bi-exclamation-triangle"></i> Fallas</div>
+        <div class="col-md-6 col-xl-3">
+            <div class="st-card st-kpi">
+                <div class="st-kpi-label">Tiempo medio de resolución
+                    <span class="st-kpi-icono"><i class="bi bi-tools"></i></span></div>
+                <div class="st-kpi-valor">{{ horas(mttr_horas) }}</div>
+                <div class="st-kpi-pie">
+                    <span>Soporte lo revisa en {{ horas(revision_horas) }}</span>
+                    <span>{{ resueltos }} resuelto(s)</span>
+                </div>
             </div>
         </div>
-        <div class="col-md-3 col-6">
-            <div class="stat-card success">
-                <div class="number">{{ stats_generales.total_resueltos or 0 }}</div>
-                <div class="label"><i class="bi bi-check-circle"></i> Resueltos</div>
+        <div class="col-md-6 col-xl-3">
+            <div class="st-card st-kpi">
+                <div class="st-kpi-label">Inactividad acumulada
+                    <span class="st-kpi-icono"><i class="bi bi-stop-circle"></i></span></div>
+                <div class="st-kpi-valor">{{ horas(horas_perdidas) }}</div>
+                <div class="st-kpi-pie">
+                    <span>Fuera de servicio, toda la flota</span>
+                    <span>{{ paradas }} parada(s)</span>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Elementos más faltantes -->
-    <div class="row">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h6><i class="bi bi-box-seam"></i> Elementos más Faltantes</h6>
+    <!-- Curva + incidentes -->
+    <div class="row g-3 mb-3">
+        <div class="col-lg-8">
+            <div class="st-card">
+                <h2 class="st-titulo">Curva de disponibilidad</h2>
+                <p class="st-subtitulo">Porcentaje de la flota que podía salir, día por día</p>
+                <div class="st-leyenda">
+                    <span><i style="background: var(--series)"></i>Disponibilidad real</span>
+                    <span><i style="background: var(--critical)"></i>Meta {{ meta_disponibilidad }}%</span>
                 </div>
-                <div class="card-body p-0">
-                    {% if elementos_mas_faltantes %}
-                        <div class="list-group list-group-flush">
-                            {% for item in elementos_mas_faltantes %}
-                                <div class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <strong>{{ item.elemento }}</strong>
-                                        <span class="badge bg-secondary ms-2">{{ item.tecnicos_diferentes }} técnicos</span>
-                                    </div>
-                                    <span class="badge bg-danger rounded-pill">{{ item.total }}</span>
-                                </div>
+                <div class="st-grafico" id="curva">
+                    <div class="st-tooltip" id="curva-tooltip"></div>
+                </div>
+                {% set valores = curva|map(attribute='valor')|list %}
+                <div class="st-resumen-curva">
+                    <div><b>{{ valores|max if valores else '—' }}%</b><span>Pico máximo</span></div>
+                    <div><b>{{ valores|min if valores else '—' }}%</b><span>Peor día</span></div>
+                    <div><b>{{ valores|select('lt', meta_disponibilidad)|list|length }}</b><span>Día(s) debajo de la meta</span></div>
+                </div>
+                <details class="st-datos">
+                    <summary>Ver los datos día por día</summary>
+                    <table class="st-tabla mt-2">
+                        <thead><tr><th>Fecha</th><th class="num">Disponibilidad</th></tr></thead>
+                        <tbody>
+                            {% for d in curva|reverse %}
+                                <tr><td>{{ d.fecha }}</td><td class="num">{{ d.valor }}%</td></tr>
                             {% endfor %}
-                        </div>
-                    {% else %}
-                        <p class="text-muted p-3">Sin datos en los últimos 30 días</p>
-                    {% endif %}
-                </div>
+                        </tbody>
+                    </table>
+                </details>
             </div>
         </div>
-        
-        <!-- Técnicos que más reportan -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h6><i class="bi bi-person"></i> Técnicos que más reportan</h6>
+        <div class="col-lg-4">
+            <div class="st-card">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h2 class="st-titulo">Incidentes por sistema</h2>
+                        <p class="st-subtitulo">Qué se arregló, según el calendario</p>
+                    </div>
+                    <span class="st-tag">{{ total_sistemas }} evento(s)</span>
                 </div>
-                <div class="card-body p-0">
-                    {% if tecnicos_mas_reportan %}
-                        <div class="list-group list-group-flush">
-                            {% for tecnico in tecnicos_mas_reportan %}
-                                <div class="list-group-item">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <strong>{{ tecnico.tecnico }}</strong>
-                                            <span class="badge bg-secondary ms-2">{{ tecnico.usuario }}</span>
-                                        </div>
-                                        <span class="badge bg-primary rounded-pill">{{ tecnico.total_reportes }}</span>
-                                    </div>
-                                    <div class="mt-1 small">
-                                        <span class="text-danger">Faltantes: {{ tecnico.faltantes or 0 }}</span>
-                                        <span class="text-warning ms-2">Fallas: {{ tecnico.fallas or 0 }}</span>
-                                        <span class="text-info ms-2">Observaciones: {{ tecnico.observaciones or 0 }}</span>
-                                        <span class="text-success ms-2">Resueltos: {{ tecnico.resueltos or 0 }}</span>
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        </div>
-                    {% else %}
-                        <p class="text-muted p-3">Sin datos en los últimos 30 días</p>
-                    {% endif %}
-                </div>
+                {% set max_sistema = sistemas[0].n if sistemas else 1 %}
+                {% for s in sistemas %}
+                    <div class="st-barra-fila" title="{{ s.nombre }}: {{ s.n }} ({{ s.pct }}%)">
+                        <div class="st-barra-top"><span>{{ s.nombre }}</span><span>{{ s.pct }}% · {{ s.n }}</span></div>
+                        <div class="st-barra"><div style="width: {{ (100 * s.n / max_sistema)|round }}%"></div></div>
+                    </div>
+                {% else %}
+                    <p class="st-vacio">No se registraron eventos en el período.</p>
+                {% endfor %}
+                <p class="st-nota">
+                    <i class="bi bi-info-circle"></i>
+                    Sale de los eventos del calendario (cubiertas, frenos, batería...).
+                    Lo que se carga como "Otro" va junto.
+                </p>
             </div>
         </div>
     </div>
 
-    <!-- Historial por elemento (buscador) -->
-    <div class="row mt-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h6><i class="bi bi-search"></i> Buscar Historial por Elemento</h6>
+    <!-- Ranking -->
+    <div class="st-card mb-3" style="height:auto">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+            <div>
+                <h2 class="st-titulo">Ranking de confiabilidad por unidad</h2>
+                <p class="st-subtitulo mb-0">Las que menos estuvieron disponibles, primero</p>
             </div>
-            <div class="card-body">
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control" id="buscador-elemento-stats" 
-                           placeholder="Buscar elemento..." onkeyup="filtrarHistorialStats(this.value)">
-                    <button class="btn btn-outline-secondary" type="button" onclick="filtrarHistorialStats(document.getElementById('buscador-elemento-stats').value)">
-                        <i class="bi bi-search"></i>
-                    </button>
-                    <button class="btn btn-outline-danger" type="button" onclick="limpiarBusqueda()">
-                        <i class="bi bi-x-circle"></i>
-                    </button>
-                </div>
-                <div id="historial-stats-container">
-                    {% for elemento, registros in historial_por_elemento.items() %}
-                        <div class="elemento-stats-item" data-elemento="{{ elemento|lower }}">
-                            <h6 class="mt-3">
-                                <i class="bi bi-box"></i> {{ elemento }}
-                                <span class="badge bg-secondary">{{ registros|length }} registros</span>
-                            </h6>
-                            {% for r in registros[:5] %}
-                                <div class="timeline-item 
-                                    {% if r.estado == 'FALTANTE' %}faltante
-                                    {% elif r.estado == 'RESUELTO' %}resuelto
-                                    {% elif r.estado == 'OBSERVACION' %}observacion
-                                    {% endif %}">
-                                    <div class="d-flex justify-content-between align-items-center flex-wrap">
-                                        <span>
-                                            <span class="badge 
-                                                {% if r.estado == 'OK' %}bg-success
-                                                {% elif r.estado == 'FALTANTE' %}bg-danger
-                                                {% elif r.estado == 'OBSERVACION' %}bg-warning text-dark
-                                                {% elif r.estado == 'RESUELTO' %}bg-info
-                                                {% else %}bg-secondary{% endif %}">
-                                                {{ r.estado }}
-                                            </span>
-                                            <span class="tecnico">{{ r.tecnico_nombre or 'S/A' }}</span>
-                                        </span>
-                                        <span class="fecha">{{ r.fecha_hora[:16]|replace('T', ' ') }}</span>
-                                    </div>
-                                    {% if r.descripcion and r.descripcion != 'Elemento en buen estado' %}
-                                        <div class="text-muted small mt-1">{{ r.descripcion }}</div>
-                                    {% endif %}
-                                    {% if r.resuelto_por %}
-                                        <div class="text-success small">✅ Resuelto por: {{ r.resuelto_por }}</div>
-                                    {% endif %}
+            <input type="search" class="st-buscar" id="buscar-unidad" placeholder="Buscar patente o modelo...">
+        </div>
+        <div class="table-responsive">
+            <table class="st-tabla" id="tabla-ranking">
+                <thead>
+                    <tr>
+                        <th>Unidad</th><th>Modelo</th><th>Disponibilidad</th>
+                        <th class="num">Paradas</th><th class="num">Horas fuera</th>
+                        <th class="num">Reportes</th><th class="num">Km recorridos</th>
+                        <th>Estado hoy</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in ranking %}
+                        {% set color = 'var(--good)' if r.disponibilidad >= meta_disponibilidad
+                                       else ('var(--warning)' if r.disponibilidad >= meta_disponibilidad - 10
+                                             else 'var(--critical)') %}
+                        <tr class="{{ 'fila-fuera' if r.estado == 'FUERA_DE_SERVICIO' }}"
+                            data-busqueda="{{ (r.patente ~ ' ' ~ r.vehiculo)|lower }}">
+                            <td><strong>{{ r.patente }}</strong></td>
+                            <td class="text-2">{{ r.vehiculo or '—' }}</td>
+                            <td>
+                                <div class="st-medidor" title="{{ r.disponibilidad }}% del período disponible">
+                                    <div class="st-medidor-pista"><div style="width: {{ r.disponibilidad }}%; background: {{ color }}"></div></div>
+                                    <span>{{ r.disponibilidad }}%</span>
                                 </div>
-                            {% endfor %}
-                            {% if registros|length > 5 %}
-                                <div class="text-muted small">... y {{ registros|length - 5 }} más</div>
+                            </td>
+                            <td class="num" {% if r.motivo %}title="Última: {{ r.motivo }}"{% endif %}>{{ r.paradas }}</td>
+                            <td class="num">{{ r.horas_fuera }}</td>
+                            <td class="num">{{ r.reportes }}{% if r.graves %} <span class="text-m">({{ r.graves }} grave{{ 's' if r.graves > 1 }})</span>{% endif %}</td>
+                            <td class="num">{{ r.km|miles if r.km is not none else '—' }}</td>
+                            <td>{{ estado(r.estado) }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Abajo: horas perdidas, turnos, mantenimiento -->
+    <div class="row g-3">
+        <div class="col-lg-4">
+            <div class="st-card">
+                <h2 class="st-titulo">Unidades con más horas perdidas</h2>
+                <p class="st-subtitulo">Horas fuera de servicio en el período</p>
+                {% set max_perdida = top_perdidas[0].horas_fuera if top_perdidas else 1 %}
+                {% for r in top_perdidas %}
+                    <div class="st-barra-fila" title="{{ r.patente }}: {{ r.horas_fuera }} h en {{ r.paradas }} parada(s)">
+                        <div class="st-barra-top"><span><strong>{{ r.patente }}</strong></span>
+                            <span>{{ r.horas_fuera }} h · {{ r.paradas }} parada(s)</span></div>
+                        <div class="st-barra"><div style="width: {{ (100 * r.horas_fuera / max_perdida)|round }}%"></div></div>
+                        {% if r.motivo %}<div class="st-barra-nota">"{{ r.motivo }}"</div>{% endif %}
+                    </div>
+                {% else %}
+                    <p class="st-vacio"><i class="bi bi-check-circle"></i> Ninguna camioneta estuvo fuera de servicio.</p>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="st-card">
+                <h2 class="st-titulo">Reportes por turno</h2>
+                <p class="st-subtitulo">Problemas avisados y controles de retiro hechos</p>
+                <div class="st-turnos">
+                    {% for j in jornadas %}
+                        {% set t = turnos[j] %}
+                        <div class="st-turno">
+                            <div class="st-turno-nombre">Turno {{ j }}</div>
+                            <div class="st-turno-num">{{ t.reportes }}</div>
+                            <div class="st-turno-det">reporte(s) · {{ t.pct_graves }}% graves</div>
+                            {% if t.cumplimiento is not none %}
+                                <span class="st-turno-chip">
+                                    {% if t.cumplimiento >= 90 %}<i class="bi bi-check-circle-fill" style="color:var(--good)"></i>
+                                    {% elif t.cumplimiento >= 70 %}<i class="bi bi-exclamation-triangle-fill" style="color:var(--warning)"></i>
+                                    {% else %}<i class="bi bi-x-circle-fill" style="color:var(--critical)"></i>{% endif %}
+                                    {{ t.cumplimiento }}% controlado
+                                </span>
+                                <div class="st-turno-det mt-1">{{ t.controlados }} de {{ t.asignados }} turnos</div>
+                            {% else %}
+                                <span class="st-turno-chip">Sin turnos asignados</span>
                             {% endif %}
                         </div>
                     {% endfor %}
                 </div>
+                <p class="st-nota">"Controlado" es un turno asignado en el que el técnico hizo el control de retiro.</p>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="st-card">
+                <h2 class="st-titulo">Mantenimiento realizado</h2>
+                <p class="st-subtitulo">Trabajos del calendario en el período</p>
+                {% for nombre, n in mantenimiento %}
+                    <span class="st-chip-mant"><b>{{ n }}</b><span>{{ nombre }}</span></span>
+                {% else %}
+                    <p class="st-vacio">No se registraron trabajos en el período.</p>
+                {% endfor %}
+                <p class="st-nota">Los eventos (cubiertas, frenos...) se cuentan en "Incidentes por sistema".</p>
             </div>
         </div>
     </div>
 </div>
-</div>
 
 <script>
-    function filtrarHistorialStats(texto) {
-        const elementos = document.querySelectorAll('.elemento-stats-item');
-        const busqueda = texto.toLowerCase().trim();
-        let encontrados = 0;
-        
-        elementos.forEach(el => {
-            const nombre = el.getAttribute('data-elemento') || '';
-            if (busqueda === '' || nombre.includes(busqueda)) {
-                el.style.display = 'block';
-                encontrados++;
-            } else {
-                el.style.display = 'none';
-            }
+    const CURVA = {{ curva|tojson }};
+    const META = {{ meta_disponibilidad|tojson }};
+    const RANKING = {{ ranking|tojson }};
+
+    // ---------- Curva de disponibilidad ----------
+    const NS = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs, padre) {
+        const n = document.createElementNS(NS, tag);
+        for (const k in attrs) n.setAttribute(k, attrs[k]);
+        if (padre) padre.appendChild(n);
+        return n;
+    }
+
+    function dibujarCurva() {
+        const caja = document.getElementById('curva');
+        const tooltip = document.getElementById('curva-tooltip');
+        caja.querySelectorAll('svg').forEach(s => s.remove());
+        if (!CURVA.length) return;
+
+        const W = caja.clientWidth, H = caja.clientHeight;
+        const m = { top: 12, right: 14, bottom: 26, left: 40 };
+        const w = W - m.left - m.right, h = H - m.top - m.bottom;
+
+        // El piso nunca queda pegado a los datos: se ve la distancia a la meta.
+        const minimo = Math.min(...CURVA.map(d => d.valor), META);
+        const piso = Math.max(0, Math.floor((minimo - 5) / 10) * 10);
+        const x = i => m.left + (CURVA.length === 1 ? w / 2 : i * w / (CURVA.length - 1));
+        const y = v => m.top + h - (v - piso) / (100 - piso) * h;
+
+        const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+                                'aria-label': 'Disponibilidad diaria de la flota' });
+        caja.insertBefore(svg, tooltip);
+
+        // Grilla y eje: recesivos.
+        const pasos = (100 - piso) <= 20 ? 5 : 10;
+        for (let v = piso; v <= 100; v += pasos) {
+            el('line', { x1: m.left, x2: W - m.right, y1: y(v), y2: y(v),
+                         stroke: '#263049', 'stroke-width': 1 }, svg);
+            const t = el('text', { x: m.left - 8, y: y(v) + 4, 'text-anchor': 'end',
+                                   fill: '#7d879c', 'font-size': 11 }, svg);
+            t.textContent = v + '%';
+        }
+        const cada = Math.max(1, Math.ceil(CURVA.length / 6));
+        CURVA.forEach((d, i) => {
+            if (i % cada && i !== CURVA.length - 1) return;
+            const t = el('text', { x: x(i), y: H - 6, 'text-anchor': 'middle',
+                                   fill: '#7d879c', 'font-size': 11 }, svg);
+            t.textContent = d.fecha.slice(8, 10) + '/' + d.fecha.slice(5, 7);
         });
-        
-        // Mostrar mensaje si no hay resultados
-        let mensaje = document.getElementById('sin-resultados');
-        if (busqueda !== '' && encontrados === 0) {
-            if (!mensaje) {
-                mensaje = document.createElement('div');
-                mensaje.id = 'sin-resultados';
-                mensaje.className = 'alert alert-info mt-3';
-                mensaje.innerHTML = '<i class="bi bi-info-circle"></i> No se encontraron elementos que coincidan con "<strong>' + busqueda + '</strong>"';
-                document.getElementById('historial-stats-container').appendChild(mensaje);
-            } else {
-                mensaje.innerHTML = '<i class="bi bi-info-circle"></i> No se encontraron elementos que coincidan con "<strong>' + busqueda + '</strong>"';
-                mensaje.style.display = 'block';
-            }
-        } else if (mensaje) {
-            mensaje.style.display = 'none';
+
+        // Meta.
+        el('line', { x1: m.left, x2: W - m.right, y1: y(META), y2: y(META),
+                     stroke: '#d03b3b', 'stroke-width': 1.5 }, svg);
+
+        // Area y linea.
+        const puntos = CURVA.map((d, i) => `${x(i)},${y(d.valor)}`);
+        el('path', { d: `M${x(0)},${y(piso)} L${puntos.join(' L')} L${x(CURVA.length - 1)},${y(piso)} Z`,
+                     fill: '#3987e5', 'fill-opacity': .12 }, svg);
+        el('path', { d: 'M' + puntos.join(' L'), fill: 'none', stroke: '#3987e5',
+                     'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+
+        // Punto final con su valor: es el dato que se lee primero.
+        const ult = CURVA.length - 1;
+        el('circle', { cx: x(ult), cy: y(CURVA[ult].valor), r: 4.5, fill: '#3987e5',
+                       stroke: '#141d31', 'stroke-width': 2 }, svg);
+
+        // Hover: la guia vertical busca el dia mas cercano.
+        const guia = el('line', { y1: m.top, y2: m.top + h, stroke: '#a9b4c9',
+                                  'stroke-width': 1, visibility: 'hidden' }, svg);
+        const marca = el('circle', { r: 5, fill: '#3987e5', stroke: '#141d31',
+                                     'stroke-width': 2, visibility: 'hidden' }, svg);
+        const zona = el('rect', { x: m.left, y: m.top, width: w, height: h,
+                                  fill: 'transparent', tabindex: 0 }, svg);
+
+        function mostrar(i) {
+            const d = CURVA[i];
+            guia.setAttribute('x1', x(i)); guia.setAttribute('x2', x(i));
+            marca.setAttribute('cx', x(i)); marca.setAttribute('cy', y(d.valor));
+            guia.setAttribute('visibility', 'visible'); marca.setAttribute('visibility', 'visible');
+            tooltip.replaceChildren();
+            const v = document.createElement('strong');
+            v.textContent = d.valor + '%';
+            const f = document.createElement('span');
+            f.style.color = '#a9b4c9';
+            f.textContent = d.fecha.split('-').reverse().join('/') + (d.valor < META ? ' · debajo de la meta' : '');
+            tooltip.append(v, f);
+            tooltip.style.left = Math.min(Math.max(x(i), 70), W - 70) + 'px';
+            tooltip.style.top = y(d.valor) + 'px';
+            tooltip.style.display = 'block';
         }
-    }
-    
-    function limpiarBusqueda() {
-        document.getElementById('buscador-elemento-stats').value = '';
-        filtrarHistorialStats('');
-    }
-    
-    // Inicializar el buscador con el evento correcto
-    document.addEventListener('DOMContentLoaded', function() {
-        const buscador = document.getElementById('buscador-elemento-stats');
-        if (buscador) {
-            buscador.addEventListener('keyup', function() {
-                filtrarHistorialStats(this.value);
-            });
-            buscador.addEventListener('search', function() {
-                filtrarHistorialStats(this.value);
-            });
+        function ocultar() {
+            guia.setAttribute('visibility', 'hidden'); marca.setAttribute('visibility', 'hidden');
+            tooltip.style.display = 'none';
         }
+        let actual = ult;
+        zona.addEventListener('pointermove', ev => {
+            const r = svg.getBoundingClientRect();
+            const px = (ev.clientX - r.left) * (W / r.width);
+            actual = CURVA.length === 1 ? 0
+                   : Math.round((px - m.left) / (w / (CURVA.length - 1)));
+            mostrar(Math.max(0, Math.min(ult, actual)));
+        });
+        zona.addEventListener('pointerleave', ocultar);
+        zona.addEventListener('focus', () => mostrar(actual));
+        zona.addEventListener('blur', ocultar);
+        zona.addEventListener('keydown', ev => {
+            if (ev.key === 'ArrowLeft') actual = Math.max(0, actual - 1);
+            else if (ev.key === 'ArrowRight') actual = Math.min(ult, actual + 1);
+            else return;
+            ev.preventDefault();
+            mostrar(actual);
+        });
+    }
+    dibujarCurva();
+    let redibujo;
+    window.addEventListener('resize', () => { clearTimeout(redibujo); redibujo = setTimeout(dibujarCurva, 150); });
+
+    // ---------- Buscador del ranking ----------
+    document.getElementById('buscar-unidad').addEventListener('input', ev => {
+        const texto = ev.target.value.trim().toLowerCase();
+        document.querySelectorAll('#tabla-ranking tbody tr').forEach(tr => {
+            tr.hidden = texto && !tr.dataset.busqueda.includes(texto);
+        });
     });
+
+    // ---------- Exportar ----------
+    function exportarCSV() {
+        const ESTADOS = { EN_ORDEN: 'En orden', ALERTA: 'Alerta', FUERA_DE_SERVICIO: 'Fuera de servicio' };
+        const filas = [['Patente', 'Modelo', 'Disponibilidad %', 'Paradas', 'Horas fuera',
+                        'Reportes', 'Reportes graves', 'Km recorridos', 'Estado hoy', 'Ultima parada']];
+        RANKING.forEach(r => filas.push([r.patente, r.vehiculo, r.disponibilidad, r.paradas,
+            r.horas_fuera, r.reportes, r.graves, r.km ?? '', ESTADOS[r.estado] || r.estado, r.motivo]));
+        // Punto y coma: es lo que Excel en español abre en columnas.
+        const csv = filas.map(f => f.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n');
+        const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'estadisticas_flota_{{ desde }}_{{ hasta }}.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }
 </script>
+</body>
+</html>

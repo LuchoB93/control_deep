@@ -281,7 +281,26 @@
                               </strong>
                         {% endif %}
                     </p>
-                    <a href="{{ url_for('reclamos') }}" class="inicio-ir">
+                    {% if inicio.actividades_en_calle %}
+                        <ul class="inicio-lista">
+                            {% for a in inicio.actividades_en_calle %}
+                                <li>
+                                    <a href="{{ url_for('reclamos') }}#act-{{ a.id }}" class="inicio-act"
+                                       title="{{ a.mensaje }}">
+                                        <strong>{{ a.destino_nombre if a.destino_tipo != 'zona' else 'Zona ' ~ a.destino_zona }}</strong>
+                                        · {{ a.fecha }}
+                                        <span class="inicio-act-msg">{{ a.mensaje }}</span>
+                                    </a>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                        {% if inicio.actividades_pendientes > inicio.actividades_en_calle|length %}
+                            <p class="inicio-pie">
+                                y {{ inicio.actividades_pendientes - inicio.actividades_en_calle|length }} más
+                            </p>
+                        {% endif %}
+                    {% endif %}
+                    <a href="{{ url_for('reclamos') }}#grupo-PENDIENTE" class="inicio-ir">
                         Ver actividades <i class="bi bi-arrow-right"></i>
                     </a>
                 </div>

@@ -152,8 +152,25 @@
     <div class="card">
         <div class="card-header"><strong><i class="bi bi-list-ul"></i> Cargadas</strong></div>
         <div class="card-body">
-            {% for r in reclamos %}
-                <div class="act-item act-{{ r.estado|lower }}">
+            {# Agrupadas por estado: mezcladas, las pendientes quedaban perdidas
+               entre las ya cerradas. Las que piden atencion arrancan abiertas;
+               las resueltas y canceladas, plegadas. #}
+            {% for grupo, titulo, abierto in [
+                    ('PENDIENTE', 'Pendientes', true),
+                    ('NO_RESUELTA', 'No se pudieron resolver', true),
+                    ('RESUELTA', 'Resueltas', false),
+                    ('CANCELADA', 'Canceladas', false)] %}
+            {% set del_grupo = reclamos|selectattr('estado', 'equalto', grupo)|list %}
+            {% if del_grupo %}
+            <details class="act-grupo act-grupo-{{ grupo|lower }}" id="grupo-{{ grupo }}"
+                     {% if abierto or filtros.estado == grupo %}open{% endif %}>
+                <summary>
+                    <i class="bi bi-chevron-right act-grupo-flecha"></i>
+                    {{ titulo }}
+                    <span class="act-grupo-n">{{ del_grupo|length }}</span>
+                </summary>
+            {% for r in del_grupo %}
+                <div class="act-item act-{{ r.estado|lower }}" id="act-{{ r.id }}">
                     <div class="act-item-top">
                         <span class="act-fecha"><i class="bi bi-calendar3"></i> {{ r.fecha }}</span>
 
@@ -281,16 +298,35 @@
                         </form>
                     {% endif %}
                 </div>
-            {% else %}
+            {% endfor %}
+            </details>
+            {% endif %}
+            {% endfor %}
+
+            {% if not reclamos %}
                 <p class="text-center text-muted reclamo-vacio">
                     No hay actividades con esos filtros.
                 </p>
-            {% endfor %}
+            {% endif %}
         </div>
     </div>
 </div>
 
 <script>
+    // Desde el Inicio se llega con #act-ID (o #grupo-ESTADO): se abre su
+    // grupo aunque este plegado, se baja hasta ella y se marca un momento.
+    (function () {
+        const destino = location.hash && document.getElementById(location.hash.slice(1));
+        if (!destino) return;
+        const grupo = destino.closest('details');
+        if (grupo) grupo.open = true;
+        destino.scrollIntoView({ block: 'center' });
+        if (destino.classList.contains('act-item')) {
+            destino.classList.add('act-resaltada');
+            setTimeout(() => destino.classList.remove('act-resaltada'), 2500);
+        }
+    })();
+
     function abrirEdicion(id) {
         const form = document.getElementById('act-editar-' + id);
         if (form) form.hidden = !form.hidden;

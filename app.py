@@ -1937,6 +1937,10 @@ def aplicar_migraciones(conexion):
             ('marca', 'TEXT'),
             ('modelo', 'TEXT'),
             ('anio', 'INTEGER'),
+            # Por que se dio de baja: el jefe lo ve en su panel.
+            ('motivo_baja', 'TEXT'),
+            ('baja_por', 'TEXT'),
+            ('fecha_baja', 'TEXT'),
         ],
         'asignaciones': [
             ('tecnico2_id', 'INTEGER'),
@@ -2324,94 +2328,323 @@ def eliminar_firma():
 def jefe_estadisticas():
     if not autorizado('jefe'):
         return redirect(url_for('login'))
-    
+
+    momento = ahora()
+    desde, hasta, periodo = _periodo_estadisticas(momento)
     conexion = get_db()
-    
-    stats_generales = conexion.execute('''
-        SELECT 
-            COUNT(DISTINCT r.elemento) as total_elementos_reportados,
-            COUNT(CASE WHEN r.estado = 'FALTANTE' THEN 1 END) as total_faltantes,
-            COUNT(CASE WHEN r.estado = 'FALLA' THEN 1 END) as total_fallas,
-            COUNT(CASE WHEN r.estado = 'OBSERVACION' THEN 1 END) as total_observaciones,
-            COUNT(CASE WHEN r.estado = 'RESUELTO' THEN 1 END) as total_resueltos,
-            COUNT(DISTINCT a.tecnico_id) as tecnicos_activos
-        FROM reportes r
-        LEFT JOIN controles co ON r.control_id = co.id
-        LEFT JOIN asignaciones a ON co.asignacion_id = a.id
-        WHERE r.fecha_hora >= date('now', '-30 days')
-    ''').fetchone()
-    
-    elementos_mas_faltantes = conexion.execute('''
-        SELECT 
-            r.elemento,
-            COUNT(*) as total,
-            COUNT(DISTINCT a.tecnico_id) as tecnicos_diferentes
-        FROM reportes r
-        LEFT JOIN controles co ON r.control_id = co.id
-        LEFT JOIN asignaciones a ON co.asignacion_id = a.id
-        WHERE r.estado = 'FALTANTE' 
-        AND r.fecha_hora >= date('now', '-30 days')
-        GROUP BY r.elemento
-        ORDER BY total DESC
-        LIMIT 10
-    ''').fetchall()
-    
-    tecnicos_mas_reportan = conexion.execute('''
-        SELECT 
-            u.nombre as tecnico,
-            u.usuario,
-            COUNT(r.id) as total_reportes,
-            COUNT(CASE WHEN r.estado = 'FALTANTE' THEN 1 END) as faltantes,
-            COUNT(CASE WHEN r.estado = 'FALLA' THEN 1 END) as fallas,
-            COUNT(CASE WHEN r.estado = 'OBSERVACION' THEN 1 END) as observaciones,
-            COUNT(CASE WHEN r.estado = 'RESUELTO' THEN 1 END) as resueltos
-        FROM usuarios u
-        LEFT JOIN asignaciones a ON u.id = a.tecnico_id
-        LEFT JOIN controles co ON a.id = co.asignacion_id
-        LEFT JOIN reportes r ON co.id = r.control_id
-        WHERE u.rol = 'tecnico'
-        AND r.fecha_hora >= date('now', '-30 days')
-        GROUP BY u.id
-        ORDER BY total_reportes DESC
-        LIMIT 10
-    ''').fetchall()
-    
-    historial_elementos = conexion.execute('''
-        SELECT 
-            r.elemento,
-            r.estado,
-            r.descripcion,
-            r.fecha_hora,
-            r.fecha_resolucion,
-            r.resuelto_por,
-            u.nombre as tecnico_nombre,
-            c.patente
-        FROM reportes r
-        LEFT JOIN controles co ON r.control_id = co.id
-        LEFT JOIN asignaciones a ON co.asignacion_id = a.id
-        LEFT JOIN usuarios u ON a.tecnico_id = u.id
-        LEFT JOIN camionetas c ON a.camioneta_id = c.id
-        WHERE r.fecha_hora >= date('now', '-90 days')
-        ORDER BY r.elemento, r.fecha_hora DESC
-    ''').fetchall()
-    
-    historial_por_elemento = {}
-    for item in historial_elementos:
-        elemento = item['elemento']
-        if elemento not in historial_por_elemento:
-            historial_por_elemento[elemento] = []
-        historial_por_elemento[elemento].append(dict(item))
-    
-    conexion.close()
-    
-    # elementos_por_categoria y etiqueta_categoria se pasaban acá pero la
-    # plantilla no los usa, y el primero ni siquiera estaba definido: la página
-    # entera respondía 500 por un NameError.
+    try:
+        datos = estadisticas_flota(conexion, desde, hasta, momento)
+    finally:
+        conexion.close()
+
     return render_template('jefe_estadisticas.html',
-                         stats_generales=stats_generales,
-                         elementos_mas_faltantes=elementos_mas_faltantes,
-                         tecnicos_mas_reportan=tecnicos_mas_reportan,
-                         historial_por_elemento=historial_por_elemento)
+                           periodo=periodo,
+                           periodos=PERIODOS_ESTADISTICAS,
+                           desde=desde.strftime('%Y-%m-%d'),
+                           hasta=hasta.strftime('%Y-%m-%d'),
+                           fecha_actual=momento.strftime('%d/%m/%Y'),
+                           hora_actual=momento.strftime('%H:%M'),
+                           meta_disponibilidad=META_DISPONIBILIDAD,
+                           **datos)
+
+
+# Por debajo de esto la flota esta rindiendo menos de lo esperado. Es la
+# linea roja de la curva de disponibilidad.
+META_DISPONIBILIDAD = 90
+
+PERIODOS_ESTADISTICAS = {
+    '30d': 'Últimos 30 días',
+    'mes': 'Mes actual',
+    'trimestre': 'Trimestre',
+    'anio': 'Año',
+    'custom': 'Personalizado',
+}
+
+
+def _periodo_estadisticas(momento):
+    """(desde, hasta, clave) del periodo pedido. `hasta` nunca pasa de ahora."""
+    clave = request.args.get('p') or '30d'
+    if clave not in PERIODOS_ESTADISTICAS:
+        clave = '30d'
+    hoy = momento.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if clave == 'mes':
+        desde = hoy.replace(day=1)
+    elif clave == 'trimestre':
+        desde = hoy.replace(month=((hoy.month - 1) // 3) * 3 + 1, day=1)
+    elif clave == 'anio':
+        desde = hoy.replace(month=1, day=1)
+    elif clave == 'custom':
+        d = _fecha_iso(request.args.get('desde'))
+        h = _fecha_iso(request.args.get('hasta'))
+        if not d:
+            return _periodo_30(hoy, momento)
+        desde = datetime.combine(d, datetime.min.time())
+        fin = datetime.combine(h, datetime.max.time()) if h else momento
+        if fin < desde:
+            desde, fin = datetime.combine(h, datetime.min.time()), \
+                         datetime.combine(d, datetime.max.time())
+        return desde, min(fin, momento), clave
+    else:
+        return _periodo_30(hoy, momento)
+    return desde, momento, clave
+
+
+def _periodo_30(hoy, momento):
+    return hoy - timedelta(days=29), momento, '30d'
+
+
+def _dt(valor):
+    """ISO de la base -> datetime, o None."""
+    if not valor:
+        return None
+    try:
+        return datetime.fromisoformat(str(valor)[:26])
+    except ValueError:
+        return None
+
+
+def _solapa(intervalos, desde, hasta):
+    """Horas de `intervalos` que caen entre desde y hasta."""
+    total = 0.0
+    for ini, fin in intervalos:
+        a, b = max(ini, desde), min(fin, hasta)
+        if b > a:
+            total += (b - a).total_seconds() / 3600
+    return total
+
+
+def paradas_por_camioneta(conexion, momento):
+    """{camioneta_id: [(inicio, fin, evento_id)]} de cuando estuvo fuera de servicio.
+
+    Se reconstruye del seguimiento de cada reporte: el paso que la saca de
+    circulacion abre el tramo, y el que la libera (o el cierre del reporte)
+    lo termina. Si sigue parada, el tramo llega hasta ahora.
+    """
+    eventos = {e['id']: dict(e) for e in conexion.execute('''
+        SELECT id, camioneta_id, mensaje, estado, fecha, fecha_revision, fecha_atendido,
+               COALESCE(bloquea, 0) AS bloquea
+        FROM eventos_reportados
+    ''')}
+    pasos = {}
+    for p in conexion.execute('''
+        SELECT evento_id, estado, comentario, circulacion, fecha
+        FROM eventos_seguimiento ORDER BY fecha, id
+    '''):
+        pasos.setdefault(p['evento_id'], []).append(p)
+
+    tramos = {}
+    for evento_id, e in eventos.items():
+        inicio = None
+        propios = []
+        for p in pasos.get(evento_id, []):
+            comentario = p['comentario'] or ''
+            fecha = _dt(p['fecha'])
+            if fecha is None:
+                continue
+            sale = p['circulacion'] == 'FUERA' or comentario.startswith('Fuera de servicio.')
+            vuelve = (p['circulacion'] == 'CIRCULA' or comentario.startswith('Puede circular.')
+                      or p['estado'] in ('RESUELTO', 'DESCARTADO'))
+            if sale and inicio is None:
+                inicio = fecha
+            elif vuelve and inicio is not None and not sale:
+                propios.append((inicio, fecha))
+                inicio = None
+
+        if inicio is not None:
+            fin = momento if e['bloquea'] else (_dt(e['fecha_atendido']) or momento)
+            propios.append((inicio, fin))
+        elif e['bloquea'] and not propios:
+            # Sacada de circulacion antes de que existiera el seguimiento.
+            propios.append((_dt(e['fecha_revision']) or _dt(e['fecha']) or momento, momento))
+
+        for ini, fin in propios:
+            if fin > ini:
+                tramos.setdefault(e['camioneta_id'], []).append((ini, fin, evento_id))
+
+    for lista in tramos.values():
+        lista.sort()
+    return tramos, eventos
+
+
+def _unir(tramos):
+    """Une los tramos que se pisan: dos reportes a la vez no son el doble de parada."""
+    unidos = []
+    for ini, fin, _ in sorted(tramos):
+        if unidos and ini <= unidos[-1][1]:
+            unidos[-1] = (unidos[-1][0], max(unidos[-1][1], fin))
+        else:
+            unidos.append((ini, fin))
+    return unidos
+
+
+def _jornada_de(fecha):
+    """Turno en el que se reporto algo, por la hora."""
+    return 'mañana' if (fecha.hour, fecha.minute) < (14, 30) else 'tarde'
+
+
+def estadisticas_flota(conexion, desde, hasta, momento):
+    """Indicadores de la flota en el periodo. Todo sale de lo que la app ya registra."""
+    camionetas = [dict(f) for f in conexion.execute('''
+        SELECT id, patente, marca, modelo FROM camionetas WHERE activa = 1 ORDER BY patente
+    ''')]
+    ids = {c['id'] for c in camionetas}
+    n = len(camionetas)
+    horas_periodo = max((hasta - desde).total_seconds() / 3600, 1)
+    d_str, h_str = desde.isoformat(), hasta.isoformat()
+
+    tramos, eventos = paradas_por_camioneta(conexion, momento)
+    unidos = {cid: _unir(t) for cid, t in tramos.items() if cid in ids}
+
+    # Periodo anterior del mismo largo, para la comparacion.
+    largo = hasta - desde
+    ant_desde, ant_hasta = desde - largo, desde
+
+    def disponibilidad(a, b):
+        horas = max((b - a).total_seconds() / 3600, 1)
+        perdidas = sum(_solapa(u, a, b) for u in unidos.values())
+        return 100 * (1 - perdidas / (horas * n)) if n else 0
+
+    disp = disponibilidad(desde, hasta)
+    disp_ant = disponibilidad(ant_desde, ant_hasta)
+
+    # Curva diaria.
+    curva = []
+    dia = desde.replace(hour=0, minute=0, second=0, microsecond=0)
+    while dia <= hasta:
+        fin_dia = min(dia + timedelta(days=1), hasta)
+        if fin_dia > dia:
+            curva.append({'fecha': dia.strftime('%Y-%m-%d'),
+                          'valor': round(disponibilidad(max(dia, desde), fin_dia), 1)})
+        dia += timedelta(days=1)
+
+    # Reportes de los tecnicos en el periodo.
+    reportes = [dict(e) for e in conexion.execute('''
+        SELECT id, camioneta_id, importancia, estado, fecha, fecha_atendido, fecha_revision
+        FROM eventos_reportados WHERE fecha BETWEEN ? AND ?
+    ''', (d_str, h_str)) if e['camioneta_id'] in ids]
+    graves = [r for r in reportes if r['importancia'] in ('ALTA', 'URGENTE')]
+
+    # Tiempo medio entre fallas graves, por unidad.
+    mtbf = (n * horas_periodo / 24) / len(graves) if graves else None
+
+    # Tiempo medio de resolucion: del aviso del tecnico al cierre de soporte.
+    resoluciones = []
+    revisiones = []
+    for r in reportes:
+        ini = _dt(r['fecha'])
+        if r['estado'] == 'RESUELTO' and _dt(r['fecha_atendido']) and ini:
+            resoluciones.append((_dt(r['fecha_atendido']) - ini).total_seconds() / 3600)
+        if _dt(r['fecha_revision']) and ini:
+            revisiones.append((_dt(r['fecha_revision']) - ini).total_seconds() / 3600)
+    mttr = sum(resoluciones) / len(resoluciones) if resoluciones else None
+    revision = sum(revisiones) / len(revisiones) if revisiones else None
+
+    # Horas perdidas y paradas en el periodo.
+    horas_perdidas = sum(_solapa(u, desde, hasta) for u in unidos.values())
+    paradas_periodo = [(cid, t) for cid, lista in tramos.items() if cid in ids
+                       for t in lista if t[1] > desde and t[0] < hasta]
+
+    # Kilometros: diferencia entre el primer y el ultimo odometro del periodo.
+    km = {f['camioneta_id']: max(f['maximo'] - f['minimo'], 0) for f in conexion.execute('''
+        SELECT a.camioneta_id, MIN(ct.kilometraje) AS minimo, MAX(ct.kilometraje) AS maximo
+        FROM controles_tecnicos ct JOIN asignaciones a ON ct.asignacion_id = a.id
+        WHERE ct.kilometraje IS NOT NULL AND ct.fecha BETWEEN ? AND ?
+        GROUP BY a.camioneta_id
+    ''', (desde.strftime('%Y-%m-%d'), hasta.strftime('%Y-%m-%d')))}
+
+    # Estado de hoy, el mismo que ve en el panel.
+    estado_hoy = {f['id']: f['estado'] for f in panel_jefe(conexion, momento)['flota']}
+
+    ranking = []
+    for c in camionetas:
+        horas_fuera = _solapa(unidos.get(c['id'], []), desde, hasta)
+        suyos = [r for r in reportes if r['camioneta_id'] == c['id']]
+        paradas = [t for cid, t in paradas_periodo if cid == c['id']]
+        ultima = eventos.get(paradas[-1][2]) if paradas else None
+        ranking.append({
+            'id': c['id'],
+            'patente': c['patente'],
+            'vehiculo': ' '.join(x for x in (c['marca'], c['modelo']) if x),
+            'disponibilidad': round(100 * (1 - horas_fuera / horas_periodo), 1),
+            'horas_fuera': round(horas_fuera, 1),
+            'paradas': len(paradas),
+            'motivo': ultima['mensaje'] if ultima else '',
+            'reportes': len(suyos),
+            'graves': sum(1 for r in suyos if r['importancia'] in ('ALTA', 'URGENTE')),
+            'km': km.get(c['id']),
+            'estado': estado_hoy.get(c['id'], 'EN_ORDEN'),
+        })
+    ranking.sort(key=lambda r: (r['disponibilidad'], -r['graves'], -r['reportes'], r['patente']))
+
+    # Incidentes por sistema: lo que se arreglo, segun el calendario.
+    sistemas = {}
+    mantenimiento = {}
+    for h in conexion.execute('''
+        SELECT camioneta_id, tipo, detalle FROM vencimientos_historial
+        WHERE fecha_realizado BETWEEN ? AND ?
+    ''', (desde.strftime('%Y-%m-%d'), hasta.strftime('%Y-%m-%d'))):
+        if h['camioneta_id'] not in ids:
+            continue
+        if h['tipo'] == 'EVENTO':
+            cat = (h['detalle'] or 'Otro').split(':', 1)[0].strip() or 'Otro'
+            sistemas[cat] = sistemas.get(cat, 0) + 1
+        else:
+            config = TIPOS_VENCIMIENTO.get(h['tipo'])
+            etiqueta = config['etiqueta'] if config else h['tipo']
+            mantenimiento[etiqueta] = mantenimiento.get(etiqueta, 0) + 1
+    total_sistemas = sum(sistemas.values())
+    sistemas = [{'nombre': k, 'n': v, 'pct': round(100 * v / total_sistemas)}
+                for k, v in sorted(sistemas.items(), key=lambda x: -x[1])]
+
+    # Por turno: cuantos reportes, cuantos graves y si se hicieron los controles.
+    turnos = {j: {'reportes': 0, 'graves': 0, 'asignados': 0, 'controlados': 0}
+              for j in JORNADAS}
+    for r in reportes:
+        f = _dt(r['fecha'])
+        if f:
+            t = turnos[_jornada_de(f)]
+            t['reportes'] += 1
+            t['graves'] += r['importancia'] in ('ALTA', 'URGENTE')
+    for f in conexion.execute('''
+        SELECT a.jornada, COUNT(*) AS asignados,
+               SUM(CASE WHEN EXISTS (
+                   SELECT 1 FROM controles_tecnicos ct
+                   WHERE ct.asignacion_id = a.id AND ct.tipo_control = 'RETIRO'
+                     AND ct.finalizado = 1) THEN 1 ELSE 0 END) AS controlados
+        FROM asignaciones a
+        WHERE a.tecnico_id IS NOT NULL AND a.fecha BETWEEN ? AND ?
+        GROUP BY a.jornada
+    ''', (desde.strftime('%Y-%m-%d'), min(hasta, momento).strftime('%Y-%m-%d'))):
+        if f['jornada'] in turnos:
+            turnos[f['jornada']]['asignados'] = f['asignados']
+            turnos[f['jornada']]['controlados'] = f['controlados'] or 0
+    for t in turnos.values():
+        t['pct_graves'] = round(100 * t['graves'] / t['reportes']) if t['reportes'] else 0
+        t['cumplimiento'] = round(100 * t['controlados'] / t['asignados']) if t['asignados'] else None
+
+    return {
+        'n_camionetas': n,
+        'disponibilidad': round(disp, 1),
+        'disponibilidad_delta': round(disp - disp_ant, 1),
+        'mtbf_dias': round(mtbf, 1) if mtbf is not None else None,
+        'graves': len(graves),
+        'reportes_total': len(reportes),
+        'mttr_horas': round(mttr, 2) if mttr is not None else None,
+        'revision_horas': round(revision, 2) if revision is not None else None,
+        'resueltos': len(resoluciones),
+        'horas_perdidas': round(horas_perdidas, 1),
+        'paradas': len(paradas_periodo),
+        'curva': curva,
+        'ranking': ranking,
+        'top_perdidas': [r for r in sorted(ranking, key=lambda r: -r['horas_fuera'])
+                         if r['horas_fuera'] > 0][:5],
+        'sistemas': sistemas,
+        'total_sistemas': total_sistemas,
+        'mantenimiento': sorted(mantenimiento.items(), key=lambda x: -x[1]),
+        'turnos': turnos,
+        'jornadas': JORNADAS,
+    }
 
 # ============================================
 # CAMBIO DE MANOS DE LA CAMIONETA
@@ -3744,6 +3977,18 @@ def resumen_inicio(conexion, momento=None):
     """).fetchall()
     conteo_actividades = {fila['estado']: fila['n'] for fila in actividades}
 
+    # Cuales son las que estan en la calle, no solo cuantas: con el numero
+    # solo habia que entrar a buscarlas entre todas las cargadas.
+    actividades_en_calle = [dict(f) for f in conexion.execute("""
+        SELECT r.id, r.fecha, r.mensaje, r.destino_tipo, r.destino_zona,
+               u.nombre AS destino_nombre
+        FROM reclamos_coordinados r
+        LEFT JOIN usuarios u ON r.destino_usuario_id = u.id
+        WHERE r.activo = 1 AND COALESCE(r.estado, 'PENDIENTE') = 'PENDIENTE'
+        ORDER BY r.fecha DESC, r.id DESC
+        LIMIT 5
+    """)]
+
     # Cuantas camionetas tienen tecnico asignado hoy, para ver de un vistazo
     # si la planilla del dia esta cargada.
     asignadas = conexion.execute("""
@@ -3775,6 +4020,7 @@ def resumen_inicio(conexion, momento=None):
         'remitos_muestra': [dict(r) for r in espera_soporte[:4]] or
                            [dict(r) for r in espera_tecnico[:4]],
         'actividades_pendientes': conteo_actividades.get('PENDIENTE', 0),
+        'actividades_en_calle': actividades_en_calle,
         'actividades_sin_ver': resoluciones_sin_ver(conexion),
         'guardias': guardias_vigentes(conexion, momento),
         'asignadas_hoy': asignadas,
@@ -5290,82 +5536,210 @@ def guardar_control_rapido():
 def jefe():
     if not autorizado('jefe'):
         return redirect(url_for('login'))
-    
-    fecha_actual = ahora().strftime('%d/%m/%Y')
-    conexion = get_db()
-    
-    try:
-        camionetas = conexion.execute('''
-            SELECT id, patente FROM camionetas WHERE activa = 1 ORDER BY patente
-        ''').fetchall()
-        
-        reportes = conexion.execute('''
-            SELECT r.estado, r.elemento, r.descripcion, r.fecha_hora, r.fecha_resolucion, 
-                   r.comentario_resolucion, r.resuelto_por,
-                   COALESCE(cam.patente, 'SIN ASIGNAR') as patente,
-                   COALESCE(u.nombre, 'TÉCNICO DESCONOCIDO') as tecnico_nombre
-            FROM reportes r
-            LEFT JOIN controles co ON r.control_id = co.id
-            LEFT JOIN asignaciones a ON co.asignacion_id = a.id
-            LEFT JOIN camionetas cam ON a.camioneta_id = cam.id
-            LEFT JOIN usuarios u ON a.tecnico_id = u.id
-            WHERE r.fecha_hora >= date('now', '-30 days')
-            ORDER BY r.fecha_hora DESC
-        ''').fetchall()
-        
-        # Camionetas paradas por un reporte grave. Van con su propio estado:
-        # no es lo mismo que le falte un elemento a que no pueda salir.
-        bloqueadas = camionetas_bloqueadas(conexion)
-        bloqueadas_por_patente = {b['patente']: b for b in bloqueadas.values()}
 
-        resumen_flota = {}
-        for camioneta in camionetas:
-            patente = camioneta['patente']
-            parada = bloqueadas_por_patente.get(patente)
-            resumen_flota[patente] = {
-                'estado_general': 'FUERA_DE_SERVICIO' if parada else 'OK',
-                'historial': [],
-                'ultimo_registro': 'Sin registros',
-                'bloqueo': parada,
-            }
-        
-        # `reportes` viene ordenado de más nuevo a más viejo.
-        for r in reportes:
-            patente = r['patente']
-            if patente in resumen_flota:
-                # Solo el primero es el último registro: antes se pisaba en cada
-                # vuelta y terminaba mostrando la fecha del reporte más ANTIGUO.
-                if not resumen_flota[patente]['historial'] and r['fecha_hora']:
-                    resumen_flota[patente]['ultimo_registro'] = r['fecha_hora'][:16].replace('T', ' ')
-                
-                resumen_flota[patente]['historial'].append({
-                    'fecha': r['fecha_hora'][:16].replace('T', ' ') if r['fecha_hora'] else '-',
-                    'elemento': r['elemento'],
-                    'estado': r['estado'],
-                    'descripcion': r['descripcion'] or '-',
-                    'tecnico': r['tecnico_nombre'] or '-',
-                    'fecha_resolucion': r['fecha_resolucion'] or '-',
-                    'resuelto_por': r['resuelto_por'] or '-',
-                    'comentario_resolucion': r['comentario_resolucion'] or '-'
-                })
-                
-                if resumen_flota[patente]['estado_general'] == 'FUERA_DE_SERVICIO':
-                    pass  # ya esta en el peor estado: no lo pisa nada
-                elif r['estado'] == 'FALLA':
-                    resumen_flota[patente]['estado_general'] = 'FALLA'
-                elif r['estado'] == 'FALTANTE' and resumen_flota[patente]['estado_general'] != 'FALLA':
-                    resumen_flota[patente]['estado_general'] = 'ALERTA'
-                elif r['estado'] == 'OBSERVACION' and resumen_flota[patente]['estado_general'] == 'OK':
-                    resumen_flota[patente]['estado_general'] = 'ALERTA'
-        
+    momento = ahora()
+    conexion = get_db()
+    try:
+        datos = panel_jefe(conexion, momento)
     finally:
         conexion.close()
-    
+
     return render_template('jefe.html',
-                         resumen_flota=resumen_flota,
-                         novedades=obtener_notificaciones(session.get('rol'),
-                                                          session['usuario_id']),
-                         fecha_actual=fecha_actual)
+                           fecha_actual=momento.strftime('%d/%m/%Y'),
+                           hora_actual=momento.strftime('%H:%M'),
+                           **datos)
+
+
+# Ventana del indice critico. Tres meses alcanzan para ver cual camioneta
+# viene dando problemas sin arrastrar lo que ya se arreglo hace un año.
+DIAS_INDICE_CRITICO = 90
+
+
+def panel_jefe(conexion, momento):
+    """Lo que el jefe necesita de la flota: si sale, quien la tiene y por que no.
+
+    A proposito no trae el detalle de los controles (que elemento falto, que
+    se repuso): eso lo resuelve soporte. Aca va el estado de cada camioneta,
+    el motivo cuando no puede salir, quien la tiene hoy, la guardia y cuantas
+    veces se le hizo cada trabajo.
+    """
+    hoy = momento.strftime('%Y-%m-%d')
+    desde_critico = (momento - timedelta(days=DIAS_INDICE_CRITICO)).strftime('%Y-%m-%d')
+
+    camionetas = [dict(f) for f in conexion.execute('''
+        SELECT id, patente, marca, modelo, anio FROM camionetas
+        WHERE activa = 1 ORDER BY patente
+    ''')]
+
+    bloqueadas = camionetas_bloqueadas(conexion)
+
+    # Reportes de los tecnicos que siguen abiertos (sin contar los que ya la
+    # dejaron fuera de servicio, que van aparte con su motivo).
+    abiertos = {}
+    for e in consultar_eventos(conexion, solo_abiertos=True):
+        abiertos.setdefault(e['camioneta_id'], []).append(e)
+
+    # Vencimientos del calendario: VTV o seguro vencido es motivo de alerta
+    # para el jefe aunque la camioneta ande perfecta.
+    vencimientos = {}
+    for v in estado_flota(conexion, momento):
+        vencimientos.setdefault(v['camioneta_id'], []).append({
+            'etiqueta': v['etiqueta'],
+            'estado': v['estado'],
+            'detalle': v['detalle'],
+            'fecha_vencimiento': v['fecha_vencimiento'],
+            'km_actual': v['km_actual'],
+        })
+
+    # Quien la tiene hoy, por jornada.
+    hoy_por_camioneta = {}
+    for a in conexion.execute('''
+        SELECT a.camioneta_id, a.jornada, a.zona,
+               u1.nombre AS tecnico, u2.nombre AS tecnico2
+        FROM asignaciones a
+        LEFT JOIN usuarios u1 ON a.tecnico_id = u1.id
+        LEFT JOIN usuarios u2 ON a.tecnico2_id = u2.id
+        WHERE a.fecha = ? AND a.tecnico_id IS NOT NULL
+        ORDER BY CASE a.jornada WHEN 'mañana' THEN 0 ELSE 1 END
+    ''', (hoy,)):
+        hoy_por_camioneta.setdefault(a['camioneta_id'], []).append({
+            'jornada': a['jornada'],
+            'tecnico': a['tecnico'],
+            'tecnico2': a['tecnico2'] or '',
+            'zona': a['zona'] or '',
+        })
+
+    # Las que estan fisicamente con alguien (retiradas y sin devolver).
+    custodias = {c['camioneta_id']: c for c in custodias_abiertas(conexion, momento)}
+
+    # Registros criticos: reportes graves de los tecnicos y fallas marcadas en
+    # los controles. Lo que falto o se perdio no cuenta: no es un problema de
+    # la camioneta.
+    criticos = {}
+    for f in conexion.execute('''
+        SELECT camioneta_id, COUNT(*) AS n FROM eventos_reportados
+        WHERE importancia IN ('ALTA', 'URGENTE') AND fecha >= ?
+        GROUP BY camioneta_id
+    ''', (desde_critico,)):
+        criticos[f['camioneta_id']] = criticos.get(f['camioneta_id'], 0) + f['n']
+    for f in conexion.execute('''
+        SELECT a.camioneta_id, COUNT(*) AS n
+        FROM reportes r
+        JOIN controles co ON r.control_id = co.id
+        JOIN asignaciones a ON co.asignacion_id = a.id
+        WHERE r.estado = 'FALLA' AND r.fecha_hora >= ?
+        GROUP BY a.camioneta_id
+    ''', (desde_critico,)):
+        criticos[f['camioneta_id']] = criticos.get(f['camioneta_id'], 0) + f['n']
+    total_criticos = sum(criticos.get(c['id'], 0) for c in camionetas)
+
+    # Trabajos del calendario: cuantas veces se hizo cada cosa. Los eventos se
+    # abren por lo que se hizo (Cubiertas, Frenos...), que es lo que interesa
+    # contar; el resto va por tipo (Service, VTV...).
+    trabajos = {}
+    for h in conexion.execute('''
+        SELECT h.camioneta_id, h.tipo, h.detalle, h.fecha_realizado,
+               h.km_realizado, h.observacion
+        FROM vencimientos_historial h
+        ORDER BY h.fecha_realizado DESC, h.id DESC
+    '''):
+        if h['tipo'] == 'EVENTO':
+            categoria = (h['detalle'] or 'Otro').split(':', 1)[0].strip() or 'Otro'
+        else:
+            config = TIPOS_VENCIMIENTO.get(h['tipo'])
+            categoria = config['etiqueta'] if config else h['tipo']
+        registro = trabajos.setdefault(h['camioneta_id'], {'conteo': {}, 'ultimos': []})
+        registro['conteo'][categoria] = registro['conteo'].get(categoria, 0) + 1
+        if len(registro['ultimos']) < 12:
+            registro['ultimos'].append({
+                'fecha': h['fecha_realizado'],
+                'categoria': categoria,
+                'detalle': h['detalle'] or '',
+                'observacion': h['observacion'] or '',
+                'km': h['km_realizado'],
+            })
+
+    flota = []
+    for numero, c in enumerate(camionetas, start=1):
+        bloqueo = bloqueadas.get(c['id'])
+        reportes_abiertos = [e for e in abiertos.get(c['id'], [])
+                             if not bloqueo or e['id'] != bloqueo['id']]
+        vencidos = [v for v in vencimientos.get(c['id'], []) if v['estado'] == 'VENCIDO']
+
+        alertas = [f'{v["etiqueta"]} vencida' if v['etiqueta'] == 'VTV'
+                   else f'{v["etiqueta"]} vencido' for v in vencidos]
+        alertas += [f'Reporte {e["importancia_etiqueta"].lower()}: {e["mensaje"]}'
+                    for e in reportes_abiertos]
+
+        if bloqueo:
+            estado = 'FUERA_DE_SERVICIO'
+        elif alertas:
+            estado = 'ALERTA'
+        else:
+            estado = 'EN_ORDEN'
+
+        custodia = custodias.get(c['id'])
+        n_criticos = criticos.get(c['id'], 0)
+        km = next((v['km_actual'] for v in vencimientos.get(c['id'], [])
+                   if v['km_actual'] is not None), None)
+
+        flota.append({
+            'numero': numero,
+            'id': c['id'],
+            'patente': c['patente'],
+            'vehiculo': ' '.join(str(x) for x in (c['marca'], c['modelo']) if x),
+            'anio': c['anio'],
+            'km': km,
+            'estado': estado,
+            'bloqueo': {
+                'mensaje': bloqueo['mensaje'],
+                'importancia': IMPORTANCIA_EVENTO.get(bloqueo['importancia'], {}).get(
+                    'etiqueta', bloqueo['importancia']),
+                'reportado_por': bloqueo['reportado_por'] or '',
+                'fecha': (bloqueo['fecha'] or '')[:16].replace('T', ' '),
+                'revisado_por': bloqueo['revisado_por'] or 'soporte',
+                'fecha_revision': (bloqueo['fecha_revision'] or '')[:16].replace('T', ' '),
+                'comentario': bloqueo['comentario_soporte'] or '',
+                'estado': ESTADOS_EVENTO.get(bloqueo['estado'], bloqueo['estado']),
+            } if bloqueo else None,
+            'alertas': alertas,
+            'hoy': hoy_por_camioneta.get(c['id'], []),
+            'custodia': {
+                'tecnico': custodia['tecnico'],
+                'desde': custodia['retirada_fecha'],
+                'jornada': custodia['retirada_jornada'],
+                'urgencia': custodia['urgencia'],
+                'vencida': custodia['vencida'],
+            } if custodia else None,
+            'criticos': n_criticos,
+            'criticos_pct': round(100 * n_criticos / total_criticos) if total_criticos else 0,
+            'vencimientos': vencimientos.get(c['id'], []),
+            'trabajos': trabajos.get(c['id'], {'conteo': {}, 'ultimos': []}),
+        })
+
+    bajas = [dict(f) for f in conexion.execute('''
+        SELECT patente, marca, modelo, motivo_baja, baja_por, fecha_baja
+        FROM camionetas WHERE activa = 0
+        ORDER BY COALESCE(fecha_baja, '') DESC, patente
+    ''')]
+
+    conteo = {e: sum(1 for f in flota if f['estado'] == e)
+              for e in ('EN_ORDEN', 'ALERTA', 'FUERA_DE_SERVICIO')}
+    disponibles = conteo['EN_ORDEN'] + conteo['ALERTA']
+
+    return {
+        'flota': flota,
+        'conteo': conteo,
+        'disponibles': disponibles,
+        'disponibles_pct': round(100 * disponibles / len(flota)) if flota else 0,
+        'asignadas_hoy': sum(1 for f in flota if f['hoy']),
+        'en_la_calle': sum(1 for f in flota if f['custodia']),
+        'bajas': bajas,
+        'guardias': guardias_vigentes(conexion, momento),
+        'total_criticos': total_criticos,
+        'dias_indice_critico': DIAS_INDICE_CRITICO,
+        'jornadas': JORNADAS,
+    }
 
 # ============================================
 # RUTAS DE HISTORIAL
@@ -6529,8 +6903,24 @@ def config_camionetas():
 
         if accion == 'alternar':
             nueva = 0 if camioneta['activa'] else 1
-            # Baja lógica: se conserva todo el historial de la camioneta.
-            conexion.execute('UPDATE camionetas SET activa = ? WHERE id = ?', (nueva, camioneta_id))
+            # Baja lógica: se conserva todo el historial de la camioneta. El
+            # motivo queda anotado: el jefe ve por qué salió de la flota.
+            if nueva == 0:
+                motivo = (request.form.get('motivo') or '').strip()
+                if not motivo:
+                    return _volver_config('camionetas',
+                                          error='Contá por qué se da de baja la camioneta.')
+                conexion.execute('''
+                    UPDATE camionetas SET activa = 0, motivo_baja = ?, baja_por = ?,
+                                          fecha_baja = ?
+                    WHERE id = ?
+                ''', (motivo[:300], session.get('nombre'), ahora().isoformat(), camioneta_id))
+            else:
+                conexion.execute('''
+                    UPDATE camionetas SET activa = 1, motivo_baja = NULL, baja_por = NULL,
+                                          fecha_baja = NULL
+                    WHERE id = ?
+                ''', (camioneta_id,))
             conexion.commit()
             estado = 'reactivada' if nueva else 'dada de baja'
             return _volver_config('camionetas', mensaje=f'Camioneta {camioneta["patente"]} {estado}.')

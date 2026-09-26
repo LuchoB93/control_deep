@@ -1,0 +1,60 @@
+{# Encabezado de las pantallas de jefatura. Trae su propio CSS: lo usan el
+   panel (claro) y las estadisticas (oscuro), y tiene que verse igual en las dos.
+   `jefe_tab` marca la pestaña activa. #}
+<style>
+    .jf-header { background: #111a2e; color: #fff; border-radius: 12px;
+                 padding: 16px 20px 0; margin-bottom: 18px; border: 1px solid #1f2a44; }
+    .jf-header-top { display: flex; justify-content: space-between; align-items: center;
+                     flex-wrap: wrap; gap: 12px; }
+    .jf-marca { display: flex; align-items: center; gap: 12px; }
+    .jf-logo { width: 40px; height: 40px; border-radius: 10px; background: #26324d;
+               display: inline-flex; align-items: center; justify-content: center;
+               font-size: 1.2rem; }
+    .jf-marca h1 { font-size: 1.15rem; font-weight: 700; margin: 0; color: #fff; }
+    .jf-sub { font-size: .8rem; color: #a9b4c9; }
+    .jf-derecha { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+                  font-size: .82rem; }
+    .jf-actualizado { border: 1px solid #34405c; border-radius: 8px; padding: 5px 10px;
+                      color: #d4dbe8; }
+    .jf-usuario { text-align: right; line-height: 1.2; }
+    .jf-usuario small { color: #a9b4c9; }
+    .jf-salir { color: #d4dbe8; text-decoration: none; }
+    .jf-salir:hover { color: #fff; }
+    .jf-nav { display: flex; gap: 4px; margin-top: 14px; overflow-x: auto; padding-bottom: 10px; }
+    .jf-nav a { color: #c9d2e3; font-size: .84rem; font-weight: 600; padding: 7px 12px;
+                border-radius: 8px; text-decoration: none; white-space: nowrap; }
+    .jf-nav a:hover { background: #1f2a44; color: #fff; }
+    .jf-nav a.activo { background: #26324d; color: #fff; box-shadow: inset 0 -2px 0 #3987e5; }
+    @media (max-width: 576px) {
+        .jf-header { padding: 12px 14px 0; }
+        .jf-usuario { display: none; }
+    }
+</style>
+<header class="jf-header">
+    <div class="jf-header-top">
+        <div class="jf-marca">
+            <span class="jf-logo"><i class="bi bi-truck"></i></span>
+            <div>
+                <h1>Panel de Jefatura</h1>
+                <div class="jf-sub">
+                    {{ 'Estadísticas de la flota' if jefe_tab == 'estadisticas' else 'Estado de la flota' }}
+                    · <i class="bi bi-calendar3"></i> {{ fecha_actual }}
+                </div>
+            </div>
+        </div>
+        <div class="jf-derecha">
+            <span class="jf-actualizado"><i class="bi bi-arrow-repeat"></i> Actualizado {{ hora_actual }}</span>
+            <span class="jf-usuario">
+                <strong>{{ session.nombre }}</strong><br><small>Jefatura</small>
+            </span>
+            <a href="{{ url_for('logout') }}" class="jf-salir"><i class="bi bi-box-arrow-right"></i> Salir</a>
+        </div>
+    </div>
+    <nav class="jf-nav">
+        <a href="{{ url_for('jefe') }}" class="{{ 'activo' if jefe_tab == 'flota' }}"><i class="bi bi-grid-1x2"></i> Estado de flota</a>
+        <a href="{{ url_for('jefe_estadisticas') }}" class="{{ 'activo' if jefe_tab == 'estadisticas' }}"><i class="bi bi-bar-chart"></i> Ver estadísticas</a>
+        <a href="{{ url_for('distribucion') }}"><i class="bi bi-people"></i> Distribución semanal</a>
+        <a href="{{ url_for('calendario') }}"><i class="bi bi-calendar3"></i> Calendario de mantenimiento</a>
+        <a href="{{ url_for('modulos') }}"><i class="bi bi-grid-3x3-gap"></i> Otros módulos</a>
+    </nav>
+</header>

@@ -8,345 +8,504 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
-        .jefe-novedades .card-body { max-height: 320px; overflow-y: auto; }
-        .novedad { display: flex; justify-content: space-between; align-items: flex-start;
-                   gap: 10px; padding: 8px 10px; border-left: 3px solid #adb5bd;
-                   background: #f8f9fa; border-radius: 4px; margin-bottom: 6px;
-                   font-size: .9rem; }
-        .novedad-actividad { border-left-color: #198754; background: #f1f8f4; }
-        .novedad-fecha { display: block; font-size: .75rem; color: #888; }
+        /* Panel de jefatura: estado de la flota de un vistazo. Todo lo de los
+           controles (que elemento falto, que se repuso) queda en soporte. */
+        body { background: #f1f4f8; }
+        .jf-wrap { max-width: 1320px; margin: 0 auto; padding: 18px 16px 40px; }
+
+        /* Tarjetas de resumen */
+        .jf-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+                   gap: 12px; margin-bottom: 18px; }
+        .jf-kpi { background: #fff; border-radius: 10px; padding: 14px 16px;
+                  border: 1px solid #e3e8ef; border-top: 4px solid #6c7a93; }
+        .jf-kpi.k-total { border-top-color: #4f6bed; }
+        .jf-kpi.k-ok { border-top-color: #198754; }
+        .jf-kpi.k-alerta { border-top-color: #f59f00; }
+        .jf-kpi.k-fuera { border-top-color: #dc3545; }
+        .jf-kpi.k-baja { border-top-color: #868e96; }
+        .jf-kpi-top { display: flex; justify-content: space-between; align-items: center;
+                      font-size: .72rem; font-weight: 700; letter-spacing: .5px;
+                      text-transform: uppercase; color: #5b6478; }
+        .jf-kpi-num { font-size: 1.9rem; font-weight: 800; line-height: 1.1; margin-top: 6px; }
+        .jf-kpi-num small { font-size: .85rem; font-weight: 500; color: #6c757d; }
+        .jf-kpi-pie { font-size: .76rem; color: #6c757d; margin-top: 4px; }
+        .jf-tag { font-size: .68rem; font-weight: 700; border-radius: 6px; padding: 2px 7px;
+                  text-transform: none; letter-spacing: 0; }
+        .t-ok { background: #e6f4ec; color: #146c43; }
+        .t-alerta { background: #fff4d6; color: #946200; }
+        .t-fuera { background: #fde8ea; color: #b02a37; }
+        .t-neutro { background: #eef1f6; color: #4a5468; }
+
+        /* Barra de filtros */
+        .jf-filtros { background: #fff; border: 1px solid #e3e8ef; border-radius: 10px;
+                      padding: 10px 14px; display: flex; align-items: center; gap: 8px;
+                      flex-wrap: wrap; margin-bottom: 14px; }
+        .jf-filtros-label { font-size: .72rem; font-weight: 700; color: #5b6478;
+                            letter-spacing: .5px; margin-right: 4px; }
+        .jf-chip { border: 0; background: none; font-size: .82rem; font-weight: 600;
+                   color: #4a5468; border-radius: 8px; padding: 5px 10px; }
+        .jf-chip:hover { background: #f1f4f8; }
+        .jf-chip.activo { background: #111a2e; color: #fff; }
+        .jf-chip .n { font-size: .7rem; border-radius: 6px; padding: 1px 6px; margin-left: 4px;
+                      background: #eef1f6; color: #4a5468; }
+        .jf-chip.activo .n { background: #34405c; color: #fff; }
+        .jf-buscar { margin-left: auto; position: relative; min-width: 220px; flex: 0 1 280px; }
+        .jf-buscar i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+                       color: #8b94a7; }
+        .jf-buscar input { padding-left: 30px; font-size: .85rem; }
+
+        /* Grilla de camionetas */
+        .jf-grilla { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+                     gap: 14px; }
+        .jf-card { background: #fff; border: 1px solid #e3e8ef; border-radius: 10px;
+                   display: flex; flex-direction: column; overflow: hidden; }
+        .jf-card.s-FUERA_DE_SERVICIO { border-color: #f1aeb5; box-shadow: 0 0 0 1px #f8d7da; }
+        .jf-card-cuerpo { padding: 14px 16px; flex: 1; }
+        .jf-card-top { display: flex; justify-content: space-between; align-items: flex-start;
+                       gap: 8px; }
+        .jf-num { font-size: .7rem; font-weight: 700; letter-spacing: .6px; color: #8b94a7;
+                  text-transform: uppercase; }
+        .s-FUERA_DE_SERVICIO .jf-num { color: #c92a3a; }
+        .jf-patente { font-size: 1.1rem; font-weight: 800; letter-spacing: .5px; margin-top: 2px; }
+        .jf-vehiculo { font-size: .8rem; color: #6c757d; }
+        .jf-pill { font-size: .72rem; font-weight: 700; border-radius: 20px; padding: 3px 9px;
+                   white-space: nowrap; border: 1px solid transparent; }
+        .jf-pill.p-EN_ORDEN { background: #e6f4ec; color: #146c43; border-color: #b7dfc6; }
+        .jf-pill.p-ALERTA { background: #fff4d6; color: #946200; border-color: #ffe08a; }
+        .jf-pill.p-FUERA_DE_SERVICIO { background: #c92a3a; color: #fff; }
+
+        .jf-caja { border-radius: 8px; padding: 9px 11px; margin: 12px 0; font-size: .8rem;
+                   border: 1px solid; }
+        .jf-caja-titulo { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+        .jf-caja.c-ok { background: #f3faf6; border-color: #d3eadb; color: #146c43; }
+        .jf-caja.c-alerta { background: #fffaeb; border-color: #ffe7a3; color: #7a5200; }
+        .jf-caja.c-fuera { background: #fff5f5; border-color: #f5c2c7; color: #9b1c2a; }
+        .jf-caja-texto { color: #3d4555; margin-top: 3px; }
+        .jf-caja-meta { color: #6c757d; font-size: .74rem; margin-top: 4px; }
+        .jf-caja ul { margin: 4px 0 0; padding-left: 16px; color: #3d4555; }
+        .jf-cita { font-style: italic; background: #fff; border: 1px solid #f5c2c7;
+                   border-radius: 6px; padding: 5px 8px; margin-top: 6px; color: #5b6478; }
+
+        .jf-fila { display: flex; justify-content: space-between; gap: 10px; font-size: .8rem;
+                   padding: 5px 0; border-bottom: 1px dashed #edf0f4; }
+        .jf-fila:last-child { border-bottom: 0; }
+        .jf-fila span:first-child { color: #6c757d; white-space: nowrap; }
+        .jf-fila span:last-child { text-align: right; font-weight: 600; color: #2b3240; }
+
+        .jf-critico { margin-top: 8px; }
+        .jf-critico-top { display: flex; justify-content: space-between; font-size: .76rem;
+                          color: #6c757d; }
+        .jf-barra { height: 6px; border-radius: 4px; background: #edf0f4; margin-top: 4px;
+                    overflow: hidden; }
+        .jf-barra div { height: 100%; border-radius: 4px; background: #adb5bd; }
+        .jf-barra .b-medio { background: #f59f00; }
+        .jf-barra .b-alto { background: #dc3545; }
+
+        .jf-card-pie { display: flex; justify-content: space-between; align-items: center;
+                       padding: 9px 16px; border-top: 1px solid #edf0f4; background: #fafbfd;
+                       font-size: .76rem; color: #6c757d; }
+        .jf-card-pie button { border: 0; background: none; font-weight: 700; color: #2b3240;
+                              font-size: .8rem; }
+        .jf-card-pie button:hover { color: #4f6bed; }
+        .s-FUERA_DE_SERVICIO .jf-card-pie { background: #fff5f5; color: #c92a3a; }
+
+        /* Columna de al lado: guardia, retiradas, bajas */
+        .jf-panel { background: #fff; border: 1px solid #e3e8ef; border-radius: 10px;
+                    padding: 14px 16px; margin-bottom: 14px; }
+        .jf-panel h2 { font-size: .9rem; font-weight: 700; margin-bottom: 10px;
+                       display: flex; align-items: center; gap: 6px; }
+        .jf-panel-sub { font-size: .72rem; font-weight: 700; color: #8b94a7;
+                        text-transform: uppercase; letter-spacing: .5px; margin: 8px 0 4px; }
+        .jf-persona { display: inline-flex; align-items: center; gap: 6px; background: #eef1f6;
+                      border-radius: 20px; padding: 3px 10px 3px 4px; font-size: .8rem;
+                      margin: 0 4px 4px 0; }
+        .jf-avatar { width: 22px; height: 22px; border-radius: 50%; background: #4f6bed;
+                     color: #fff; font-size: .66rem; font-weight: 700;
+                     display: inline-flex; align-items: center; justify-content: center; }
+        .jf-persona.alt .jf-avatar { background: #8b94a7; }
+        .jf-item { font-size: .8rem; padding: 7px 0; border-bottom: 1px solid #edf0f4; }
+        .jf-item:last-child { border-bottom: 0; }
+        .jf-vacio { font-size: .8rem; color: #8b94a7; }
+        .jf-vacio-grilla { grid-column: 1 / -1; text-align: center; color: #8b94a7;
+                           padding: 30px; background: #fff; border-radius: 10px;
+                           border: 1px dashed #d5dbe5; }
+
+        /* Ficha de la camioneta */
+        .ficha-seccion { margin-bottom: 18px; }
+        .ficha-seccion h6 { font-size: .78rem; font-weight: 700; color: #5b6478;
+                            text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+        .ficha-conteos { display: flex; flex-wrap: wrap; gap: 8px; }
+        .ficha-conteo { background: #f1f4f8; border-radius: 8px; padding: 8px 12px; min-width: 96px; }
+        .ficha-conteo b { font-size: 1.25rem; display: block; line-height: 1.1; }
+        .ficha-conteo span { font-size: .74rem; color: #6c757d; }
+        .ficha-venc { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem;
+                      padding: 7px 10px; border-radius: 6px; margin-bottom: 5px;
+                      background: #f8f9fb; border-left: 4px solid #adb5bd; }
+        .ficha-venc.v-VENCIDO { border-left-color: #dc3545; background: #fff5f5; }
+        .ficha-venc.v-POR_VENCER { border-left-color: #f59f00; background: #fffaeb; }
+        .ficha-venc.v-AL_DIA { border-left-color: #198754; }
+        .ficha-tabla { font-size: .82rem; }
+
+        @media (max-width: 576px) {
+            .jf-wrap { padding: 12px 10px 30px; }
+            .jf-buscar { margin-left: 0; flex: 1 1 100%; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="jefe-header d-flex justify-content-between align-items-center">
-            <div>
-                <h1><i class="bi bi-graph-up-arrow"></i> Panel de Jefatura</h1>
-                <p class="mb-0 opacity-75">
-                    <i class="bi bi-calendar3"></i> {{ fecha_actual }} | 
-                    <i class="bi bi-truck"></i> Monitoreo de Flota
-                </p>
-            </div>
-            <div>
-                <button class="btn-estadisticas" onclick="abrirEstadisticas()">
-                    <i class="bi bi-bar-chart"></i> Ver Estadísticas
-                </button>
-                <a href="{{ url_for('distribucion') }}" class="btn btn-outline-light ms-2">
-                    <i class="bi bi-people"></i> Distribución semanal
-                </a>
-                <a href="{{ url_for('calendario') }}" class="btn btn-outline-light ms-2">
-                    <i class="bi bi-calendar3"></i> Calendario
-                </a>
-                <a href="{{ url_for('modulos') }}" class="btn btn-outline-light ms-2">
-                    <i class="bi bi-grid-3x3-gap"></i> Otros módulos
-                </a>
-                <a href="{{ url_for('logout') }}" class="btn btn-outline-light ms-2">
-                    <i class="bi bi-box-arrow-right"></i> Salir
-                </a>
+<div class="jf-wrap">
+
+    {% set jefe_tab = 'flota' %}
+    {% include '_jefe_header.html' %}
+
+    <!-- Resumen -->
+    <section class="jf-kpis">
+        <div class="jf-kpi k-total">
+            <div class="jf-kpi-top">Flota total <span class="jf-tag t-neutro">{{ disponibles_pct }}% disponible</span></div>
+            <div class="jf-kpi-num">{{ disponibles }} <small>/ {{ flota|length }} pueden salir</small></div>
+            <div class="jf-kpi-pie">{{ asignadas_hoy }} asignada(s) hoy · {{ en_la_calle }} retirada(s) ahora</div>
+        </div>
+        <div class="jf-kpi k-ok">
+            <div class="jf-kpi-top">En orden <span class="jf-tag t-ok">Operativas</span></div>
+            <div class="jf-kpi-num">{{ conteo.EN_ORDEN }} <small>sin novedades</small></div>
+            <div class="jf-kpi-pie">Sin reportes abiertos ni vencimientos</div>
+        </div>
+        <div class="jf-kpi k-alerta">
+            <div class="jf-kpi-top">En alerta <span class="jf-tag t-alerta">Salen igual</span></div>
+            <div class="jf-kpi-num">{{ conteo.ALERTA }} <small>unidad(es)</small></div>
+            <div class="jf-kpi-pie">Reporte abierto o algo vencido</div>
+        </div>
+        <div class="jf-kpi k-fuera">
+            <div class="jf-kpi-top">Fuera de servicio <span class="jf-tag t-fuera">No salen</span></div>
+            <div class="jf-kpi-num">{{ conteo.FUERA_DE_SERVICIO }} <small>parada(s)</small></div>
+            <div class="jf-kpi-pie">
+                {% set paradas = flota|selectattr('estado', 'equalto', 'FUERA_DE_SERVICIO')|map(attribute='patente')|list %}
+                {{ paradas|join(', ') if paradas else 'Ninguna parada por falla' }}
             </div>
         </div>
-
-        <!-- Resumen rápido de flota -->
-        <div class="row">
-            <div class="col-md-2 col-6">
-                <div class="stat-card primary">
-                    <div class="number">{{ resumen_flota|length }}</div>
-                    <div class="label"><i class="bi bi-truck"></i> Camionetas Activas</div>
-                </div>
-            </div>
-            <div class="col-md-2 col-6">
-                {# Las que soporte saco de circulacion al revisar un reporte.
-                   No pueden salir hasta que soporte las libere. #}
-                <div class="stat-card danger">
-                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'FUERA_DE_SERVICIO')|list|length }}</div>
-                    <div class="label"><i class="bi bi-lock-fill"></i> Fuera de servicio</div>
-                </div>
-            </div>
-            <div class="col-md-2 col-6">
-                <div class="stat-card danger">
-                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'FALLA')|list|length }}</div>
-                    <div class="label"><i class="bi bi-exclamation-triangle"></i> Con Fallas</div>
-                </div>
-            </div>
-            <div class="col-md-2 col-6">
-                <div class="stat-card warning">
-                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'ALERTA')|list|length }}</div>
-                    <div class="label"><i class="bi bi-exclamation-circle"></i> En Alerta</div>
-                </div>
-            </div>
-            <div class="col-md-2 col-6">
-                <div class="stat-card success">
-                    <div class="number">{{ resumen_flota.values()|selectattr('estado_general', 'equalto', 'OK')|list|length }}</div>
-                    <div class="label"><i class="bi bi-check-circle"></i> En Orden</div>
-                </div>
-            </div>
+        <div class="jf-kpi k-baja">
+            <div class="jf-kpi-top">Dadas de baja <span class="jf-tag t-neutro">Fuera de flota</span></div>
+            <div class="jf-kpi-num">{{ bajas|length }} <small>unidad(es)</small></div>
+            <div class="jf-kpi-pie">{{ 'Ver el motivo abajo a la derecha' if bajas else 'Ninguna' }}</div>
         </div>
+    </section>
 
-        <!-- Novedades: actividades que cerraron los técnicos y otros avisos
-             para jefatura. Es la base del futuro panel de volumen de
-             actividad por técnico. -->
-        <div class="card jefe-novedades mt-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <strong>
-                    <i class="bi bi-bell"></i> Novedades
-                    <span class="badge bg-primary" id="novedades-contador">{{ novedades|length }}</span>
-                </strong>
-                <small class="text-muted">Actividades resueltas por los técnicos y avisos de soporte</small>
+    <div class="row g-3">
+        <!-- Camionetas -->
+        <div class="col-lg-9">
+            <div class="jf-filtros">
+                <span class="jf-filtros-label">FILTRAR:</span>
+                <button type="button" class="jf-chip activo" data-filtro="">Todas <span class="n">{{ flota|length }}</span></button>
+                <button type="button" class="jf-chip" data-filtro="EN_ORDEN">En orden <span class="n">{{ conteo.EN_ORDEN }}</span></button>
+                <button type="button" class="jf-chip" data-filtro="ALERTA">En alerta <span class="n">{{ conteo.ALERTA }}</span></button>
+                <button type="button" class="jf-chip" data-filtro="FUERA_DE_SERVICIO">Fuera de servicio <span class="n">{{ conteo.FUERA_DE_SERVICIO }}</span></button>
+                <div class="jf-buscar">
+                    <i class="bi bi-search"></i>
+                    <input type="search" id="jf-buscar" class="form-control form-control-sm"
+                           placeholder="Buscar patente o técnico...">
+                </div>
             </div>
-            <div class="card-body" id="novedades-lista">
-                {% for n in novedades %}
-                    <div class="novedad {{ 'novedad-actividad' if n.tipo == 'ACTIVIDAD_RESUELTA' }}"
-                         id="novedad-{{ n.id }}">
-                        <div class="novedad-texto">
-                            <span class="novedad-fecha">{{ n.fecha[:16]|replace('T', ' ') }}</span>
-                            {{ n.mensaje }}
+
+            <div class="jf-grilla" id="jf-grilla">
+                {% for c in flota %}
+                    {% set busqueda = [c.patente, c.vehiculo]
+                                      + c.hoy|map(attribute='tecnico')|list
+                                      + c.hoy|map(attribute='tecnico2')|list
+                                      + ([c.custodia.tecnico] if c.custodia else []) %}
+                    <article class="jf-card s-{{ c.estado }}" data-estado="{{ c.estado }}"
+                             data-busqueda="{{ busqueda|join(' ')|lower }}">
+                        <div class="jf-card-cuerpo">
+                            <div class="jf-card-top">
+                                <div>
+                                    <div class="jf-num">Camioneta · {{ '%02d'|format(c.numero) }}</div>
+                                    <div class="jf-patente">{{ c.patente }}</div>
+                                    <div class="jf-vehiculo">
+                                        {{ c.vehiculo or 'Sin modelo cargado' }}{% if c.anio %} · {{ c.anio }}{% endif %}
+                                    </div>
+                                </div>
+                                <span class="jf-pill p-{{ c.estado }}">
+                                    {% if c.estado == 'FUERA_DE_SERVICIO' %}<i class="bi bi-lock-fill"></i> Fuera de servicio
+                                    {% elif c.estado == 'ALERTA' %}<i class="bi bi-circle-fill" style="font-size:.5rem"></i> Alerta
+                                    {% else %}<i class="bi bi-circle-fill" style="font-size:.5rem"></i> En orden{% endif %}
+                                </span>
+                            </div>
+
+                            {% if c.bloqueo %}
+                                {# Por que no sale: lo que reporto el tecnico y
+                                   quien de soporte decidio sacarla. #}
+                                <div class="jf-caja c-fuera">
+                                    <div class="jf-caja-titulo">
+                                        <i class="bi bi-exclamation-octagon"></i> No puede salir
+                                        <span class="ms-auto small">{{ c.bloqueo.estado }}</span>
+                                    </div>
+                                    <div class="jf-cita">"{{ c.bloqueo.mensaje }}"</div>
+                                    <div class="jf-caja-meta">
+                                        La sacó {{ c.bloqueo.revisado_por }}{% if c.bloqueo.fecha_revision %} el {{ c.bloqueo.fecha_revision }}{% endif %}
+                                        {% if c.bloqueo.reportado_por %}· avisó {{ c.bloqueo.reportado_por }}{% endif %}
+                                    </div>
+                                    {% if c.bloqueo.comentario %}
+                                        <div class="jf-caja-meta"><i class="bi bi-chat-left-text"></i> {{ c.bloqueo.comentario }}</div>
+                                    {% endif %}
+                                </div>
+                            {% elif c.alertas %}
+                                <div class="jf-caja c-alerta">
+                                    <div class="jf-caja-titulo"><i class="bi bi-exclamation-triangle"></i> Para tener en cuenta</div>
+                                    <ul>
+                                        {% for a in c.alertas[:2] %}<li>{{ a|truncate(70) }}</li>{% endfor %}
+                                        {% if c.alertas|length > 2 %}<li>y {{ c.alertas|length - 2 }} más</li>{% endif %}
+                                    </ul>
+                                </div>
+                            {% else %}
+                                <div class="jf-caja c-ok">
+                                    <div class="jf-caja-titulo"><i class="bi bi-check2-circle"></i> Sin novedades</div>
+                                    <div class="jf-caja-texto">Sin reportes abiertos y vencimientos al día.</div>
+                                </div>
+                            {% endif %}
+
+                            {% for j in jornadas %}
+                                {% set turno = c.hoy|selectattr('jornada', 'equalto', j)|first %}
+                                <div class="jf-fila">
+                                    <span>Hoy · {{ j }}</span>
+                                    <span>
+                                        {% if turno %}
+                                            {{ turno.tecnico }}{% if turno.tecnico2 %} y {{ turno.tecnico2 }}{% endif %}
+                                            {% if turno.zona %}<small class="text-muted fw-normal">· {{ turno.zona }}</small>{% endif %}
+                                        {% else %}<span class="text-muted fw-normal">Sin asignar</span>{% endif %}
+                                    </span>
+                                </div>
+                            {% endfor %}
+                            {% if c.custodia %}
+                                <div class="jf-fila">
+                                    <span>La tiene</span>
+                                    <span>
+                                        {{ c.custodia.tecnico }}
+                                        {% if c.custodia.urgencia %}<span class="badge bg-dark">urgencia</span>{% endif %}
+                                        {% if c.custodia.vencida %}<span class="badge bg-danger">sin devolver</span>{% endif %}
+                                    </span>
+                                </div>
+                            {% endif %}
+
+                            <div class="jf-critico" title="Reportes graves y fallas de los últimos {{ dias_indice_critico }} días, sobre el total de la flota">
+                                <div class="jf-critico-top">
+                                    <span>Registros críticos ({{ dias_indice_critico }} días)</span>
+                                    <span><strong>{{ c.criticos_pct }}%</strong> de la flota · {{ c.criticos }}</span>
+                                </div>
+                                <div class="jf-barra">
+                                    <div class="{{ 'b-alto' if c.criticos_pct >= 40 else ('b-medio' if c.criticos_pct >= 20 else '') }}"
+                                         style="width: {{ c.criticos_pct }}%"></div>
+                                </div>
+                            </div>
                         </div>
-                        {% if n.remito_cerrable %}
-                            <button type="button" class="btn-close" title="Marcar como vista"
-                                    onclick="descartarNovedad({{ n.id }})"></button>
+                        <div class="jf-card-pie">
+                            <span>
+                                {% if c.estado == 'FUERA_DE_SERVICIO' %}Reporte {{ c.bloqueo.importancia|lower }}
+                                {% elif c.km %}{{ c.km|miles }} km
+                                {% else %}Sin km cargados{% endif %}
+                            </span>
+                            <button type="button" onclick="verFicha({{ c.id }})">Ver ficha <i class="bi bi-chevron-right"></i></button>
+                        </div>
+                    </article>
+                {% endfor %}
+                <div class="jf-vacio-grilla" id="jf-sin-resultados" {% if flota %}hidden{% endif %}>
+                    No hay camionetas que coincidan.
+                </div>
+            </div>
+        </div>
+
+        <!-- Hoy: guardia, retiradas, bajas -->
+        <aside class="col-lg-3">
+            <div class="jf-panel">
+                <h2><i class="bi bi-shield-check"></i> Guardia de esta semana</h2>
+                {% for g in guardias.titulares %}
+                    <span class="jf-persona"><span class="jf-avatar">{{ g.nombre[:2]|upper }}</span>{{ g.nombre }}</span>
+                {% else %}
+                    <p class="jf-vacio mb-0">No hay guardia publicada.</p>
+                {% endfor %}
+                {% if guardias.alternativa %}
+                    <div class="jf-panel-sub">Alternativa (semana que viene)</div>
+                    {% for g in guardias.alternativa %}
+                        <span class="jf-persona alt"><span class="jf-avatar">{{ g.nombre[:2]|upper }}</span>{{ g.nombre }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+
+            <div class="jf-panel">
+                <h2><i class="bi bi-geo-alt"></i> Retiradas ahora</h2>
+                {% set retiradas = flota|selectattr('custodia')|list %}
+                {% for c in retiradas %}
+                    <div class="jf-item">
+                        <strong>{{ c.patente }}</strong> · {{ c.custodia.tecnico }}
+                        {% if c.custodia.urgencia %}<span class="badge bg-dark">urgencia</span>{% endif %}
+                        {% if c.custodia.vencida %}<span class="badge bg-danger">sin devolver</span>{% endif %}
+                        <div class="text-muted small">Desde el {{ c.custodia.desde }} ({{ c.custodia.jornada }})</div>
+                    </div>
+                {% else %}
+                    <p class="jf-vacio mb-0">Ninguna camioneta afuera en este momento.</p>
+                {% endfor %}
+            </div>
+
+            <div class="jf-panel">
+                <h2><i class="bi bi-archive"></i> Dadas de baja</h2>
+                {% for b in bajas %}
+                    <div class="jf-item">
+                        <strong>{{ b.patente }}</strong>
+                        {% if b.marca or b.modelo %}<span class="text-muted">· {{ b.marca or '' }} {{ b.modelo or '' }}</span>{% endif %}
+                        <div class="small">{{ b.motivo_baja or 'Sin motivo registrado' }}</div>
+                        {% if b.baja_por %}
+                            <div class="text-muted small">Por {{ b.baja_por }} · {{ (b.fecha_baja or '')[:10] }}</div>
                         {% endif %}
                     </div>
                 {% else %}
-                    <p class="text-muted mb-0" id="novedades-vacio">No hay novedades sin ver.</p>
+                    <p class="jf-vacio mb-0">Toda la flota está activa.</p>
                 {% endfor %}
             </div>
-        </div>
-
-        <!-- Cards de camionetas -->
-        <div class="row mt-3">
-            {% for patente, info in resumen_flota.items() %}
-                <div class="col-md-4 col-lg-3 col-6 mb-3">
-                    <div class="card-flota" onclick='verDetalleCamioneta({{ patente|tojson }})'>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h6 class="card-title mb-0">
-                                <i class="bi bi-truck"></i> {{ patente }}
-                            </h6>
-                            <span class="estado-badge 
-                                {% if info.estado_general == 'OK' %}ok
-                                {% elif info.estado_general == 'ALERTA' %}alerta
-                                {% else %}falla
-                                {% endif %}">
-                            </span>
-                        </div>
-                        <div class="small">
-                            <span class="badge 
-                                {% if info.estado_general == 'OK' %}bg-success
-                                {% elif info.estado_general == 'ALERTA' %}bg-warning text-dark
-                                {% elif info.estado_general == 'FUERA_DE_SERVICIO' %}bg-dark
-                                {% else %}bg-danger
-                                {% endif %}">
-                                {% if info.estado_general == 'FUERA_DE_SERVICIO' %}
-                                    <i class="bi bi-lock-fill"></i> FUERA DE SERVICIO
-                                {% else %}
-                                    {{ info.estado_general }}
-                                {% endif %}
-                            </span>
-                            {% if info.bloqueo %}
-                                {# Por qué está parada: lo que reportó el técnico. #}
-                                <div class="jefe-bloqueo">
-                                    <i class="bi bi-exclamation-triangle-fill"></i>
-                                    {{ info.bloqueo.reportado_por }}:
-                                    {{ info.bloqueo.mensaje }}
-                                </div>
-                            {% endif %}
-                            <span class="text-muted ms-2 ultimo-registro">
-                                <i class="bi bi-clock"></i> {{ info.ultimo_registro }}
-                            </span>
-                        </div>
-                        <div class="mt-1 small">
-                            {% if info.historial %}
-                                <span class="text-muted">Último: {{ info.historial[0].elemento }}</span>
-                            {% else %}
-                                <span class="text-muted">Sin registros</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-            {% endfor %}
-        </div>
+        </aside>
     </div>
+</div>
 
-    <!-- MODAL DE ESTADÍSTICAS -->
-    <div class="modal fade" id="modalEstadisticas" tabindex="-1">
-        <div class="modal-dialog modal-fullscreen">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title"><i class="bi bi-bar-chart"></i> Estadísticas Detalladas</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body" id="contenido-estadisticas" style="overflow-y: auto;">
-                    <div class="text-center py-4">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Cargando...</span>
-                        </div>
-                        <p class="mt-2">Cargando estadísticas...</p>
-                    </div>
-                </div>
+<!-- Ficha de la camioneta -->
+<div class="modal fade" id="modalFicha" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="ficha-titulo">Ficha</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
+            <div class="modal-body" id="ficha-contenido"></div>
         </div>
     </div>
+</div>
 
-    <!-- MODAL DE DETALLE DE CAMIONETA (SOLO UNO) -->
-    <div class="modal fade" id="modalDetalleCamioneta" tabindex="-1">
-        <div class="modal-dialog modal-fullscreen">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="detalle-titulo">Detalle de Camioneta</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body" id="detalle-contenido" style="overflow-y: auto; padding: 20px 30px;">
-                </div>
-            </div>
-        </div>
-    </div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Lo que escriben las personas (mensajes, comentarios) no se mete crudo
+    // en innerHTML: permitiria ejecutar codigo en la sesion de quien mira.
+    function escapar(texto) {
+        const div = document.createElement('div');
+        div.textContent = texto === null || texto === undefined ? '' : texto;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Escapa texto para meterlo en HTML. Lo que viene de la base lo
-        // escriben personas (descripciones, comentarios, nombres): insertarlo
-        // crudo con innerHTML permitía ejecutar código en la sesión de quien mira.
-        function escapar(texto) {
-            const div = document.createElement('div');
-            div.textContent = texto === null || texto === undefined ? '' : texto;
-            // innerHTML no escapa comillas: sin esto, dentro de un atributo
-            // (title="...", data-x="...") el texto podía cerrar el atributo.
-            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const FLOTA = {};
+    {{ flota|tojson }}.forEach(c => { FLOTA[c.id] = c; });
+    const JORNADAS = {{ jornadas|tojson }};
+
+    // ---------- Filtros ----------
+    let filtroEstado = '';
+    function aplicarFiltros() {
+        const texto = document.getElementById('jf-buscar').value.trim().toLowerCase();
+        let visibles = 0;
+        document.querySelectorAll('.jf-card').forEach(card => {
+            const ok = (!filtroEstado || card.dataset.estado === filtroEstado)
+                    && (!texto || card.dataset.busqueda.includes(texto));
+            card.hidden = !ok;
+            if (ok) visibles++;
+        });
+        document.getElementById('jf-sin-resultados').hidden = visibles > 0;
+    }
+    document.querySelectorAll('.jf-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            document.querySelectorAll('.jf-chip').forEach(c => c.classList.remove('activo'));
+            chip.classList.add('activo');
+            filtroEstado = chip.dataset.filtro;
+            aplicarFiltros();
+        });
+    });
+    document.getElementById('jf-buscar').addEventListener('input', aplicarFiltros);
+
+    // ---------- Ficha ----------
+    const ESTADO_TEXTO = { EN_ORDEN: 'En orden', ALERTA: 'En alerta', FUERA_DE_SERVICIO: 'Fuera de servicio' };
+    const VENC_TEXTO = { VENCIDO: 'Vencido', POR_VENCER: 'Por vencer', AL_DIA: 'Al día', SIN_DATOS: 'Sin datos' };
+
+    function verFicha(id) {
+        const c = FLOTA[id];
+        if (!c) return;
+        document.getElementById('ficha-titulo').innerHTML =
+            `<i class="bi bi-truck"></i> ${escapar(c.patente)}
+             <small class="text-muted fs-6">${escapar(c.vehiculo || '')}${c.anio ? ' · ' + c.anio : ''}</small>`;
+
+        let html = '';
+
+        // Estado y por que
+        html += `<div class="ficha-seccion"><h6>Estado</h6>
+                 <span class="jf-pill p-${c.estado}">${ESTADO_TEXTO[c.estado]}</span>`;
+        if (c.bloqueo) {
+            const b = c.bloqueo;
+            html += `<div class="jf-caja c-fuera">
+                        <div class="jf-caja-titulo"><i class="bi bi-exclamation-octagon"></i>
+                             Fuera de servicio · reporte ${escapar(b.importancia.toLowerCase())} (${escapar(b.estado)})</div>
+                        <div class="jf-cita">"${escapar(b.mensaje)}"</div>
+                        <div class="jf-caja-meta">Avisó ${escapar(b.reportado_por || '—')} el ${escapar(b.fecha)} ·
+                             la sacó de circulación ${escapar(b.revisado_por)}${b.fecha_revision ? ' el ' + escapar(b.fecha_revision) : ''}</div>
+                        ${b.comentario ? `<div class="jf-caja-meta"><i class="bi bi-chat-left-text"></i> ${escapar(b.comentario)}</div>` : ''}
+                     </div>`;
         }
-
-        const flotaData = {{ resumen_flota | tojson }};
-
-        // Marcar una novedad como vista: se saca solo para este usuario.
-        function descartarNovedad(id) {
-            fetch(`/api/notificaciones/marcar/${id}`, { method: 'POST' })
-                .then(r => r.json())
-                .then(data => {
-                    if (!data.success) {
-                        alert(data.error || 'No se pudo marcar como vista.');
-                        return;
-                    }
-                    const fila = document.getElementById('novedad-' + id);
-                    if (fila) fila.remove();
-                    const quedan = document.querySelectorAll('#novedades-lista .novedad').length;
-                    document.getElementById('novedades-contador').textContent = quedan;
-                    if (!quedan) {
-                        document.getElementById('novedades-lista').innerHTML =
-                            '<p class="text-muted mb-0">No hay novedades sin ver.</p>';
-                    }
-                })
-                .catch(() => alert('Error de conexión.'));
+        if (c.alertas.length) {
+            html += `<div class="jf-caja c-alerta"><div class="jf-caja-titulo">
+                        <i class="bi bi-exclamation-triangle"></i> Para tener en cuenta</div>
+                     <ul>${c.alertas.map(a => `<li>${escapar(a)}</li>`).join('')}</ul></div>`;
         }
+        html += `</div>`;
 
-        // ============================================
-        // VISTA DE TARJETAS PARA DETALLE DE CAMIONETA
-        // ============================================
-        function verDetalleCamioneta(patente) {
-            const info = flotaData[patente];
-            if (!info) return;
-            
-            document.getElementById('detalle-titulo').textContent = '🚚 Detalle - ' + patente;
-            
-            // Contar estadísticas
-            let totalOk = 0, totalFaltante = 0, totalFalla = 0, totalResuelto = 0;
-            info.historial.forEach(r => {
-                if (r.estado === 'OK') totalOk++;
-                else if (r.estado === 'FALTANTE') totalFaltante++;
-                else if (r.estado === 'FALLA') totalFalla++;
-                else if (r.estado === 'RESUELTO') totalResuelto++;
+        // Hoy
+        html += `<div class="ficha-seccion"><h6>Hoy</h6>`;
+        JORNADAS.forEach(j => {
+            const t = c.hoy.find(h => h.jornada === j);
+            html += `<div class="jf-fila"><span>${escapar(j)}</span><span>${
+                t ? escapar(t.tecnico) + (t.tecnico2 ? ' y ' + escapar(t.tecnico2) : '')
+                    + (t.zona ? ' · ' + escapar(t.zona) : '')
+                  : '<span class="text-muted fw-normal">Sin asignar</span>'}</span></div>`;
+        });
+        if (c.custodia) {
+            html += `<div class="jf-fila"><span>La tiene ahora</span><span>${escapar(c.custodia.tecnico)}
+                     (desde el ${escapar(c.custodia.desde)})${c.custodia.urgencia ? ' · retiro de urgencia' : ''}</span></div>`;
+        }
+        html += `</div>`;
+
+        // Vencimientos
+        html += `<div class="ficha-seccion"><h6>Vencimientos</h6>`;
+        if (!c.vencimientos.length) html += `<p class="jf-vacio">Sin vencimientos cargados.</p>`;
+        c.vencimientos.forEach(v => {
+            html += `<div class="ficha-venc v-${v.estado}"><strong>${escapar(v.etiqueta)}</strong>
+                     <span>${VENC_TEXTO[v.estado] || v.estado}${v.detalle ? ' · ' + escapar(v.detalle) : ''}</span></div>`;
+        });
+        html += `</div>`;
+
+        // Trabajos: cuantas veces se hizo cada cosa
+        const conteo = Object.entries(c.trabajos.conteo).sort((a, b) => b[1] - a[1]);
+        html += `<div class="ficha-seccion"><h6>Trabajos realizados (desde el calendario)</h6>`;
+        if (!conteo.length) {
+            html += `<p class="jf-vacio">Todavía no se registró ningún trabajo.</p>`;
+        } else {
+            html += `<div class="ficha-conteos">${conteo.map(([que, n]) =>
+                `<div class="ficha-conteo"><b>${n}</b><span>${escapar(que)}</span></div>`).join('')}</div>`;
+            html += `<table class="table table-sm ficha-tabla mt-3 mb-0"><thead><tr>
+                     <th>Fecha</th><th>Trabajo</th><th>Detalle</th></tr></thead><tbody>`;
+            c.trabajos.ultimos.forEach(t => {
+                let detalle = t.detalle.includes(':') ? t.detalle.split(':').slice(1).join(':').trim()
+                                                      : (t.detalle === t.categoria ? '' : t.detalle);
+                if (t.observacion) detalle += (detalle ? ' — ' : '') + t.observacion;
+                html += `<tr><td class="text-nowrap">${escapar(t.fecha)}</td>
+                         <td>${escapar(t.categoria)}</td><td class="text-muted">${escapar(detalle)}</td></tr>`;
             });
-            
-            let html = `
-                <!-- Resumen rápido -->
-                <div class="resumen-rapido">
-                    <div class="stat-mini">
-                        <div class="numero">${info.historial.length}</div>
-                        <div class="etiqueta">Total Reportes</div>
-                    </div>
-                    <div class="stat-mini">
-                        <div class="numero" style="color:#28a745;">${totalOk}</div>
-                        <div class="etiqueta">✅ OK</div>
-                    </div>
-                    <div class="stat-mini">
-                        <div class="numero" style="color:#dc3545;">${totalFaltante + totalFalla}</div>
-                        <div class="etiqueta">❌ Problemas</div>
-                    </div>
-                    <div class="stat-mini">
-                        <div class="numero" style="color:#17a2b8;">${totalResuelto}</div>
-                        <div class="etiqueta">🔄 Resueltos</div>
-                    </div>
-                </div>
-                
-                <!-- Estado general -->
-                <div class="alert ${info.estado_general == 'OK' ? 'alert-success' : info.estado_general == 'ALERTA' ? 'alert-warning' : 'alert-danger'} mb-3">
-                    <strong>Estado:</strong> ${info.estado_general} | 
-                    <strong>Último registro:</strong> ${escapar(info.ultimo_registro)}
-                </div>
-                
-                <h6 class="mb-3">Historial de Reportes</h6>
-                <div class="card-grid">
-            `;
-            
-            if (info.historial.length === 0) {
-                html += `<div class="text-center text-muted">Sin registros</div>`;
-            } else {
-                // El historial ya viene del más nuevo al más viejo.
-                info.historial.forEach(r => {
-                    const estadoClass = r.estado == 'OK' ? 'estado-ok' : 
-                                       r.estado == 'FALTANTE' ? 'estado-faltante' : 
-                                       r.estado == 'FALLA' ? 'estado-falla' : 
-                                       r.estado == 'RESUELTO' ? 'estado-resuelto' : '';
-                    
-                    const badgeText = r.estado == 'FALLA' ? '⚠️ FALLA' : 
-                                     r.estado == 'FALTANTE' ? '❌ FALTANTE' : 
-                                     r.estado == 'RESUELTO' ? '✅ RESUELTO' : '✔️ OK';
-                    
-                    const badgeClass = r.estado == 'FALLA' ? 'danger' : 
-                                      r.estado == 'FALTANTE' ? 'warning' : 
-                                      r.estado == 'RESUELTO' ? 'info' : 'success';
-                    
-                    const descripcion = r.descripcion && r.descripcion != 'Elemento en buen estado' ? r.descripcion : '';
-                    
-                    html += `
-                        <div class="card-item ${estadoClass}">
-                            <div class="card-header-info">
-                                <span class="card-elemento">${escapar(r.elemento)}</span>
-                                <span class="badge badge-estado bg-${badgeClass}">${badgeText}</span>
-                            </div>
-                            <div class="card-fecha"><i class="bi bi-calendar3"></i> ${escapar(r.fecha || '-')}</div>
-                            <div class="card-tecnico"><i class="bi bi-person"></i> ${escapar(r.tecnico || '-')}</div>
-                            ${descripcion ? `<div class="card-observacion"><i class="bi bi-chat"></i> ${escapar(descripcion)}</div>` : ''}
-                            ${r.resuelto_por && r.resuelto_por != '-' ? `<div class="text-success small">✅ Resuelto por: ${escapar(r.resuelto_por)}</div>` : ''}
-                        </div>
-                    `;
-                });
-            }
-            
-            html += `
-                </div>
-            `;
-            
-            document.getElementById('detalle-contenido').innerHTML = html;
-            new bootstrap.Modal(document.getElementById('modalDetalleCamioneta')).show();
+            html += `</tbody></table>`;
         }
+        html += `</div>`;
 
-        function abrirEstadisticas() {
-            const modal = new bootstrap.Modal(document.getElementById('modalEstadisticas'));
-            modal.show();
-            
-            fetch('/jefe/estadisticas')
-                .then(response => response.text())
-                .then(html => {
-                    document.getElementById('contenido-estadisticas').innerHTML = html;
-                })
-                .catch(error => {
-                    document.getElementById('contenido-estadisticas').innerHTML = `
-                        <div class="alert alert-danger">
-                            <i class="bi bi-exclamation-triangle"></i> Error al cargar estadísticas.
-                        </div>
-                    `;
-                });
-        }
-    </script>
-    {% include '_tiempo_real.html' %}
+        // Indice critico
+        html += `<div class="ficha-seccion mb-0"><h6>Registros críticos</h6>
+                 <p class="small mb-1">${c.criticos} registro(s) grave(s) en los últimos {{ dias_indice_critico }} días:
+                 <strong>${c.criticos_pct}%</strong> de todos los de la flota ({{ total_criticos }}).</p>
+                 <div class="jf-barra"><div class="${c.criticos_pct >= 40 ? 'b-alto' : c.criticos_pct >= 20 ? 'b-medio' : ''}"
+                      style="width:${c.criticos_pct}%"></div></div>
+                 <p class="text-muted small mt-1 mb-0">Cuenta los reportes de importancia alta o urgente y las fallas
+                 marcadas en los controles. Los elementos faltantes no suman.</p></div>`;
+
+        document.getElementById('ficha-contenido').innerHTML = html;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalFicha')).show();
+    }
+
+</script>
+{% include '_tiempo_real.html' %}
 </body>
 </html>

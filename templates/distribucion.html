@@ -6,13 +6,20 @@
     <title>Distribución semanal</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* El tecnico la ve suelta, sin la barra lateral. */
+        .dist-solo { max-width: 1100px; margin: 0 auto; padding: 20px 15px; }
+    </style>
 </head>
 <body>
 
+{# La barra lateral es la del panel de soporte: al tecnico lo mandaba a
+   pantallas que no son suyas. El solo mira la planilla y vuelve. #}
+{% set es_tecnico = session.rol == 'tecnico' %}
 {% set seccion_activa = 'distribucion' %}
-{% include '_sidebar.html' %}
+{% if not es_tecnico %}{% include '_sidebar.html' %}{% endif %}
 
-<div class="admin-main">
+<div class="{{ 'dist-solo' if es_tecnico else 'admin-main' }}">
 <div class="config-container">
 
     <div class="seccion-header">

@@ -155,9 +155,11 @@
                             <a href="{{ url_for('admin', seccion='historial', patente=c.patente) }}"
                                class="btn btn-sm btn-outline-info">Historial</a>
                             <form method="POST" action="{{ url_for('config_camionetas') }}" class="d-inline"
-                                  onsubmit="return confirm('¿Cambiar el estado de {{ c.patente }}?')">
+                                  data-patente="{{ c.patente }}"
+                                  onsubmit="return {{ 'pedirMotivoBaja(this)' if c.activa else 'confirm(\'¿Reactivar \' + this.dataset.patente + \'?\')' }}">
                                 <input type="hidden" name="accion" value="alternar">
                                 <input type="hidden" name="camioneta_id" value="{{ c.id }}">
+                                <input type="hidden" name="motivo" value="">
                                 <button type="submit" class="btn btn-sm {% if c.activa %}btn-outline-danger{% else %}btn-outline-success{% endif %}">
                                     {% if c.activa %}Dar de baja{% else %}Reactivar{% endif %}
                                 </button>
@@ -335,6 +337,19 @@
 </div>
 
 <script>
+    // Dar de baja pide el motivo: el jefe lo ve en su panel.
+    function pedirMotivoBaja(form) {
+        const motivo = prompt('¿Por qué se da de baja ' + form.dataset.patente + '?\n'
+                              + '(Ej: vendida, siniestro total, devuelta al leasing)');
+        if (motivo === null) return false;
+        if (!motivo.trim()) {
+            alert('Contá el motivo: es lo que va a ver jefatura.');
+            return false;
+        }
+        form.elements.motivo.value = motivo.trim();
+        return true;
+    }
+
     function verSeccion(seccion) {
         document.querySelectorAll('.config-panel').forEach(function (p) {
             p.style.display = 'none';
