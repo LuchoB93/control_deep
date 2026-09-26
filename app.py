@@ -592,8 +592,68 @@ def crear_carpeta_remitos(patente, fecha):
     carpeta_fecha = carpeta_patente / year_month
     if not carpeta_fecha.exists():
         carpeta_fecha.mkdir()
-    
+
     return carpeta_fecha
+
+
+def ruta_remito_relativa(ruta):
+    """Lo que se guarda en la base: la ruta del PDF relativa a REMITOS_DIR.
+
+    Antes se guardaba la ruta absoluta, con lo que la base quedaba atada a la
+    máquina donde se generó el remito: al pasar a Docker (o a otra carpeta)
+    ningún remito viejo abría, y firmar uno pendiente reescribía el PDF en
+    cualquier lado. Relativa, como las fotos, sobrevive a la mudanza.
+
+    Acepta también rutas viejas de otra máquina (C:\\...\\remitos\\...): se
+    quedan con lo que sigue a la última carpeta 'remitos', o con
+    patente/mes/archivo si no la tienen. None si no hay ruta.
+    """
+    if not ruta:
+        return None
+    ruta = str(ruta)
+    try:
+        return Path(ruta).resolve().relative_to(REMITOS_DIR.resolve()).as_posix()
+    except (ValueError, OSError):
+        pass
+    partes = [p for p in re.split(r'[\\/]', ruta) if p and p != '.']
+    minusculas = [p.lower() for p in partes]
+    if 'remitos' in minusculas:
+        partes = partes[len(minusculas) - minusculas[::-1].index('remitos'):]
+    elif re.match(r'^[A-Za-z]:$', partes[0] if partes else '') or ruta.startswith(('/', '\\')):
+        partes = partes[-3:]
+    return '/'.join(partes) or None
+
+
+def archivo_remito(ruta_guardada):
+    """Path absoluto del PDF a partir de lo guardado en la base, o None.
+
+    Nunca devuelve algo fuera de REMITOS_DIR, aunque la base traiga '..'.
+    """
+    relativa = ruta_remito_relativa(ruta_guardada)
+    if not relativa:
+        return None
+    base = REMITOS_DIR.resolve()
+    try:
+        ruta = (base / relativa).resolve()
+        ruta.relative_to(base)
+    except (ValueError, OSError):
+        return None
+    return ruta
+
+
+def normalizar_rutas_remitos(conexion):
+    """Pasa a relativas las rutas de remitos guardadas como absolutas."""
+    for tabla, columna in (('reportes', 'ruta_remito'), ('seguimiento_remitos', 'ruta_pdf')):
+        filas = conexion.execute(
+            f"SELECT id, {columna} FROM {tabla} "
+            f"WHERE {columna} IS NOT NULL AND {columna} <> ''").fetchall()
+        # Por índice: se llama desde crear_base_de_datos(), sin row_factory.
+        for fila_id, ruta in filas:
+            relativa = ruta_remito_relativa(ruta)
+            if relativa and relativa != ruta:
+                conexion.execute(f'UPDATE {tabla} SET {columna} = ? WHERE id = ?',
+                                 (relativa, fila_id))
+    conexion.commit()
 
 
 
@@ -877,7 +937,7 @@ def mudar_remitos_de_patente(conexion, camioneta_id, vieja, nueva):
             try:
                 destino.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(pdf), str(destino))
-                movidos[pdf.name] = str(destino)
+                movidos[pdf.name] = ruta_remito_relativa(destino)
             except OSError as e:
                 avisos.append(f'No se pudo mover {pdf.name}: {e}')
 
@@ -926,7 +986,7 @@ def mudar_remitos_de_patente(conexion, camioneta_id, vieja, nueva):
         if not destino:
             continue
         try:
-            escribir_pdf_remito(datos_remito(conexion, fila['id']), destino)
+            escribir_pdf_remito(datos_remito(conexion, fila['id']), archivo_remito(destino))
         except Exception as e:
             avisos.append(f'El remito {Path(destino).name} se movió pero no se pudo '
                           f'reescribir con la patente nueva: {e}')
@@ -940,7 +1000,7 @@ def crear_seguimiento_remito(conexion, reporte_id, patente, elemento, ruta_pdf):
         INSERT INTO seguimiento_remitos
         (reporte_id, patente, elemento, fecha_generacion, estado, ruta_pdf)
         VALUES (?, ?, ?, ?, 'PENDIENTE_FIRMA_TECNICO', ?)
-    ''', (reporte_id, patente, elemento, ahora().isoformat(), str(ruta_pdf)))
+    ''', (reporte_id, patente, elemento, ahora().isoformat(), ruta_remito_relativa(ruta_pdf)))
 
 
 def firmar_remito_tecnico_db(conexion, reporte_id, tecnico_id, tecnico_nombre):
@@ -1799,6 +1859,7 @@ def crear_base_de_datos():
     
     conexion.commit()
     aplicar_migraciones(conexion)
+    normalizar_rutas_remitos(conexion)
     insertar_datos_prueba(conexion)
     conexion.close()
 
@@ -4506,9 +4567,12 @@ def tecnico():
     # entrar a las 18 hs a cerrar el control de su turno de la mañana y tiene
     # que ver el turno de la mañana igual. El horario queda como respaldo para
     # cuando esa semana no tiene distribución publicada, y las otras jornadas
-    # quedan de alternativa por si esa no tiene asignación cargada.
+    # quedan de alternativa por si esa no tiene asignación cargada. Sin esa
+    # alternativa, quien tenía solo el turno de la mañana y entraba a la tarde
+    # no veía su camioneta y no tenía cómo hacer el retiro atrasado.
     asignada = jornada_asignada(conexion, usuario_id, momento)
     candidatas = jornadas_activas(momento) or [jornada_actual_tecnico]
+    candidatas = candidatas + [j for j in JORNADAS if j not in candidatas]
     if asignada:
         candidatas = [asignada] + [j for j in JORNADAS if j != asignada]
         jornada_actual_tecnico = asignada
@@ -4764,6 +4828,18 @@ def deuda_que_bloquea(conexion, usuario_id, camioneta_id):
     deudas = [c for c in custodias_abiertas(conexion, tecnico_id=usuario_id)
               if c['camioneta_id'] != camioneta_id]
     return ', '.join(d['patente'] for d in deudas)
+
+
+# Quiénes pueden hacer un control: el técnico los suyos; soporte y el admin,
+# los de liberación. El admin puede forzar una devolución igual que soporte,
+# así que tiene que poder terminarla: antes lo rebotaban al login y el
+# control quedaba abierto sin que nadie pudiera cerrarlo.
+ROLES_CONTROL = ('tecnico', 'soporte', 'admin')
+
+
+def hace_liberaciones(rol):
+    """True si ese rol hace controles de liberación en vez de controles propios."""
+    return rol in ('soporte', 'admin')
 
 
 def control_de_liberacion(conexion, control_id):
@@ -5103,15 +5179,15 @@ def realizar_control(control_id):
         return redirect(url_for('login'))
 
     rol = session.get('rol')
-    if rol not in ('tecnico', 'soporte'):
+    if rol not in ROLES_CONTROL:
         return redirect(url_for('login'))
 
     conexion = get_db()
 
     # Soporte entra solo a los controles de liberación que abrió el propio
     # soporte; el técnico, solo a los suyos.
-    liberacion = control_de_liberacion(conexion, control_id) if rol == 'soporte' else None
-    if rol == 'soporte':
+    liberacion = control_de_liberacion(conexion, control_id) if hace_liberaciones(rol) else None
+    if hace_liberaciones(rol):
         control = liberacion if liberacion and not liberacion['finalizado'] else None
         if not control:
             conexion.close()
@@ -5209,10 +5285,10 @@ def realizar_control(control_id):
                          posiciones_foto=fotos.POSICIONES)
 @app.route('/finalizar-control/<int:control_id>', methods=['POST'])
 def finalizar_control(control_id):
-    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+    if 'usuario_id' not in session or session.get('rol') not in ROLES_CONTROL:
         return redirect(url_for('login'))
 
-    es_soporte = session.get('rol') == 'soporte'
+    es_soporte = hace_liberaciones(session.get('rol'))
     volver = 'admin' if es_soporte else 'tecnico'
 
     conexion = get_db()
@@ -5286,7 +5362,7 @@ def finalizar_control(control_id):
 
 @app.route('/guardar-control-rapido', methods=['POST'])
 def guardar_control_rapido():
-    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+    if 'usuario_id' not in session or session.get('rol') not in ROLES_CONTROL:
         return jsonify({'error': 'No autorizado'}), 401
     
     data = request.get_json(silent=True) or {}
@@ -5310,7 +5386,7 @@ def guardar_control_rapido():
     try:
         fecha_hora = ahora().isoformat()
         
-        if session.get('rol') == 'soporte':
+        if hace_liberaciones(session.get('rol')):
             info = control_de_liberacion(conexion, control_id)
         else:
             info = control_del_tecnico(conexion, control_id, session['usuario_id'])
@@ -6179,7 +6255,7 @@ def generar_remito_pdf(reporte_id):
         escribir_pdf_remito(datos_pdf, ruta_pdf)
 
         conexion.execute('UPDATE reportes SET ruta_remito = ? WHERE id = ?',
-                         (str(ruta_pdf), reporte_id))
+                         (ruta_remito_relativa(ruta_pdf), reporte_id))
 
         # Seguimiento y notificación van sobre la MISMA conexión/transacción.
         # Con una conexión aparte, SQLite devolvía 'database is locked' y ambos
@@ -6403,8 +6479,9 @@ def firmar_remito_tecnico(reporte_id):
 
         firmar_remito_tecnico_db(conexion, reporte_id, tecnico_id, tecnico_nombre)
 
-        if fila['ruta_remito']:
-            escribir_pdf_remito(datos_remito(conexion, reporte_id), Path(fila['ruta_remito']))
+        destino_pdf = archivo_remito(fila['ruta_remito'])
+        if destino_pdf is not None:
+            escribir_pdf_remito(datos_remito(conexion, reporte_id), destino_pdf)
 
         crear_notificacion(
             'REMITO_FIRMADO',
@@ -6470,8 +6547,9 @@ def revisar_remito_admin(reporte_id):
         firmar_remito_soporte_db(conexion, reporte_id, soporte_nombre, usuario_id)
         desbloquear_elemento(conexion, fila['camioneta_id'], fila['elemento'])
 
-        if fila['ruta_remito']:
-            escribir_pdf_remito(datos_remito(conexion, reporte_id), Path(fila['ruta_remito']))
+        destino_pdf = archivo_remito(fila['ruta_remito'])
+        if destino_pdf is not None:
+            escribir_pdf_remito(datos_remito(conexion, reporte_id), destino_pdf)
 
         crear_notificacion(
             'REMITO_FINALIZADO',
@@ -6522,11 +6600,8 @@ def ver_remito(reporte_id):
     if not fila or not fila['ruta_remito']:
         return "Remito no encontrado", 404
 
-    remitos_real = REMITOS_DIR.resolve()
-    try:
-        ruta_real = Path(fila['ruta_remito']).resolve()
-        ruta_real.relative_to(remitos_real)
-    except (ValueError, OSError):
+    ruta_real = archivo_remito(fila['ruta_remito'])
+    if ruta_real is None:
         return "Acceso denegado", 403
 
     if not ruta_real.is_file():
@@ -9018,7 +9093,7 @@ def _control_editable(conexion, control_id, usuario_id, rol):
     de liberación que abrió él mismo. Es la misma regla que usa la pantalla
     para decidir qué mostrar.
     """
-    if rol == 'soporte':
+    if hace_liberaciones(rol):
         control = control_de_liberacion(conexion, control_id)
     else:
         control = control_del_tecnico(conexion, control_id, usuario_id)
@@ -9031,7 +9106,7 @@ def _control_editable(conexion, control_id, usuario_id, rol):
 @app.route('/control/<int:control_id>/foto', methods=['POST'])
 def subir_foto_control(control_id):
     """Guarda (o reemplaza) la foto de una posición del control."""
-    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+    if 'usuario_id' not in session or session.get('rol') not in ROLES_CONTROL:
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
 
     posicion = (request.form.get('posicion') or '').strip().upper()
@@ -9105,7 +9180,7 @@ def subir_foto_control(control_id):
 @app.route('/control/<int:control_id>/fotos')
 def listar_fotos_control(control_id):
     """Estado actual de las cinco fotos obligatorias del control."""
-    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+    if 'usuario_id' not in session or session.get('rol') not in ROLES_CONTROL:
         return jsonify({'error': 'No autorizado'}), 401
 
     conexion = get_db()
@@ -9137,7 +9212,7 @@ def listar_fotos_control(control_id):
 @app.route('/foto/<int:foto_id>/borrar', methods=['POST'])
 def borrar_foto_control(foto_id):
     """Borra una foto mientras el control siga abierto."""
-    if 'usuario_id' not in session or session.get('rol') not in ('tecnico', 'soporte'):
+    if 'usuario_id' not in session or session.get('rol') not in ROLES_CONTROL:
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
 
     conexion = get_db()
